@@ -1,6 +1,15 @@
-#!/home/usuario/.gemini/venv_brain/bin/python3
+#!/usr/bin/env python3
 # mm_brain_tool.py v6.0 - Nucleo Evolucionado
 # Migrado al nuevo SDK google-genai y soporte para Memoria de Codigo.
+#
+# CONFIGURACIÓN: usa variables de entorno (ver .env.example)
+#   BRAIN_PATH  → ruta al archivo Freeplane XML (default: ~/.gemini/brain/knowledge_base.mm)
+#   CACHE_PATH  → ruta al archivo cache (default: ~/.gemini/brain/.mm_cache.json)
+#   DB_NAME     → nombre de la base de datos (default: hipocampo_db)
+#   DB_USER     → usuario de PostgreSQL (default: postgres)
+#   DB_PASSWORD → contraseña de PostgreSQL
+#   DB_HOST     → host de PostgreSQL (default: localhost)
+#   GOOGLE_API_KEY → API key de Google Gemini
 
 import sys
 import os
@@ -14,12 +23,15 @@ from google.genai import types
 from lxml import etree as ET
 from dotenv import load_dotenv
 
-# --- CONFIGURACIÓN CRÍTICA ---
-BRAIN_PATH = "/home/usuario/.gemini/brain/knowledge_base.mm"
-CACHE_PATH = "/home/usuario/.gemini/brain/.mm_cache.json"
-ENV_PATH = "/home/usuario/scripts/.env"
+# --- CONFIGURACIÓN (desde entorno) ---
+load_dotenv()
+BRAIN_PATH = os.getenv('BRAIN_PATH', os.path.expanduser('~/.gemini/brain/knowledge_base.mm'))
+CACHE_PATH = os.getenv('CACHE_PATH', os.path.expanduser('~/.gemini/brain/.mm_cache.json'))
+DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
+DB_USER = os.getenv('DB_USER', 'postgres')
+DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+DB_HOST = os.getenv('DB_HOST', 'localhost')
 
-load_dotenv(ENV_PATH)
 client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
 
 def get_node_embedding(text):
@@ -39,10 +51,10 @@ def save_to_vector_db(content, metadata, code_snippet=None):
     """Inserta el nuevo nodo en el Hipocampo Digital (PostgreSQL) con soporte para codigo"""
     try:
         conn = psycopg2.connect(
-            dbname="hipocampo_db",
-            user="usuario",
-            password=os.getenv('DB_PASSWORD', ''),
-            host="localhost"
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST
         )
         register_vector(conn)
         cur = conn.cursor()

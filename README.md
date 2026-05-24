@@ -645,7 +645,10 @@ lxml>=5.0
 Crear `.env`:
 ```bash
 # .env
+DB_NAME=hipocampo_db
+DB_USER=tu_usuario_postgres
 DB_PASSWORD=tu_password_postgres
+DB_HOST=localhost
 GOOGLE_API_KEY=tu_api_key_de_gemini
 ```
 
@@ -657,7 +660,12 @@ python3 -c "
 import psycopg2, os
 from dotenv import load_dotenv
 load_dotenv('.env')
-conn = psycopg2.connect(dbname='hipocampo_db', user='tu_usuario_postgres', password=os.getenv('DB_PASSWORD'), host='localhost')
+conn = psycopg2.connect(
+    dbname=os.getenv('DB_NAME', 'hipocampo_db'),
+    user=os.getenv('DB_USER', 'postgres'),
+    password=os.getenv('DB_PASSWORD'),
+    host=os.getenv('DB_HOST', 'localhost')
+)
 cur = conn.cursor()
 cur.execute('SELECT COUNT(*) FROM memoria_vectorial')
 print(f'memoria_vectorial: {cur.fetchone()[0]} registros')

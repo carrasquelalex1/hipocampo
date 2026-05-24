@@ -1,4 +1,4 @@
-#!/home/usuario/.gemini/mcp_venv/bin/python3
+#!/usr/bin/env python3
 """hipocampo_autotag.py v1.0 — Auto-tagging con reglas de clasificación.
 
 Asigna tags y categorías automáticamente basados en el contenido del summary

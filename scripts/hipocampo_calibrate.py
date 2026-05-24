@@ -1,4 +1,4 @@
-#!/home/usuario/.gemini/mcp_venv/bin/python3
+#!/usr/bin/env python3
 """hipocampo_calibrate.py v1.0 — Calibración de Ponderación Híbrida BIRE.
 
 Encuentra los pesos óptimos (alpha, beta) para combinar puntuaciones
@@ -6,11 +6,12 @@ vectoriales y léxicas mediante validación cruzada sobre un conjunto
 de consultas etiquetadas.
 
 Uso:
-    /home/usuario/.gemini/mcp_venv/bin/python3 /home/usuario/.gemini/scripts/hipocampo_calibrate.py
+    python3 hipocampo_calibrate.py
 """
 
 import sys, os, json, math, itertools
-sys.path.insert(0, '/home/usuario/.gemini/scripts')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hipocampo_search import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST
 from hipocampo_search import (expandir_consulta, generar_patrones_ILIKE,
                               buscar_vectorial, buscar_lexico_memoria_vectorial,
                               buscar_lexico_memory_items)
@@ -18,10 +19,9 @@ import psycopg2
 from dotenv import load_dotenv
 from pgvector.psycopg2 import register_vector
 
-ENV_PATH = "/home/usuario/scripts/.env"
-load_dotenv(ENV_PATH)
+load_dotenv()
 
-CONFIG_PATH = "/home/usuario/.gemini/scripts/hipocampo_hybrid_config.json"
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hipocampo_hybrid_config.json")
 
 # ─── DATASET ETIQUETADO ─────────────────────────────────────────────────────
 
@@ -207,10 +207,10 @@ def fusionar_hibrido(vectorial, lexico_mv, lexico_mi, alpha=0.5):
 def run_calibration():
     """Ejecuta validación cruzada para encontrar el alpha óptimo."""
     conn = psycopg2.connect(
-        dbname="hipocampo_db",
-        user="usuario",
-        password=os.getenv('DB_PASSWORD', ''),
-        host="localhost"
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST
     )
     register_vector(conn)
     cur = conn.cursor()

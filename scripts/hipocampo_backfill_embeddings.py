@@ -1,4 +1,4 @@
-#!/home/usuario/.gemini/mcp_venv/bin/python3
+#!/usr/bin/env python3
 """hipocampo_backfill_embeddings.py — Regenera embeddings 768d en memory_items.
 
 Problema: memory_items fue poblado con embeddings 4096d (default de gemini-embedding-001
@@ -6,15 +6,20 @@ sin output_dimensionality). memoria_vectorial usa 768d. Este script unifica ambo
 subsistemas al mismo modelo (gemini-embedding-001) y dimensionalidad (768d).
 
 Uso:
-  /home/usuario/.gemini/mcp_venv/bin/python3 /home/usuario/.gemini/scripts/hipocampo_backfill_embeddings.py
+    python3 hipocampo_backfill_embeddings.py
 """
 import psycopg2, os, sys, time
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-ENV_PATH = "/home/usuario/scripts/.env"
-load_dotenv(ENV_PATH)
+load_dotenv()
+
+DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
+DB_USER = os.getenv('DB_USER', 'postgres')
+DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+DB_HOST = os.getenv('DB_HOST', 'localhost')
+
 client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
 
 BATCH_SIZE = 2
@@ -47,10 +52,10 @@ def get_embedding_768(text, retries=3):
 
 def main():
     conn = psycopg2.connect(
-        dbname="hipocampo_db",
-        user="usuario",
-        password=os.getenv('DB_PASSWORD', ''),
-        host="localhost"
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST
     )
     cur = conn.cursor()
 

@@ -1,4 +1,4 @@
-#!/home/usuario/.gemini/mcp_venv/bin/python3
+#!/usr/bin/env python3
 """hipocampo_search.py v3.6 — BIRE con Embeddings Unificados
 
 Algoritmo de búsqueda unificada en los dos sistemas de memoria del Hipocampo.
@@ -12,8 +12,13 @@ from pgvector.psycopg2 import register_vector
 from google import genai
 from google.genai import types
 
-ENV_PATH = "/home/usuario/scripts/.env"
+ENV_PATH = os.getenv('ENV_PATH', '.env')
 load_dotenv(ENV_PATH)
+
+DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
+DB_USER = os.getenv('DB_USER', 'postgres')
+DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+DB_HOST = os.getenv('DB_HOST', 'localhost')
 
 client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
 
@@ -586,10 +591,10 @@ def formatear_resultados(resultados, query):
 
 def bire_search(query, umbral_minimo=10.0, rerank=False):
     conn = psycopg2.connect(
-        dbname="hipocampo_db",
-        user="usuario",
-        password=os.getenv('DB_PASSWORD', ''),
-        host="localhost"
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST
     )
     register_vector(conn)
     cur = conn.cursor()
