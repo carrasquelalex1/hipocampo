@@ -1,0 +1,7 @@
+{
+  "alpha": 0.3,
+  "beta": 0.7,
+  "description": "Ponderaci\u00f3n h\u00edbrida calibrada: 30% vectorial + 70% l\u00e9xico",
+  "calibrated_at": "2026-05-24",
+  "dataset_size": 12
+}

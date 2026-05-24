@@ -1,0 +1,150 @@
+#!/home/usuario/.gemini/mcp_venv/bin/python3
+"""hipocampo_backfill_embeddings.py — Regenera embeddings 768d en memory_items.
+
+Problema: memory_items fue poblado con embeddings 4096d (default de gemini-embedding-001
+sin output_dimensionality). memoria_vectorial usa 768d. Este script unifica ambos
+subsistemas al mismo modelo (gemini-embedding-001) y dimensionalidad (768d).
+
+Uso:
+  /home/usuario/.gemini/mcp_venv/bin/python3 /home/usuario/.gemini/scripts/hipocampo_backfill_embeddings.py
+"""
+import psycopg2, os, sys, time
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
+
+ENV_PATH = "/home/usuario/scripts/.env"
+load_dotenv(ENV_PATH)
+client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+
+BATCH_SIZE = 2
+DELAY_BETWEEN_BATCHES = 60.0  # 1 minute between batches to respect rate limits
+
+
+def get_embedding_768(text, retries=3):
+    for attempt in range(retries):
+        try:
+            result = client.models.embed_content(
+                model="gemini-embedding-001",
+                contents=text,
+                config=types.EmbedContentConfig(
+                    task_type="RETRIEVAL_DOCUMENT",
+                    output_dimensionality=768
+                )
+            )
+            return result.embeddings[0].values
+        except Exception as e:
+            err_str = str(e)
+            if '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
+                wait = 65 * (attempt + 1)
+                print(f"  ⏳ Cuota agotada, esperando {wait}s (intento {attempt+1}/{retries})...")
+                time.sleep(wait)
+                continue
+            print(f"  Error: {e}")
+            return None
+    return None
+
+
+def main():
+    conn = psycopg2.connect(
+        dbname="hipocampo_db",
+        user="usuario",
+        password=os.getenv('DB_PASSWORD', ''),
+        host="localhost"
+    )
+    cur = conn.cursor()
+
+    # Check current state of the column
+    cur.execute("""
+        SELECT column_name, udt_name 
+        FROM information_schema.columns 
+        WHERE table_name = 'memory_items' AND column_name = 'embedding'
+    """)
+    col_info = cur.fetchone()
+    if col_info:
+        print(f"📊 Columna embedding existe: {col_info}")
+
+    # Check if column is vector(768) or just vector
+    cur.execute("""
+        SELECT e.typname, e.typtype
+        FROM pg_type e
+        JOIN pg_attribute a ON a.atttypid = e.oid
+        WHERE a.attrelid = 'memory_items'::regclass AND a.attname = 'embedding'
+    """)
+    type_info = cur.fetchone()
+    print(f"📊 Tipo de embedding: {type_info}")
+
+    # Fetch remaining records without 768d embeddings
+    cur.execute("""
+        SELECT id, summary FROM memory_items
+        WHERE embedding IS NULL
+        ORDER BY created_at
+    """)
+    rows = cur.fetchall()
+    total = len(rows)
+    print(f"📦 {total} registros en memory_items necesitan embedding 768d")
+
+    if total == 0:
+        print("✅ Todo unificado — 0 registros por procesar")
+        cur.close()
+        conn.close()
+        return
+
+    # Process in batches with rate limit awareness
+    processed = 0
+    errors = 0
+    for i in range(0, total, BATCH_SIZE):
+        batch = rows[i:i + BATCH_SIZE]
+        batch_num = i // BATCH_SIZE + 1
+        total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
+        print(f"\n🔨 Lote {batch_num}/{total_batches} ({len(batch)} registros)")
+
+        for item_id, summary in batch:
+            emb = get_embedding_768(summary)
+            if emb is None:
+                errors += 1
+                print(f"  ❌ {item_id}: error (pendiente para próxima ejecución)")
+                continue
+            cur.execute(
+                "UPDATE memory_items SET embedding = %s::vector(768) WHERE id = %s",
+                (emb, item_id)
+            )
+            processed += 1
+            print(f"  ✅ {item_id}: {summary[:60]}...")
+
+        conn.commit()
+        if batch_num < total_batches:
+            print(f"  ⏳ Esperando {DELAY_BETWEEN_BATCHES}s...")
+            time.sleep(DELAY_BETWEEN_BATCHES)
+
+    # Verify HNSW index exists
+    cur.execute("""
+        SELECT 1 FROM pg_indexes 
+        WHERE indexname = 'idx_memory_items_embedding'
+    """)
+    if not cur.fetchone():
+        print(f"\n📊 Creando índice HNSW en memory_items.embedding...")
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_memory_items_embedding
+            ON memory_items USING hnsw (embedding vector_cosine_ops)
+        """)
+        conn.commit()
+
+    # Summary
+    cur.execute("SELECT COUNT(*) FROM memory_items WHERE embedding IS NOT NULL")
+    ok = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM memory_items")
+    total_items = cur.fetchone()[0]
+
+    print(f"\n{'='*50}")
+    print(f"✅ Embeddings unificados: {ok}/{total_items} registros con embedding 768d")
+    print(f"⚠️  Errores en esta ejecución: {errors}")
+    print(f"📊 Índice HNSW: idx_memory_items_embedding (vector_cosine_ops)")
+    print(f"{'='*50}")
+
+    cur.close()
+    conn.close()
+
+
+if __name__ == "__main__":
+    main()
