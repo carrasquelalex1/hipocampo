@@ -12,6 +12,7 @@ Uso:
 import sys, os, json, math, itertools
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hipocampo_search import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST
+DB_PASSWORD = ''
 from hipocampo_search import (expandir_consulta, generar_patrones_ILIKE,
                               buscar_vectorial, buscar_lexico_memoria_vectorial,
                               buscar_lexico_memory_items)

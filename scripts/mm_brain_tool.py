@@ -28,9 +28,9 @@ load_dotenv()
 BRAIN_PATH = os.getenv('BRAIN_PATH', os.path.expanduser('~/.gemini/brain/knowledge_base.mm'))
 CACHE_PATH = os.getenv('CACHE_PATH', os.path.expanduser('~/.gemini/brain/.mm_cache.json'))
 DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
-DB_USER = os.getenv('DB_USER', 'postgres')
+DB_USER = os.getenv('DB_USER', 'alex')
 DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
 
 client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
 
