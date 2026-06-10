@@ -1,0 +1,13 @@
+[Unit]
+Description=Hipocampo MCP Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/alex/hipocampo_mcp_server.py
+WorkingDirectory=/home/alex
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
