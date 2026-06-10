@@ -118,6 +118,30 @@ Phase 4  ILIKE full scan if confidence < 40%
 
 ---
 
+## MCP Server
+
+The repo includes a Flask-based MCP (Model Context Protocol) server that exposes Hipocampo search as an HTTP API — ideal for integration with AI agents like Claude, OpenCode, or custom runtimes.
+
+```bash
+# Install dependency
+pip3 install flask
+
+# Start server
+python3 scripts/hipocampo_mcp_server.py
+
+# Query
+curl "http://localhost:8001/search?query=<término>"
+```
+
+**Files:**
+| File | Purpose |
+|------|---------|
+| `scripts/hipocampo_mcp_server.py` | Flask server exposing `GET /search` |
+| `scripts/hipocampo-mcp.service` | systemd user service for auto-start |
+| `docs/mcp-server-guide.md` | Full setup and configuration guide |
+
+---
+
 ## Related Work
 
 - *Memory Caching: RNNs with Growing Memory* (Google, 2025) — inspiration for SSC
@@ -178,5 +202,7 @@ python3 scripts/hipocampo_checkpoint.py --force
 | `hipocampo_backfill_vectorial.py` | Backfill de embeddings faltantes |
 | `hipocampo_calibrate.py` | Calibración de pesos híbridos (validación cruzada) |
 | `mm_brain_tool.py` | Persistencia dual (PostgreSQL + XML Freeplane) |
+| `hipocampo_mcp_server.py` | Servidor MCP Flask — expone búsqueda como API HTTP |
 
+Ver `docs/mcp-server-guide.md` para la guía de configuración del MCP server.  
 Ver `docs/hipocampo_paper.md` para la documentación completa del algoritmo BIRE y la arquitectura.
