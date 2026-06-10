@@ -118,25 +118,54 @@ Phase 4  ILIKE full scan if confidence < 40%
 
 ---
 
-## MCP Server
+## MCP Server (v2)
 
-The repo includes a Flask-based MCP (Model Context Protocol) server that exposes Hipocampo search as an HTTP API — ideal for integration with AI agents like Claude, OpenCode, or custom runtimes.
+The repo includes a **FastMCP** server with **4 tools** for reading and writing to the dual memory system. Connects via standard MCP protocol (stdio or SSE).
+
+### Tools
+
+| Tool | Args | Description |
+|------|------|-------------|
+| `search_hipocampo` | `query` | Search both memory stores (semantic + lexical) |
+| `quick_hipocampo_search` | `query` | Short alias for `search_hipocampo` |
+| `save_hipocampo` | `content`, `memory_type`, `code`, `categories` | Save to technical memory (`memoria_vectorial`) |
+| `profile_hipocampo` | `summary`, `extra`, `categories` | Save personal profile data (`memory_items`) |
+
+### Usage
 
 ```bash
-# Install dependency
-pip3 install flask
-
-# Start server
+# Start with stdio (default)
 python3 scripts/hipocampo_mcp_server.py
 
-# Query
-curl "http://localhost:8001/search?query=<término>"
+# Start with SSE on port 8001
+python3 scripts/hipocampo_mcp_server.py --sse 8001
+
+# systemd service (auto-start)
+cp scripts/hipocampo-mcp.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now hipocampo-mcp.service
+```
+
+### Integrate with any MCP client
+
+Add to your `opencode.json`, `claude_desktop_config.json`, or equivalent:
+
+```json
+{
+  "mcpServers": {
+    "hipocampo": {
+      "command": "python3",
+      "args": ["/path/to/hipocampo_mcp_server.py"],
+      "timeout": 120000
+    }
+  }
+}
 ```
 
 **Files:**
 | File | Purpose |
 |------|---------|
-| `scripts/hipocampo_mcp_server.py` | Flask server exposing `GET /search` |
+| `scripts/hipocampo_mcp_server.py` | FastMCP server with 4 tools (read + write) |
 | `scripts/hipocampo-mcp.service` | systemd user service for auto-start |
 | `docs/mcp-server-guide.md` | Full setup and configuration guide |
 
@@ -202,7 +231,24 @@ python3 scripts/hipocampo_checkpoint.py --force
 | `hipocampo_backfill_vectorial.py` | Backfill de embeddings faltantes |
 | `hipocampo_calibrate.py` | Calibración de pesos híbridos (validación cruzada) |
 | `mm_brain_tool.py` | Persistencia dual (PostgreSQL + XML Freeplane) |
-| `hipocampo_mcp_server.py` | Servidor MCP Flask — expone búsqueda como API HTTP |
+| `hipocampo_mcp_server.py` | Servidor MCP FastMCP — 4 tools (read + write) |
+
+### Servidor MCP (ES)
+
+El servidor MCP v2 expone 4 herramientas vía protocolo MCP estándar (stdio o SSE):
+
+- **`search_hipocampo(query)`** — búsqueda semántica + léxica en ambas tablas
+- **`quick_hipocampo_search(query)`** — alias rápido
+- **`save_hipocampo(content, memory_type, code, categories)`** — guarda en `memoria_vectorial` con embedding automático
+- **`profile_hipocampo(summary, extra, categories)`** — guarda perfil personal en `memory_items`
+
+```bash
+# Iniciar con SSE en puerto 8001
+python3 scripts/hipocampo_mcp_server.py --sse 8001
+
+# O como servicio systemd
+systemctl --user enable --now hipocampo-mcp.service
+```
 
 Ver `docs/mcp-server-guide.md` para la guía de configuración del MCP server.  
 Ver `docs/hipocampo_paper.md` para la documentación completa del algoritmo BIRE y la arquitectura.
