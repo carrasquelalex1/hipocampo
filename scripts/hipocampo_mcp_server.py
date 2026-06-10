@@ -15,8 +15,8 @@ def search():
     try:
         result = subprocess.run(
             [
-                "/home/alex/.gemini/mcp_venv/bin/python3",
-                "/home/alex/.gemini/scripts/hipocampo_search.py",
+                "python3",
+                "hipocampo_search.py",
                 query
             ],
             capture_output=True,
