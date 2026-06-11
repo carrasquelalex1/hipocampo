@@ -1,254 +1,177 @@
-# Hipocampo — Dual Memory System with SSC (Sparse Selective Caching)
+# Hipocampo: Dual-Memory System with Sparse Selective Caching
 
-**Author:** Alexander Carrasquel  
-**Version:** 3.7  
-**License:** MIT
+[![Version](https://img.shields.io/badge/version-3.7-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Hipocampo is a **dual-memory system** for AI agents that persists technical knowledge and user profile data across sessions. It uses PostgreSQL 17 with pgvector for semantic search, and implements **Sparse Selective Caching (SSC)**, a progressive 4-phase retrieval algorithm inspired by *"Memory Caching: RNNs with Growing Memory"* (Google, 2025).
+**Hipocampo** is an advanced dual-memory persistence architecture designed for autonomous AI agents. By maintaining both technical knowledge and user profiling data across sessions, Hipocampo provides a reliable, stateful context that enables agents to learn, adapt, and scale efficiently. 
 
----
-
-## Features
-
-- **Dual Memory Architecture:** Separate stores for technical records (`memoria_vectorial`) and user profile (`memory_items`), each with 768d embeddings
-- **SSC Search (v3.7):** 4-phase progressive retrieval — Tag Router → pgvector Top-K → GIN Trigram → ILIKE Fallback
-- **BIRE Search (v3.6):** Original unified search with lexical expansion, hybrid scoring, and tag expansion
-- **Logarithmic Checkpointing:** Compresses old memories by time scale (24h detail → 90d+ single checkpoint)
-- **Auto-Tagging:** Regex-based rule engine automatically assigns tags and categories on persist
-- **Cross-System Vector Search:** Unified 768d embeddings across 1,137 records (814 MV + 323 MI)
-- **Active Agent Re-ranking:** Optional re-ranking by the AI agent context (Claude) without external API calls
+Built on top of **PostgreSQL 17** with `pgvector`, it introduces **Sparse Selective Caching (SSC)**—a progressive four-phase retrieval algorithm inspired by *"Memory Caching: RNNs with Growing Memory"* (Google, 2025).
 
 ---
 
-## Quick Start
+## 🚀 Key Features
+
+* **Dual-Memory Architecture**: Distinct storage layers for technical records (`memoria_vectorial`) and user profile data (`memory_items`), each utilizing 768-dimensional embeddings.
+* **Sparse Selective Caching (SSC)**: A state-of-the-art four-phase progressive retrieval pipeline that scales seamlessly: *Tag Router* → *pgvector Top-K* → *GIN Trigram* → *ILIKE Fallback*.
+* **Logarithmic Checkpointing**: Intelligently compresses historical memories based on time decay, shrinking 24-hour granular details into unified 90-day checkpoints.
+* **Automated Tagging Engine**: A robust, Regex-based rule engine that autonomously categorizes and tags records upon persistence.
+* **Cross-System Vector Search**: Unified semantic search across over 1,100 records for deep cross-referencing.
+* **Model Context Protocol (MCP)**: Native integration via a FastMCP server, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
+
+---
+
+## 🛠️ Quick Start
 
 ### Prerequisites
-
-- PostgreSQL 17+ with `pgvector` and `pg_trgm` extensions
-- Python 3.13+
-- Google AI API key for embeddings (`gemini-embedding-001`)
+* **PostgreSQL 17+** (with `pgvector` and `pg_trgm` extensions enabled)
+* **Python 3.13+**
+* **Google AI API Key** (for `gemini-embedding-001` generation)
 
 ### Installation
 
 ```bash
+# 1. Clone the repository
 git clone https://github.com/carrasquelalex1/hipocampo.git
 cd hipocampo
 
-# Database setup
+# 2. Setup the PostgreSQL Database
 createdb hipocampo_db
 psql -d hipocampo_db -c "CREATE EXTENSION vector; CREATE EXTENSION pg_trgm;"
 psql -d hipocampo_db -f esquema.sql
 
-# Python environment
-python3 -m venv venv && source venv/bin/activate
+# 3. Initialize Python Environment
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 
-# Configure .env
+# 4. Environment Configuration
 cp .env.example .env
-# Edit .env: set DB_HOST, DB_USER, GOOGLE_API_KEY
+# Edit .env with your DB_HOST, DB_USER, and GOOGLE_API_KEY
 ```
 
-### Usage
+### Basic Usage
+
+Hipocampo provides specialized scripts to interact with the core engine:
 
 ```bash
-# Search with SSC (Sparse Selective Caching)
+# Perform a search using the new SSC progressive retrieval algorithm
 python3 scripts/hipocampo_ssc_search.py "query term"
 
-# Search with BIRE (original)
+# Perform a search using the legacy BIRE unified search
 python3 scripts/hipocampo_search.py "query term"
 
-# Checkpoint old memories
+# Compress older memories using Logarithmic Checkpointing
 python3 scripts/hipocampo_checkpoint.py --dry-run
 python3 scripts/hipocampo_checkpoint.py --force
 ```
 
 ---
 
-## Architecture
+## 🧠 System Architecture
 
-```
-hipocampo_db (PostgreSQL 17 + pgvector)
-├── memoria_vectorial (814 records) ← Technical knowledge
-│   ├── contenido (text), metadatos (jsonb), embedding (vector 768d)
-│   └── Indexes: HNSW (cosine), GIN trigram
-├── memory_items (323 records) ← User profile
-│   ├── memory_type → profile | event | decision
-│   ├── summary, embedding (768d), extra (jsonb)
-│   └── Indexes: HNSW (cosine), GIN trigram
-├── memory_categories (10 categories)
-├── category_items (M:N relationship)
-└── resources (referenced URLs/files)
-```
+The core of Hipocampo is backed by a relational and vector hybrid design:
 
-### SSC Pipeline (v3.7)
-
-```
-Query → TAG ROUTER (classifies profile/technical/mixed)
-         ↓
-Phase 2  PGVECTOR top-20 on both tables ← stops here if confidence ≥ 70%
-         ↓
-Phase 3  GIN TRIGRAM expansion if confidence < 70%
-         ↓
-Phase 4  ILIKE full scan if confidence < 40%
+```text
+hipocampo_db (PostgreSQL 17 + pgvector + pg_trgm)
+├── memoria_vectorial (Technical Knowledge)
+│   ├── Columns: contenido (text), metadatos (jsonb), embedding (vector 768d)
+│   └── Indexes: HNSW (cosine similarity), GIN (trigram)
+├── memory_items (User Profile & Events)
+│   ├── Columns: memory_type (profile|event|decision), summary, embedding, extra
+│   └── Indexes: HNSW (cosine similarity), GIN (trigram)
+├── memory_categories (Classification Taxonomy)
+├── category_items (M:N Mapping)
+└── resources (Referenced Assets & URLs)
 ```
 
-### Logarithmic Checkpointing
+### The SSC Pipeline (v3.7)
 
-| Age | Granularity |
-|-----|-------------|
-| < 24h | Full detail (no compression) |
-| 1-7 days | Top 3 items per project |
-| 7-30 days | 200-char summary per project |
-| 30-90 days | 100-char summary per week |
-| > 90 days | Single checkpoint per project |
+Sparse Selective Caching operates as a multi-tier fallback system to optimize both speed and accuracy:
+
+1. **Phase 1: Tag Router** – Classifies the query intent (profile vs. technical) and dynamically assigns weights.
+2. **Phase 2: PGVector Top-K** – Semantic search across both tables. Execution halts here if confidence ≥ 70%.
+3. **Phase 3: GIN Trigram** – Lexical expansion via Trigram indexing if semantic confidence is < 70%.
+4. **Phase 4: ILIKE Scan** – Final fallback full-table scan triggered only if confidence falls < 40%.
 
 ---
 
-## Scripts
+## 🔌 MCP Server Integration
 
-| Script | Purpose |
-|--------|---------|
-| `hipocampo_ssc_search.py` | SSC search — 4-phase progressive retrieval |
-| `hipocampo_search.py` | BIRE v3.6 — unified search with lexical + vector fusion |
-| `hipocampo_autotag.py` | Rule-based auto-tagging (17 tag + 16 category rules) |
-| `hipocampo_checkpoint.py` | Logarithmic time-decay checkpoint compression |
-| `hipocampo_backfill_vectorial.py` | Backfill missing embeddings |
-| `hipocampo_calibrate.py` | Hybrid weight calibration (cross-validation) |
-| `mm_brain_tool.py` | Dual persist (PostgreSQL + Freeplane XML) |
+Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to autonomously read and write memories. 
 
----
+### Available MCP Tools
+* `search_hipocampo(query)`: Unified semantic and lexical search.
+* `quick_hipocampo_search(query)`: Shorthand alias for rapid queries.
+* `save_hipocampo(content, memory_type, code, categories)`: Persist data into the technical memory store (`memoria_vectorial`).
+* `profile_hipocampo(summary, extra, categories)`: Store personal or event-driven user data (`memory_items`).
 
-## MCP Server (v2)
-
-The repo includes a **FastMCP** server with **4 tools** for reading and writing to the dual memory system. Connects via standard MCP protocol (stdio or SSE).
-
-### Tools
-
-| Tool | Args | Description |
-|------|------|-------------|
-| `search_hipocampo` | `query` | Search both memory stores (semantic + lexical) |
-| `quick_hipocampo_search` | `query` | Short alias for `search_hipocampo` |
-| `save_hipocampo` | `content`, `memory_type`, `code`, `categories` | Save to technical memory (`memoria_vectorial`) |
-| `profile_hipocampo` | `summary`, `extra`, `categories` | Save personal profile data (`memory_items`) |
-
-### Usage
+### Starting the Server
 
 ```bash
-# Start with stdio (default)
+# Standard I/O mode (default for local desktop clients)
 python3 scripts/hipocampo_mcp_server.py
 
-# Start with SSE on port 8001
+# SSE transport mode (for remote HTTP clients)
 python3 scripts/hipocampo_mcp_server.py --sse 8001
-
-# systemd service (auto-start)
-cp scripts/hipocampo-mcp.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now hipocampo-mcp.service
 ```
 
-### Integrate with any MCP client
-
-Add to your `opencode.json`, `claude_desktop_config.json`, or equivalent:
-
-```json
-{
-  "mcpServers": {
-    "hipocampo": {
-      "command": "python3",
-      "args": ["/path/to/hipocampo_mcp_server.py"],
-      "timeout": 120000
-    }
-  }
-}
-```
-
-**Files:**
-| File | Purpose |
-|------|---------|
-| `scripts/hipocampo_mcp_server.py` | FastMCP server with 4 tools (read + write) |
-| `scripts/hipocampo-mcp.service` | systemd user service for auto-start |
-| `docs/mcp-server-guide.md` | Full setup and configuration guide |
+For advanced configuration, please refer to the [MCP Server Guide](docs/mcp-server-guide.md).
 
 ---
 
-## Related Work
+## 📄 License
 
-- *Memory Caching: RNNs with Growing Memory* (Google, 2025) — inspiration for SSC
-- *Retrieval-Augmented Generation* (Lewis et al., 2020)
-- pgvector — [hnsw vector search for PostgreSQL](https://github.com/pgvector/pgvector)
-- Gemini Embeddings — [Google AI embeddings](https://ai.google.dev/gemini-api/docs/embeddings)
-
----
-
-## License
-
-MIT
+This project is licensed under the **MIT License**.
 
 ---
 
 ## 🇪🇸 Versión en Español
 
-# Hipocampo — Sistema de Memoria Dual con SSC (Sparse Selective Caching)
+# Hipocampo: Sistema de Memoria Dual con Caché Selectivo (SSC)
 
-**Autor:** Alexander Carrasquel  
-**Versión:** 3.7
+**Hipocampo** es una arquitectura avanzada de persistencia de memoria dual diseñada para agentes de Inteligencia Artificial. Al mantener tanto el conocimiento técnico como los datos del perfil del usuario entre sesiones, Hipocampo proporciona un contexto con estado confiable que permite a los agentes aprender, adaptarse y escalar eficientemente.
 
-Hipocampo es un sistema de **memoria dual** para agentes de IA que persiste conocimiento técnico y datos de perfil de usuario a través de sesiones. Usa PostgreSQL 17 con pgvector para búsqueda semántica e implementa **SSC (Sparse Selective Caching)**, un algoritmo progresivo de 4 fases inspirado en el paper *"Memory Caching: RNNs with Growing Memory"* (Google, 2025).
+Construido sobre **PostgreSQL 17** y `pgvector`, introduce **Sparse Selective Caching (SSC)**: un algoritmo de recuperación progresiva de cuatro fases inspirado en *"Memory Caching: RNNs with Growing Memory"* (Google, 2025).
 
-### Características principales
+---
 
-- **Arquitectura de memoria dual:** Separación de registros técnicos (`memoria_vectorial`) y perfil de usuario (`memory_items`), cada uno con embeddings 768d
-- **Búsqueda SSC (v3.7):** 4 fases progresivas — Tag Router → pgvector Top-K → GIN Trigram → ILIKE Fallback
-- **Checkpointing logarítmico:** Comprime memorias antiguas por escala temporal (detalle 24h → checkpoint único >90d)
-- **Auto-Tagging:** Motor de reglas regex que asigna tags y categorías automáticamente
-- **1,137 registros** con embeddings 768d unificados (814 MV + 323 MI) para búsqueda cross-sistema
+## 🚀 Características Principales
 
-### Inicio Rápido
+* **Arquitectura de Memoria Dual**: Capas de almacenamiento separadas para registros técnicos (`memoria_vectorial`) y datos de perfil (`memory_items`), ambas utilizando embeddings de 768 dimensiones.
+* **Sparse Selective Caching (SSC)**: Algoritmo progresivo que escala según la necesidad: *Enrutador de Tags* → *pgvector Top-K* → *Trigramas GIN* → *Escaneo ILIKE*.
+* **Checkpointing Logarítmico**: Compresión inteligente basada en el decaimiento del tiempo, consolidando detalles granulares en un solo registro tras 90 días.
+* **Motor de Auto-Etiquetado**: Reglas basadas en expresiones regulares que categorizan la información de manera autónoma al momento de la persistencia.
+* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante un servidor FastMCP, otorgando capacidades directas de lectura/escritura a clientes MCP como Claude Desktop y OpenCode.
+
+---
+
+## 🛠️ Instalación Rápida
 
 ```bash
+# 1. Clonar y configurar BD
 git clone https://github.com/carrasquelalex1/hipocampo.git
 cd hipocampo
+createdb hipocampo_db
+psql -d hipocampo_db -c "CREATE EXTENSION vector; CREATE EXTENSION pg_trgm;"
+psql -d hipocampo_db -f esquema.sql
 
-# Buscar con SSC
-python3 scripts/hipocampo_ssc_search.py "término de búsqueda"
+# 2. Entorno Python y dependencias
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 
-# Buscar con BIRE
-python3 scripts/hipocampo_search.py "término"
-
-# Checkpoint (vista previa y ejecución)
-python3 scripts/hipocampo_checkpoint.py --dry-run
-python3 scripts/hipocampo_checkpoint.py --force
+# 3. Configurar variables de entorno
+cp .env.example .env
+# Editar .env con DB_HOST, DB_USER y GOOGLE_API_KEY
 ```
 
-### Scripts
-
-| Script | Propósito |
-|--------|-----------|
-| `hipocampo_ssc_search.py` | Búsqueda SSC — 4 fases progresivas |
-| `hipocampo_search.py` | BIRE v3.6 — búsqueda unificada léxico + vectorial |
-| `hipocampo_autotag.py` | Auto-tagging por reglas (17 tags + 16 categorías) |
-| `hipocampo_checkpoint.py` | Compresión por decaimiento logarítmico |
-| `hipocampo_backfill_vectorial.py` | Backfill de embeddings faltantes |
-| `hipocampo_calibrate.py` | Calibración de pesos híbridos (validación cruzada) |
-| `mm_brain_tool.py` | Persistencia dual (PostgreSQL + XML Freeplane) |
-| `hipocampo_mcp_server.py` | Servidor MCP FastMCP — 4 tools (read + write) |
-
-### Servidor MCP (ES)
-
-El servidor MCP v2 expone 4 herramientas vía protocolo MCP estándar (stdio o SSE):
-
-- **`search_hipocampo(query)`** — búsqueda semántica + léxica en ambas tablas
-- **`quick_hipocampo_search(query)`** — alias rápido
-- **`save_hipocampo(content, memory_type, code, categories)`** — guarda en `memoria_vectorial` con embedding automático
-- **`profile_hipocampo(summary, extra, categories)`** — guarda perfil personal en `memory_items`
-
+Para usar la búsqueda directamente desde la terminal:
 ```bash
-# Iniciar con SSE en puerto 8001
-python3 scripts/hipocampo_mcp_server.py --sse 8001
-
-# O como servicio systemd
-systemctl --user enable --now hipocampo-mcp.service
+python3 scripts/hipocampo_ssc_search.py "término de búsqueda"
 ```
 
-Ver `docs/mcp-server-guide.md` para la guía de configuración del MCP server.  
-Ver `docs/hipocampo_paper.md` para la documentación completa del algoritmo BIRE y la arquitectura.
+Para inicializar el servidor MCP:
+```bash
+python3 scripts/hipocampo_mcp_server.py --sse 8001
+```
+
+*Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
