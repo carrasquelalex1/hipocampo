@@ -1,4 +1,4 @@
-#!/home/alex/.gemini/mcp_venv/bin/python3
+#!/usr/bin/env python3
 """Hipocampo MCP Server v2 — MCP Native con FastMCP
 
 Expone el motor de búsqueda BIRE v3.6 como herramientas (tools) del
@@ -31,12 +31,12 @@ from mcp.server.fastmcp import FastMCP
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PYTHON_BIN = "/home/alex/.gemini/mcp_venv/bin/python3"
-SEARCH_SCRIPT = "/home/alex/.gemini/scripts/hipocampo_search.py"
-DB_HOST = "/var/run/postgresql"
-DB_USER = "alex"
-DB_NAME = "hipocampo_db"
-ENV_PATH = "/home/alex/scripts/.env"
+PYTHON_BIN = sys.executable
+SEARCH_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hipocampo_search.py")
+DB_HOST = os.getenv("DB_HOST", "/var/run/postgresql")
+DB_USER = os.getenv("DB_USER", "alex")
+DB_NAME = os.getenv("DB_NAME", "hipocampo_db")
+ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 
 # ─── INICIALIZACIÓN MCP ─────────────────────────────────────────────────────
 mcp = FastMCP("hipocampo")
@@ -238,7 +238,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--sse":
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
         logger.info("🔌 Iniciando Hipocampo MCP Server (SSE) en puerto %d", port)
-        mcp.port = port
+        mcp.settings.port = port
         mcp.run(transport="sse")
     else:
         logger.info("🔌 Iniciando Hipocampo MCP Server (stdio)")
