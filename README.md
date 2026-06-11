@@ -119,6 +119,19 @@ For advanced configuration, please refer to the [MCP Server Guide](docs/mcp-serv
 
 ---
 
+## ☕ Support / Donaciones
+
+If this project helps you, consider supporting its development:
+
+[![PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?style=for-the-badge&logo=paypal)](https://paypal.me/alexandercarrasquel)
+[![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors)](https://github.com/sponsors/carrasquelalex1)
+
+- **PayPal:** [alexander.carrasquel@gmail.com](https://paypal.me/alexandercarrasquel)
+- **USDT (TRC-20):** (próximamente)
+- Cada grano de arena ayuda a mantener el proyecto vivo 🧠✨
+
+---
+
 ## 📄 License
 
 This project is licensed under the **MIT License**.
@@ -175,3 +188,15 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001
 ```
 
 *Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
+
+---
+
+## ☕ Donaciones
+
+Si este proyecto te es útil, considera apoyarlo:
+
+[![PayPal](https://img.shields.io/badge/Donar-PayPal-00457C?style=for-the-badge&logo=paypal)](https://paypal.me/alexandercarrasquel)
+
+- **PayPal:** alexander.carrasquel@gmail.com
+- **USDT (TRC-20):** (próximamente)
+- Cada aporte ayuda a mantener vivo el proyecto 🧠✨
