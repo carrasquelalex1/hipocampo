@@ -123,10 +123,10 @@ For advanced configuration, please refer to the [MCP Server Guide](docs/mcp-serv
 
 If this project helps you, consider supporting its development:
 
-[![PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?style=for-the-badge&logo=paypal)](https://paypal.me/alexandercarrasquel)
+[![PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?style=for-the-badge&logo=paypal)](https://paypal.me/carrasquealex)
 [![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors)](https://github.com/sponsors/carrasquelalex1)
 
-- **PayPal:** [alexander.carrasquel@gmail.com](https://paypal.me/alexandercarrasquel)
+- **PayPal:** [paypal.me/carrasquealex](https://paypal.me/carrasquealex)
 - **USDT (TRC-20):** (próximamente)
 - Cada grano de arena ayuda a mantener el proyecto vivo 🧠✨
 
@@ -195,8 +195,8 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001
 
 Si este proyecto te es útil, considera apoyarlo:
 
-[![PayPal](https://img.shields.io/badge/Donar-PayPal-00457C?style=for-the-badge&logo=paypal)](https://paypal.me/alexandercarrasquel)
+[![PayPal](https://img.shields.io/badge/Donar-PayPal-00457C?style=for-the-badge&logo=paypal)](https://paypal.me/carrasquealex)
 
-- **PayPal:** alexander.carrasquel@gmail.com
+- **PayPal:** [paypal.me/carrasquealex](https://paypal.me/carrasquealex)
 - **USDT (TRC-20):** (próximamente)
 - Cada aporte ayuda a mantener vivo el proyecto 🧠✨
