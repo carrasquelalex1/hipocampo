@@ -100,10 +100,25 @@ Sparse Selective Caching operates as a multi-tier fallback system to optimize bo
 Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to autonomously read and write memories. 
 
 ### Available MCP Tools
-* `search_hipocampo(query)`: Unified semantic and lexical search.
+
+**Memory Operations:**
+* `search_hipocampo(query)`: Unified semantic and lexical search (auto-records metrics).
 * `quick_hipocampo_search(query)`: Shorthand alias for rapid queries.
 * `save_hipocampo(content, memory_type, code, categories)`: Persist data into the technical memory store (`memoria_vectorial`).
 * `profile_hipocampo(summary, extra, categories)`: Store personal or event-driven user data (`memory_items`).
+
+**Self-Diagnosis & Auto-Repair (Fase 1):**
+* `hipocampo_health()`: Full system health check (PostgreSQL, NVIDIA API, disk, extensions).
+* `hipocampo_auto_repair()`: Automatically repairs detected issues (restart PostgreSQL, create missing tables).
+
+**Performance Optimization (Fase 2):**
+* `hipocampo_stats()`: Query performance metrics, latency analysis, and optimization recommendations.
+* `hipocampo_tune()`: Auto-adjusts SSC thresholds and hybrid weights based on real usage data.
+
+**Memory Maintenance (Fase 3):**
+* `hipocampo_dedup(merge)`: Detects and merges duplicate memories (exact + semantic via cosine similarity).
+* `hipocampo_checkpoint(dry_run)`: Logarithmic checkpointing to compress old memories.
+* `hipocampo_maintenance()`: Full maintenance cycle (repair → dedup → checkpoint → tune).
 
 ### Starting the Server
 
@@ -153,8 +168,9 @@ Construido sobre **PostgreSQL 17** y `pgvector`, introduce **Sparse Selective Ca
 * **Arquitectura de Memoria Dual**: Capas de almacenamiento separadas para registros técnicos (`memoria_vectorial`) y datos de perfil (`memory_items`), ambas utilizando embeddings de 768 dimensiones.
 * **Sparse Selective Caching (SSC)**: Algoritmo progresivo que escala según la necesidad: *Enrutador de Tags* → *pgvector Top-K* → *Trigramas GIN* → *Escaneo ILIKE*.
 * **Checkpointing Logarítmico**: Compresión inteligente basada en el decaimiento del tiempo, consolidando detalles granulares en un solo registro tras 90 días.
+* **Auto-MeJORA MCP**: Autodiagnóstico (health check + auto-repair), optimización dinámica (stats + tune), y mantenimiento de memoria (dedup + checkpoint) — todo desde herramientas MCP.
 * **Motor de Auto-Etiquetado**: Reglas basadas en expresiones regulares que categorizan la información de manera autónoma al momento de la persistencia.
-* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante un servidor FastMCP, otorgando capacidades directas de lectura/escritura a clientes MCP como Claude Desktop y OpenCode.
+* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante un servidor FastMCP con 11 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
 
 ---
 
@@ -184,6 +200,7 @@ python3 scripts/hipocampo_ssc_search.py "término de búsqueda"
 
 Para inicializar el servidor MCP:
 ```bash
+python3 scripts/hipocampo_mcp_server.py
 python3 scripts/hipocampo_mcp_server.py --sse 8001
 ```
 
