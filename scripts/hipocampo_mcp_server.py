@@ -32,11 +32,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 PYTHON_BIN = sys.executable
-SEARCH_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hipocampo_search.py")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SEARCH_SCRIPT = os.path.join(BASE_DIR, "hipocampo_search.py")
+HEALTH_SCRIPT = os.path.join(BASE_DIR, "hipocampo_health.py")
+STATS_SCRIPT = os.path.join(BASE_DIR, "hipocampo_stats.py")
+DEDUP_SCRIPT = os.path.join(BASE_DIR, "hipocampo_dedup.py")
+CHECKPOINT_SCRIPT = os.path.join(BASE_DIR, "hipocampo_checkpoint.py")
 DB_HOST = os.getenv("DB_HOST", "/var/run/postgresql")
 DB_USER = os.getenv("DB_USER", "alex")
 DB_NAME = os.getenv("DB_NAME", "hipocampo_db")
-ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+ENV_PATH = os.path.join(BASE_DIR, "scripts", ".env")
 
 # ─── INICIALIZACIÓN MCP ─────────────────────────────────────────────────────
 mcp = FastMCP("hipocampo")
@@ -60,6 +65,8 @@ def search_hipocampo(query: str) -> str:
         Resultados formateados del BIRE como texto plano.
         Si no hay coincidencias, indica búsqueda exitosa pero sin resultados.
     """
+    import time
+    t0 = time.time()
     try:
         result = subprocess.run(
             [PYTHON_BIN, SEARCH_SCRIPT, query],
@@ -67,7 +74,36 @@ def search_hipocampo(query: str) -> str:
             text=True,
             check=True,
         )
-        logger.info("Hipocampo search OK query=%r", query)
+        latency_ms = int((time.time() - t0) * 1000)
+        logger.info("Hipocampo search OK query=%r latency=%dms", query, latency_ms)
+
+        results_count = 0
+        top_score = 0.0
+        avg_score = 0.0
+        for line in result.stdout.split("\n"):
+            if "📍" in line:
+                results_count += 1
+            if "Score promedio:" in line:
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    try:
+                        avg_score = float(parts[1].strip())
+                    except:
+                        pass
+            if "🏆 Mejor score:" in line:
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    try:
+                        top_score = float(parts[1].strip())
+                    except:
+                        pass
+
+        subprocess.run(
+            [PYTHON_BIN, STATS_SCRIPT, "--record", query, str(latency_ms), str(results_count), "ssc", str(top_score), str(avg_score)],
+            capture_output=True,
+            timeout=10,
+        )
+
         return result.stdout
 
     except subprocess.CalledProcessError as e:
@@ -232,6 +268,202 @@ def profile_hipocampo(
     except Exception as e:
         logger.error("❌ Error al guardar perfil: %s", e)
         return f"❌ Error al guardar perfil: {e}"
+
+
+# ─── HERRAMIENTA: HEALTH CHECK ───────────────────────────────────────────────
+
+
+@mcp.tool()
+def hipocampo_health() -> str:
+    """
+    Ejecuta un health check completo del sistema Hipocampo.
+
+    Verifica: PostgreSQL, NVIDIA API, tablas, espacio en disco, extensiones.
+
+    Returns:
+        Reporte formateado del estado del sistema.
+    """
+    try:
+        result = subprocess.run(
+            [PYTHON_BIN, HEALTH_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.stdout or "✅ Health check completado (sin salida)"
+    except subprocess.TimeoutExpired:
+        return "❌ Health check timed out (>30s)"
+    except Exception as e:
+        logger.error("Health check error: %s", e)
+        return f"❌ Error en health check: {e}"
+
+
+@mcp.tool()
+def hipocampo_auto_repair() -> str:
+    """
+    Intenta reparar automáticamente problemas detectados en el sistema.
+
+    Reparaciones posibles:
+    - Reiniciar PostgreSQL si está caído
+    - Crear tablas faltantes desde esquema.sql
+    - Verificar/configurar NVIDIA_API_KEY
+
+    Returns:
+        Reporte de reparaciones ejecutadas.
+    """
+    try:
+        result = subprocess.run(
+            [PYTHON_BIN, HEALTH_SCRIPT, "--repair"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return result.stdout or "🔧 Auto-repair completado (sin salida)"
+    except subprocess.TimeoutExpired:
+        return "❌ Auto-repair timed out (>60s)"
+    except Exception as e:
+        logger.error("Auto-repair error: %s", e)
+        return f"❌ Error en auto-repair: {e}"
+
+
+# ─── HERRAMIENTAS: STATS Y AJUSTE DINÁMICO ────────────────────────────────────
+
+
+@mcp.tool()
+def hipocampo_stats() -> str:
+    """
+    Muestra estadísticas de rendimiento del sistema Hipocampo.
+
+    Analiza latencia de queries, métodos usados, scores promedios
+    y da recomendaciones de optimización.
+
+    Returns:
+        Reporte de métricas y recomendaciones.
+    """
+    try:
+        result = subprocess.run(
+            [PYTHON_BIN, STATS_SCRIPT, "--analyze"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.stdout or "📊 Stats completados"
+    except Exception as e:
+        logger.error("Stats error: %s", e)
+        return f"❌ Error en stats: {e}"
+
+
+@mcp.tool()
+def hipocampo_tune() -> str:
+    """
+    Ajusta automáticamente los thresholds y pesos del SSC
+    basado en las métricas de rendimiento acumuladas.
+
+    Returns:
+        Reporte de ajustes aplicados.
+    """
+    try:
+        result = subprocess.run(
+            [PYTHON_BIN, STATS_SCRIPT, "--tune"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.stdout or "🔧 Tune completado"
+    except Exception as e:
+        logger.error("Tune error: %s", e)
+        return f"❌ Error en tune: {e}"
+
+
+# ─── HERRAMIENTAS: MANTENIMIENTO (FASE 3) ─────────────────────────────────────
+
+
+@mcp.tool()
+def hipocampo_dedup(merge: bool = False) -> str:
+    """
+    Detecta y opcionalmente fusiona duplicados en las tablas de memoria.
+
+    Args:
+        merge: Si es True, fusiona los duplicados encontrados.
+               Si es False (default), solo muestra análisis.
+
+    Returns:
+        Reporte de duplicados encontrados o fusionados.
+    """
+    try:
+        args = [PYTHON_BIN, DEDUP_SCRIPT]
+        if merge:
+            args.append("--merge")
+        result = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        return result.stdout or "✅ Dedup completado"
+    except Exception as e:
+        logger.error("Dedup error: %s", e)
+        return f"❌ Error en dedup: {e}"
+
+
+@mcp.tool()
+def hipocampo_checkpoint(dry_run: bool = True) -> str:
+    """
+    Comprime memorias antiguas usando checkpointing logarítmico.
+
+    Args:
+        dry_run: Si es True (default), solo muestra qué se comprimiría.
+                 Si es False, ejecuta la compresión.
+
+    Returns:
+        Reporte del checkpointing ejecutado.
+    """
+    try:
+        args = [PYTHON_BIN, CHECKPOINT_SCRIPT]
+        if dry_run:
+            args.append("--dry-run")
+        else:
+            args.append("--force")
+        result = subprocess.run(args, capture_output=True, text=True, timeout=60)
+        return result.stdout or "✅ Checkpoint completado"
+    except Exception as e:
+        logger.error("Checkpoint error: %s", e)
+        return f"❌ Error en checkpoint: {e}"
+
+
+@mcp.tool()
+def hipocampo_maintenance() -> str:
+    """
+    Ejecuta el ciclo completo de mantenimiento:
+    1. Health check → auto-repair si es necesario
+    2. Dedup → fusiona duplicados
+    3. Checkpoint → comprime memorias antiguas
+    4. Tune → ajusta thresholds según métricas
+
+    Returns:
+        Reporte consolidado del mantenimiento.
+    """
+    report_parts = []
+    try:
+        r = subprocess.run([PYTHON_BIN, HEALTH_SCRIPT, "--repair"], capture_output=True, text=True, timeout=60)
+        report_parts.append(f"🔧 Repair: {'✅' if 'repaired' in r.stdout else '⏭️'}")
+    except:
+        report_parts.append("🔧 Repair: ❌")
+
+    try:
+        r = subprocess.run([PYTHON_BIN, DEDUP_SCRIPT, "--merge"], capture_output=True, text=True, timeout=120)
+        report_parts.append(f"🧹 Dedup: ✅ ({sum(1 for c in r.stdout if c=='✅')} ops)")
+    except:
+        report_parts.append("🧹 Dedup: ❌")
+
+    try:
+        r = subprocess.run([PYTHON_BIN, CHECKPOINT_SCRIPT, "--force"], capture_output=True, text=True, timeout=60)
+        report_parts.append(f"📦 Checkpoint: ✅")
+    except:
+        report_parts.append("📦 Checkpoint: ❌")
+
+    try:
+        r = subprocess.run([PYTHON_BIN, STATS_SCRIPT, "--tune"], capture_output=True, text=True, timeout=30)
+        report_parts.append(f"⚙️ Tune: ✅")
+    except:
+        report_parts.append("⚙️ Tune: ❌")
+
+    return "📋 Mantenimiento completo:\n" + "\n".join(report_parts)
 
 
 if __name__ == "__main__":
