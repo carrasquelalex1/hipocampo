@@ -204,6 +204,27 @@ python3 scripts/hipocampo_mcp_server.py
 python3 scripts/hipocampo_mcp_server.py --sse 8001
 ```
 
+### Herramientas MCP Disponibles
+
+**Operaciones de Memoria:**
+* `search_hipocampo(consulta)`: Búsqueda semántica + léxica híbrida (auto-registra métricas).
+* `quick_hipocampo_search(consulta)`: Alias rápido para búsquedas.
+* `save_hipocampo(contenido, tipo, codigo, categorias)`: Guarda datos técnicos en `memoria_vectorial`.
+* `profile_hipocampo(resumen, extra, categorias)`: Guarda datos de perfil en `memory_items`.
+
+**Autodiagnóstico y Reparación (Fase 1):**
+* `hipocampo_health()`: Health check completo (PostgreSQL, NVIDIA API, disco, extensiones).
+* `hipocampo_auto_repair()`: Repara problemas automáticamente (reinicia PostgreSQL, crea tablas faltantes).
+
+**Optimización de Rendimiento (Fase 2):**
+* `hipocampo_stats()`: Métricas de rendimiento, latencia, y recomendaciones de optimización.
+* `hipocampo_tune()`: Ajusta thresholds SSC y pesos híbridos según uso real.
+
+**Mantenimiento de Memoria (Fase 3):**
+* `hipocampo_dedup(fusionar)`: Detecta y fusiona memorias duplicadas (exactas + semánticas).
+* `hipocampo_checkpoint(seco)`: Checkpointing logarítmico para comprimir memorias antiguas.
+* `hipocampo_maintenance()`: Ciclo completo de mantenimiento (reparar → dedup → checkpoint → tune).
+
 *Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
 
 ---
