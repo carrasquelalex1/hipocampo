@@ -22,8 +22,8 @@ CONFIG_PATH = os.path.join(SCRIPTS_DIR, "hipocampo_hybrid_config.json")
 DEFAULT_THRESHOLDS = {
     "vectorial_confidence_min": 0.7,
     "trigram_confidence_min": 0.4,
-    "hybrid_alpha": 0.3,
-    "hybrid_beta": 0.7,
+    "hybrid_alpha": 0.6,
+    "hybrid_beta": 0.4,
 }
 
 LATENCY_TABLE_SQL = """
@@ -174,10 +174,10 @@ def tune_thresholds():
         changes["vectorial_confidence_min"] = f"{old_config.get('vectorial_confidence_min', 0.7)} → {config['vectorial_confidence_min']}"
 
     if stats["avg_top_score"] < 15 and stats["total_queries"] > 10:
-        new_alpha = min(0.5, config.get("hybrid_alpha", 0.3) + 0.05)
+        new_alpha = min(0.7, config.get("hybrid_alpha", 0.6) + 0.05)
         config["hybrid_alpha"] = new_alpha
         config["hybrid_beta"] = 1 - new_alpha
-        changes["hybrid_alpha"] = f"{old_config.get('hybrid_alpha', 0.3)} → {new_alpha}"
+        changes["hybrid_alpha"] = f"{old_config.get('hybrid_alpha', 0.6)} → {new_alpha}"
 
     config["last_tuned"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     with open(CONFIG_PATH, "w") as f:

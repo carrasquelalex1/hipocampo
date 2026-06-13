@@ -452,9 +452,9 @@ def cargar_config_hibrida():
     try:
         with open(HYBRID_CONFIG_PATH) as f:
             cfg = json.load(f)
-            return cfg.get('alpha', 0.3)
+            return cfg.get('alpha', 0.6)
     except (FileNotFoundError, json.JSONDecodeError):
-        return 0.3
+        return 0.6
 
 
 def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None):
