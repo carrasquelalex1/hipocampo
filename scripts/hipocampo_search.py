@@ -445,7 +445,8 @@ def expandir_por_tags(cur, tags, contenidos_existentes):
 
 # ─── FASE 5: FUSIÓN Y RANKING (BIRE CORE) ────────────────────────────────────
 
-HYBRID_CONFIG_PATH = "hipocampo_hybrid_config.json"
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+HYBRID_CONFIG_PATH = os.path.join(SCRIPTS_DIR, "hipocampo_hybrid_config.json")
 
 def cargar_config_hibrida():
     """Carga la configuración de ponderación híbrida calibrada."""
