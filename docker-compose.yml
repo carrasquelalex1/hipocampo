@@ -1,0 +1,17 @@
+services:
+  hipocampo:
+    build: .
+    ports:
+      - "8001:8001"
+    environment:
+      - DB_HOST=localhost
+      - DB_USER=hipocampo
+      - DB_NAME=hipocampo_db
+      - DB_PASSWORD=hipocampo_pass
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
