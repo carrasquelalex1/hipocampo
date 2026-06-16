@@ -3,87 +3,98 @@ name: hipocampo-protocol
 description: Protocolo de memoria dual con Sparse Selective Caching (SSC). Persiste en memoria_vectorial y memory_items con búsqueda semántica progresiva.
 ---
 
-# Protocolo Hipocampo: Memoria Dual, SSC y Checkpointing
+# Hipocampo Protocol v3.8 — SSC + Checkpointing
 
-**Visión General Arquitectónica:** Sistema de memoria persistente de doble capa (Técnica y Perfil) asistida por un caché semántico progresivo (SSC - Sparse Selective Caching). Diseñado para otorgar contexto a largo plazo con latencia optimizada.
+Sistema de memoria externa persistente con **Sparse Selective Caching** (inspirado en "Memory Caching: RNNs with Growing Memory", Google 2025).
 
 ---
 
-## 📚 Estructura de Datos (PostgreSQL 17)
+## 📚 Estructura
 
-```text
-hipocampo_db (pgvector + pg_trgm)
-├── 🧠 memoria_vectorial (Conocimiento Técnico)
-│   ├── Campos: contenido (text), metadatos (jsonb), embedding (vector 1024d)
-│   └── Índices: HNSW (búsqueda por coseno), GIN (trigramas)
-├── 🤖 memory_items (Perfil e Historial del Usuario)
-│   ├── Campos: memory_type ('profile' | 'event' | 'decision'), summary, embedding, extra
-│   └── Índices: HNSW (búsqueda por coseno), GIN (trigramas)
-├── 🏷️ memory_categories (Taxonomía)
-├── 🔗 category_items (Mapeo M:N)
-└── 📎 resources (Archivos y URLs de referencia)
+```
+hipocampo_db (PostgreSQL 17 + pgvector + pg_trgm)
+├── 🧠 memoria_vectorial (recuerdos técnicos, embedding 1024d)
+│   └── contenido, metadatos (jsonb), embedding (HNSW), code_snippet
+├── 🤖 memory_items (perfil, embedding 1024d)
+│   └── memory_type (profile|event|decision), summary, extra, categories
+├── 🏷️ memory_categories (10 categorías)
+├── 🔗 category_items (M:N)
+└── 📎 resources
 ```
 
 ---
 
-## 🔍 Fase 1: Pre-actuación y Búsqueda (SSC)
+## 🔍 Fase 1: Pre-actuación — Buscar con SSC
 
-Para consultar la base de conocimiento, se debe utilizar de manera excluyente el script `hipocampo_ssc_search.py` (evitar sentencias `ILIKE` directas sobre la base de datos).
+Usar el script `hipocampo_ssc_search.py`:
 
 ```bash
-# Búsqueda estándar
-python3 scripts/hipocampo_ssc_search.py "término de búsqueda"
-
-# Búsqueda con umbral de confianza personalizado
-python3 scripts/hipocampo_ssc_search.py "término" 5   
+python3 scripts/hipocampo_ssc_search.py "término"
+python3 scripts/hipocampo_ssc_search.py "término" 5
 ```
 
-### El Algoritmo SSC (Aproximación Progresiva)
-El algoritmo prioriza la velocidad y solo profundiza si la confianza de los resultados es baja:
-1. **Fase 1 (TAG ROUTER):** Enruta y clasifica la consulta (perfil, técnico, mixto) ajustando los pesos dinámicamente.
-2. **Fase 2 (PGVECTOR):** Realiza una búsqueda semántica (Top-20) en ambas tablas. *Si la confianza supera el 70%, el proceso finaliza aquí.*
-3. **Fase 3 (TRIGRAMAS GIN):** Ejecuta una expansión léxica sobre el índice GIN si la confianza es < 70%.
-4. **Fase 4 (ILIKE):** Recurre a un escaneo completo (Full Scan) de seguridad solo si la confianza es crítica (< 40%).
+### Pipeline SSC (4 fases, escala progresiva)
+```
+Fase 1 TAG ROUTER → clasifica consulta (perfil/técnico/mixto)
+Fase 2 PGVECTOR  → top-20 semántico en AMBAS tablas ← 70%+ confianza: para aquí
+Fase 3 TRIGRAM    → expande con GIN si confianza < 70%
+Fase 4 ILIKE      → full scan solo si confianza < 40%
+```
 
 ---
 
-## ⚙️ Fase 2: Inserción y Auto-Categorización
+## ⚙️ Fase 2: Persistencia
 
-| Tipo de Datos | Tabla de Destino | Herramienta/Método Preferido |
-| :--- | :--- | :--- |
-| **Proyectos, Código, ADRs** | `memoria_vectorial` | Herramienta MCP `save_hipocampo` o `mm_brain_tool.py` |
-| **Datos Personales, Hábitos, Relaciones** | `memory_items` | Herramienta MCP `profile_hipocampo` o `hipocampo_autotag.py` |
-| **Persistencia Dual** | *Ambas tablas* | Orquestar ambas inserciones de forma secuencial |
+| Dato | Destino | Método MCP |
+|---|---|---|
+| Proyectos, código, sesiones | `memoria_vectorial` | `save_hipocampo()` |
+| Perfil (gustos, familia, datos) | `memory_items` | `profile_hipocampo()` |
 
 ---
 
-## ✅ Directrices y Mejores Prácticas
+## 🕒 Fase 3: Checkpointing (Mantenimiento)
 
-1. **Clasificación Estricta de Relaciones:** Los miembros de la familia (ej. esposa, hijos) o personas cercanas DEBEN registrarse en `memory_items` con `memory_type='profile'` y la categoría `relationships`. NUNCA clasificarlos como un `event`.
-2. **Auto-Tagging:** Todo registro nuevo en `memory_items` debe pasar obligatoriamente por el motor de auto-tagging.
-3. **Prevalencia de SSC:** El uso del pipeline SSC tiene prioridad absoluta sobre cualquier consulta SQL manual.
-4. **Higiene de Datos:** Se requiere la ejecución regular del sistema de *Checkpointing* para consolidar y comprimir la memoria antigua.
+```bash
+python3 scripts/hipocampo_checkpoint.py --dry-run
+python3 scripts/hipocampo_checkpoint.py --force
+```
 
-### Categorías Soportadas en memory_items
+| Edad | Granularidad |
+|---|---|
+| < 24h | Sin compresión |
+| 1-7d | Top 3 items/proyecto |
+| 7-30d | Resumen 200 chars/proyecto |
+| 30-90d | Resumen 100 chars/semana |
+| > 90d | 1 checkpoint/proyecto |
+
+---
+
+## ✅ Reglas Operativas
+
+1. **Familia** → usar `profile_hipocampo()` con `memory_type='profile'`, categoría `relationships`. NUNCA `event`.
+2. **Auto-tagging** obligatorio en todo `memory_items` nuevo.
+3. **SSC preferido sobre ILIKE** para búsquedas.
+4. **memory_items** y **resources** son solo lectura (plugin episodic-memory MCP).
+5. **PostgreSQL** usa socket Unix (`/var/run/postgresql`), usuario local, sin contraseña.
+6. **Embeddings**: 1024d vía NVIDIA NIM (`nvidia/nv-embedqa-e5-v5`).
+
+### Categorías Soportadas
 `personal_info`, `relationships`, `preferences`, `habits`, `goals`, `knowledge`, `opinions`, `work_life`, `activities`, `experiences`
 
 ---
 
-## 🕒 Compresión Temporal (Logarithmic Checkpointing)
+## 🔌 MCP Server (11 tools)
 
-Para mitigar el crecimiento exponencial de la base de datos, Hipocampo implementa una compresión basada en el decaimiento logarítmico del tiempo.
-
-```bash
-# Realizar un simulacro (auditoría de compresión)
-python3 scripts/hipocampo_checkpoint.py --dry-run
-
-# Ejecutar compresión definitiva
-python3 scripts/hipocampo_checkpoint.py --force
-```
-
-**Escala de Retención:**
-* **< 24h:** Sin compresión (alta granularidad y detalle absoluto).
-* **1-7 días:** Retención exclusiva de los 3 eventos/registros top por proyecto.
-* **7-30 días:** Consolidación en resúmenes de 200 caracteres por proyecto.
-* **30-90 días:** Consolidación en resúmenes semanales de 100 caracteres.
-* **> 90 días:** Fusión total en un (1) checkpoint maestro por proyecto/dominio.
+| Tool | Descripción |
+|---|---|
+| `search_hipocampo` | Búsqueda híbrida semántica + léxica |
+| `quick_hipocampo_search` | Alias de búsqueda rápida |
+| `save_hipocampo` | Guardar en memoria_vectorial |
+| `profile_hipocampo` | Guardar perfil en memory_items |
+| `hipocampo_health` | Health check completo |
+| `hipocampo_auto_repair` | Reparación automática |
+| `hipocampo_stats` | Estadísticas de rendimiento |
+| `hipocampo_tune` | Ajustar thresholds SSC |
+| `hipocampo_dedup` | Detectar/fusionar duplicados |
+| `hipocampo_checkpoint` | Checkpointing logarítmico |
+| `hipocampo_maintenance` | Ciclo completo de mantenimiento |

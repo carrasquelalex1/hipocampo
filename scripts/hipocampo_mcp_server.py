@@ -41,7 +41,7 @@ CHECKPOINT_SCRIPT = os.path.join(BASE_DIR, "hipocampo_checkpoint.py")
 DB_HOST = os.getenv("DB_HOST", "/var/run/postgresql")
 DB_USER = os.getenv("DB_USER", "alex")
 DB_NAME = os.getenv("DB_NAME", "hipocampo_db")
-ENV_PATH = os.path.join(BASE_DIR, "scripts", ".env")
+ENV_PATH = os.getenv("ENV_PATH", os.path.join(BASE_DIR, "..", ".env"))
 
 # ─── INICIALIZACIÓN MCP ─────────────────────────────────────────────────────
 mcp = FastMCP("hipocampo")
@@ -200,7 +200,7 @@ def save_hipocampo(
         cur = conn.cursor()
         cur.execute(
             """INSERT INTO memoria_vectorial (contenido, metadatos, embedding)
-               VALUES (%s, %s, %s::vector) RETURNING id""",
+               VALUES (%s, %s, %s::vector(1024)) RETURNING id""",
             (content, json.dumps(metadatos), embedding),
         )
         row_id = cur.fetchone()[0]
@@ -246,7 +246,7 @@ def profile_hipocampo(
 
         cur.execute(
             """INSERT INTO memory_items (id, summary, memory_type, extra, embedding, created_at, updated_at)
-               VALUES (%s, %s, 'profile', %s, %s::vector, NOW(), NOW())""",
+               VALUES (%s, %s, 'profile', %s, %s::vector(1024), NOW(), NOW())""",
             (row_id, summary, json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today())}), embedding),
         )
 

@@ -1,6 +1,6 @@
 # Hipocampo: Dual-Memory System with Sparse Selective Caching
 
-[![Version](https://img.shields.io/badge/version-3.7-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
+[![Version](https://img.shields.io/badge/version-3.8-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Hipocampo** is an advanced dual-memory persistence architecture designed for autonomous AI agents. By maintaining both technical knowledge and user profiling data across sessions, Hipocampo provides a reliable, stateful context that enables agents to learn, adapt, and scale efficiently. 
@@ -25,7 +25,7 @@ Built on top of **PostgreSQL 17** with `pgvector`, it introduces **Sparse Select
 ### Prerequisites
 * **PostgreSQL 17+** (with `pgvector` and `pg_trgm` extensions enabled)
 * **Python 3.13+**
-* **NVIDIA API Key** (for `nvidia/nv-embedqa-e5-v5` generation)
+* **NVIDIA API Key** (for `nvidia/nv-embedqa-e5-v5` embeddings)
 
 ### Installation
 
@@ -75,10 +75,10 @@ The core of Hipocampo is backed by a relational and vector hybrid design:
 hipocampo_db (PostgreSQL 17 + pgvector + pg_trgm)
 ├── memoria_vectorial (Technical Knowledge)
 │   ├── Columns: contenido (text), metadatos (jsonb), embedding (vector 1024d)
-│   └── Indexes: HNSW (cosine similarity), GIN (trigram)
+│   └── Indexes: HNSW (cosine similarity, 1024d), GIN (trigram)
 ├── memory_items (User Profile & Events)
 │   ├── Columns: memory_type (profile|event|decision), summary, embedding, extra
-│   └── Indexes: HNSW (cosine similarity), GIN (trigram)
+│   └── Indexes: HNSW (cosine similarity, 1024d), GIN (trigram)
 ├── memory_categories (Classification Taxonomy)
 ├── category_items (M:N Mapping)
 └── resources (Referenced Assets & URLs)
@@ -190,7 +190,7 @@ pip install -r requirements.txt
 
 # 3. Configurar variables de entorno
 cp .env.example .env
-# Editar .env con DB_HOST, DB_USER y NVIDIA_API_KEY
+# Editar .env con DB_HOST, DB_USER, NVIDIA_API_KEY
 ```
 
 Para usar la búsqueda directamente desde la terminal:

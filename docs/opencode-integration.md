@@ -14,7 +14,7 @@ Este documento detalla cómo integrar **Hipocampo MCP Server** con **OpenCode**,
 Al configurar Hipocampo MCP con OpenCode, el servidor:
 1. **No se iniciaba automáticamente** con OpenCode.
 2. **Se cerraba inmediatamente** al ejecutarse en modo `stdio` (por falta de cliente MCP conectado).
-3. **Tenía rutas incorrectas** en la configuración de OpenCode (`/home/alex/hipocampo_mcp_server.py` vs `/home/alex/hipocampo/scripts/hipocampo_mcp_server.py`).
+3. **Tenía rutas incorrectas** en la configuración de OpenCode (`/home/usuario/hipocampo_mcp_server.py` vs `/home/usuario/hipocampo/scripts/hipocampo_mcp_server.py`).
 
 ---
 
@@ -47,7 +47,7 @@ El servidor MCP requiere las siguientes variables de entorno. Puedes definirlas 
 ```env
 # === PostgreSQL (conexión local por socket Unix) ===
 DB_NAME=hipocampo_db
-DB_USER=alex
+DB_USER=tu_usuario_postgres
 DB_PASSWORD=  # Dejar vacío si usas autenticación por socket
 DB_HOST=/var/run/postgresql
 
@@ -69,7 +69,7 @@ Edita el archivo de configuración de OpenCode (`~/.config/opencode/opencode.jso
   "mcp": {
     "hipocampo": {
       "type": "local",
-      "command": ["/home/alex/.gemini/mcp_venv/bin/python3", "/home/alex/hipocampo_mcp_server.py"],
+      "command": ["/home/usuario/tu_venv/bin/python3", "/home/usuario/hipocampo_mcp_server.py"],
       "enabled": true,
       "timeout": 120000
     }
@@ -78,7 +78,7 @@ Edita el archivo de configuración de OpenCode (`~/.config/opencode/opencode.jso
 ```
 
 #### Ajustes Clave:
-- **`command`**: Debe apuntar al **script copiado** en `/home/alex/hipocampo_mcp_server.py` (no al original en `/home/alex/hipocampo/scripts/`).
+- **`command`**: Debe apuntar al **script copiado** en la raíz del home (ej. `/home/usuario/hipocampo_mcp_server.py`).
 - **`timeout`**: Aumentado a `120000` (2 minutos) para evitar cortes en búsquedas complejas.
 - **`enabled`**: `true` para activar el servidor al iniciar OpenCode.
 
@@ -86,33 +86,30 @@ Edita el archivo de configuración de OpenCode (`~/.config/opencode/opencode.jso
 
 ### 4️⃣ Preparar el Script del Servidor MCP
 
-El script `/home/alex/hipocampo/scripts/hipocampo_mcp_server.py` usa rutas **relativas** para buscar:
-- El script de búsqueda (`hipocampo_search.py`).
-- El archivo `.env`.
-
-Para que funcione con OpenCode, **copia el script a la raíz del directorio de usuario** y ajusta las rutas:
+El script `scripts/hipocampo_mcp_server.py` usa rutas **relativas** para buscar scripts auxiliares. Para que funcione con OpenCode, copia el script a la raíz del directorio de usuario:
 
 ```bash
 # Copiar el script a la raíz del usuario
-cp /home/alex/hipocampo/scripts/hipocampo_mcp_server.py /home/alex/hipocampo_mcp_server.py
+cp hipocampo/scripts/hipocampo_mcp_server.py hipocampo_mcp_server.py
 
-# Crear enlace simbólico para el script de búsqueda
-ln -sf /home/alex/.gemini/scripts/hipocampo_search.py /home/alex/hipocampo_search.py
-
-# Crear enlace simbólico para el archivo .env (opcional)
-ln -sf /home/alex/scripts/.env /home/alex/.env
+# Crear enlaces simbólicos para scripts auxiliares (en la raíz)
+ln -sf "$PWD/hipocampo/scripts/hipocampo_search.py" hipocampo_search.py
+ln -sf "$PWD/hipocampo/scripts/hipocampo_health.py" hipocampo_health.py
+ln -sf "$PWD/hipocampo/scripts/hipocampo_stats.py" hipocampo_stats.py
+ln -sf "$PWD/hipocampo/scripts/hipocampo_dedup.py" hipocampo_dedup.py
+ln -sf "$PWD/hipocampo/scripts/hipocampo_checkpoint.py" hipocampo_checkpoint.py
 ```
 
 #### Alternativa: Usar Rutas Absolutas
-Si prefieres no usar enlaces simbólicos, edita el script `/home/alex/hipocampo_mcp_server.py` y reemplaza:
+Si prefieres no usar enlaces simbólicos, edita el script copiado y reemplaza:
 ```python
 # Antes (rutas dinámicas)
 SEARCH_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hipocampo_search.py")
 ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 
 # Después (rutas absolutas)
-SEARCH_SCRIPT = "/home/alex/.gemini/scripts/hipocampo_search.py"
-ENV_PATH = "/home/alex/scripts/.env"
+   SEARCH_SCRIPT = "/home/usuario/.gemini/scripts/hipocampo_search.py"
+   ENV_PATH = "/home/usuario/.env"
 ```
 
 ---
@@ -123,7 +120,7 @@ Antes de reiniciar OpenCode, verifica que el servidor funcione:
 
 ```bash
 # Iniciar el servidor en modo stdio (para OpenCode)
-/home/alex/.gemini/mcp_venv/bin/python3 /home/alex/hipocampo_mcp_server.py
+/home/usuario/tu_venv/bin/python3 /home/usuario/hipocampo_mcp_server.py
 ```
 
 Si el servidor **no muestra errores**, está listo para ser usado por OpenCode.
@@ -153,7 +150,7 @@ Si el servidor **no muestra errores**, está listo para ser usado por OpenCode.
 **Solución:**
 - Verifica que el script no tenga errores de sintaxis:
   ```bash
-  /home/alex/.gemini/mcp_venv/bin/python3 -m py_compile /home/alex/hipocampo_mcp_server.py
+   /home/usuario/tu_venv/bin/python3 -m py_compile /home/usuario/hipocampo_mcp_server.py
   ```
 - Revisa los logs de OpenCode:
   ```bash
@@ -163,7 +160,7 @@ Si el servidor **no muestra errores**, está listo para ser usado por OpenCode.
 #### ❌ Problema: `NVIDIA_API_KEY` no encontrada
 **Causa:** El archivo `.env` no está en la ruta esperada o la variable no está definida.
 **Solución:**
-- Asegúrate de que el archivo `.env` exista en `/home/alex/scripts/.env` **y contenga** `NVIDIA_API_KEY`.
+- Asegúrate de que el archivo `.env` exista (ej. en `~/.env` o `/home/usuario/scripts/.env`) **y contenga** `NVIDIA_API_KEY`.
 - O define la variable directamente en el sistema:
   ```bash
   echo 'export NVIDIA_API_KEY="nvapi-TuClaveAqui"' >> ~/.bashrc
@@ -179,19 +176,19 @@ Si el servidor **no muestra errores**, está listo para ser usado por OpenCode.
   ```
 - Prueba la conexión manualmente:
   ```bash
-  psql -d hipocampo_db -U alex -h /var/run/postgresql -c "SELECT 1;"
+  psql -d hipocampo_db -U tu_usuario -h /var/run/postgresql -c "SELECT 1;"
   ```
 
 ---
 
 ## 📝 Configuración Recomendada para `.env`
 
-Para evitar problemas, usa este template en `/home/alex/scripts/.env`:
+Para evitar problemas, usa este template (ej. en `~/.env` o `~/.config/hipocampo/.env`):
 
 ```env
 # === PostgreSQL ===
 DB_NAME=hipocampo_db
-DB_USER=alex
+DB_USER=tu_usuario_postgres
 DB_PASSWORD=  # Vacío si usas autenticación por socket
 DB_HOST=/var/run/postgresql
 
@@ -210,7 +207,7 @@ Si prefieres que el servidor MCP **siempre esté activo** (independientemente de
 
 1. **Copia el archivo de servicio**:
    ```bash
-   cp /home/alex/hipocampo/scripts/hipocampo-mcp.service ~/.config/systemd/user/
+   cp hipocampo/scripts/hipocampo-mcp.service ~/.config/systemd/user/
    ```
 
 2. **Edita el archivo** para usar la ruta correcta:
@@ -221,11 +218,11 @@ Si prefieres que el servidor MCP **siempre esté activo** (independientemente de
 
    [Service]
    Type=simple
-   ExecStart=/home/alex/.gemini/mcp_venv/bin/python3 /home/alex/hipocampo_mcp_server.py
-   WorkingDirectory=/home/alex
+   ExecStart=/home/usuario/tu_venv/bin/python3 /home/usuario/hipocampo_mcp_server.py --sse 8001
+   WorkingDirectory=/home/usuario
    Restart=on-failure
    RestartSec=5
-   EnvironmentFile=/home/alex/scripts/.env
+   # No necesita EnvironmentFile: el script carga .env automáticamente con load_dotenv()
 
    [Install]
    WantedBy=default.target
@@ -249,7 +246,7 @@ Si prefieres que el servidor MCP **siempre esté activo** (independientemente de
 Para confirmar que todo funciona, ejecuta una búsqueda manual usando el script de búsqueda:
 
 ```bash
-/home/alex/.gemini/mcp_venv/bin/python3 /home/alex/.gemini/scripts/hipocampo_search.py "OpenCode MCP"
+   /home/usuario/tu_venv/bin/python3 /home/usuario/scripts/hipocampo_search.py "OpenCode MCP"
 ```
 
 Si ves resultados con scores y referencias a `memoria_vectorial` o `memory_items`, **¡la integración es exitosa!**
