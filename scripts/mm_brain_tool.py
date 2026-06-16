@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # mm_brain_tool.py v6.0 - Nucleo Evolucionado
-# Migrado al nuevo SDK google-genai y soporte para Memoria de Codigo.
+# Migrado al SDK openai/NVIDIA y soporte para Memoria de Codigo.
 #
 # CONFIGURACIÓN: usa variables de entorno (ver .env.example)
 #   BRAIN_PATH  → ruta al archivo Freeplane XML (default: ~/.gemini/brain/knowledge_base.mm)
@@ -9,7 +9,7 @@
 #   DB_USER     → usuario de PostgreSQL (default: postgres)
 #   DB_PASSWORD → contraseña de PostgreSQL
 #   DB_HOST     → host de PostgreSQL (default: localhost)
-#   GOOGLE_API_KEY → API key de Google Gemini
+#   NVIDIA_API_KEY → API key de NVIDIA
 
 import sys
 import os
@@ -18,8 +18,7 @@ import json
 import fcntl
 import psycopg2
 from pgvector.psycopg2 import register_vector
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from lxml import etree as ET
 from dotenv import load_dotenv
 
@@ -32,17 +31,21 @@ DB_USER = os.getenv('DB_USER', 'alex')
 DB_PASSWORD = os.getenv('DB_PASSWORD', '')
 DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
 
-client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.getenv("NVIDIA_API_KEY"),
+)
 
 def get_node_embedding(text):
-    """Genera embedding usando el nuevo SDK (768 dimensiones)"""
+    """Genera embedding usando NVIDIA API (1024 dimensiones)"""
     try:
-        result = client.models.embed_content(
-            model="models/gemini-embedding-001",
-            contents=text,
-            config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT", output_dimensionality=768)
+        resp = client.embeddings.create(
+            input=text,
+            model="nvidia/nv-embedqa-e5-v5",
+            encoding_format="float",
+            extra_body={"input_type": "query"},
         )
-        return result.embeddings[0].values
+        return resp.data[0].embedding
     except Exception as e:
         print(f"DEBUG: Error Embedding: {e}")
         return None

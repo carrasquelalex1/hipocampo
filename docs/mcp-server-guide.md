@@ -22,7 +22,7 @@ The Hipocampo MCP Server exposes the core dual-memory search and persistence eng
 pip3 install -r requirements.txt
 
 # 2. Configure environment variables (ensure .env exists in the project root)
-# DB_HOST, DB_USER, DB_NAME, GOOGLE_API_KEY
+# DB_HOST, DB_USER, DB_NAME, NVIDIA_API_KEY
 ```
 
 ### Running the Server
@@ -56,7 +56,7 @@ Once connected, your AI agent gains access to the following tools:
    * **Parameters**: `query` (string)
 
 3. **`save_hipocampo`**:
-   * **Purpose**: Persists technical data, architectural decisions, and project knowledge into the `memoria_vectorial` table. Generates the 768d embedding automatically.
+   * **Purpose**: Persists technical data, architectural decisions, and project knowledge into the `memoria_vectorial` table. Generates the 1024d embedding automatically.
    * **Parameters**: `content` (string), `memory_type` (enum), `code` (string), `categories` (array)
 
 4. **`profile_hipocampo`**:

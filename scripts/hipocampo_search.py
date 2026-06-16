@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""hipocampo_search.py v3.6 — BIRE con Embeddings Unificados
+"""hipocampo_search.py v3.7 — BIRE con Embeddings Unificados NVIDIA
 
 Algoritmo de búsqueda unificada en los dos sistemas de memoria del Hipocampo.
-Usa expansión de consulta + búsqueda vectorial (ambas tablas, 768d unificado)
+Usa expansión de consulta + búsqueda vectorial (ambas tablas, 1024d unificado)
 + búsqueda léxica expansiva + puntuación compuesta + fusión con corte dinámico
 + expansión por tags.
 """
 import psycopg2, os, json, sys, re, math
 from dotenv import load_dotenv
 from pgvector.psycopg2 import register_vector
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 ENV_PATH = os.getenv('ENV_PATH', '.env')
 load_dotenv(ENV_PATH)
@@ -20,7 +19,10 @@ DB_USER = os.getenv('DB_USER', 'alex')
 DB_PASSWORD = os.getenv('DB_PASSWORD', '')
 DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
 
-client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.getenv("NVIDIA_API_KEY"),
+)
 
 
 # ─── FASE 1: EXPANSIÓN DE CONSULTA ───────────────────────────────────────────
@@ -69,32 +71,30 @@ def generar_patrones_ILIKE(terms):
 
 # ─── FASE 2: BÚSQUEDA VECTORIAL ──────────────────────────────────────────────
 
-def get_embedding(text, dims=768):
+def get_embedding(text, dims=1024):
     try:
-        result = client.models.embed_content(
-            model="gemini-embedding-001",
-            contents=text,
-            config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_QUERY",
-                output_dimensionality=dims
-            )
+        resp = client.embeddings.create(
+            input=text,
+            model="nvidia/nv-embedqa-e5-v5",
+            encoding_format="float",
+            extra_body={"input_type": "query"},
         )
-        return result.embeddings[0].values
+        return resp.data[0].embedding
     except Exception as e:
         return None
 
 
 def buscar_vectorial(cur, query, limit=50):
-    query_embed = get_embedding(query, dims=768)
+    query_embed = get_embedding(query, dims=1024)
     if query_embed is None:
         return []
 
     cur.execute("""
         SELECT id, contenido, metadatos::text, code_snippet,
-               1 - (embedding <=> %s::vector(768)) as similitud
+               1 - (embedding <=> %s::vector(1024)) as similitud
         FROM memoria_vectorial
         WHERE embedding IS NOT NULL
-        ORDER BY embedding <=> %s::vector(768)
+        ORDER BY embedding <=> %s::vector(1024)
         LIMIT %s
     """, (query_embed, query_embed, limit))
 
@@ -116,20 +116,20 @@ def buscar_vectorial(cur, query, limit=50):
 
 
 def buscar_vectorial_memory_items(cur, query, limit=50):
-    """Búsqueda vectorial (768d) en memory_items usando cosine similarity."""
-    query_embed = get_embedding(query, dims=768)
+    """Búsqueda vectorial (1024d) en memory_items usando cosine similarity."""
+    query_embed = get_embedding(query, dims=1024)
     if query_embed is None:
         return []
 
     cur.execute("""
         SELECT mi.id::text, mi.summary, mi.memory_type, mi.extra::text,
                mc.name as categoria,
-               1 - (mi.embedding <=> %s::vector(768)) as similitud
+               1 - (mi.embedding <=> %s::vector(1024)) as similitud
         FROM memory_items mi
         LEFT JOIN category_items ci ON ci.item_id = mi.id
         LEFT JOIN memory_categories mc ON mc.id = ci.category_id
         WHERE mi.embedding IS NOT NULL
-        ORDER BY mi.embedding <=> %s::vector(768)
+        ORDER BY mi.embedding <=> %s::vector(1024)
         LIMIT %s
     """, (query_embed, query_embed, limit))
 
@@ -538,7 +538,7 @@ def formatear_resultados(resultados, query):
     rerank_desc = "  🔄 re-rank AGENTE" if has_rerank else ""
 
     lines = [f"\n{'='*60}",
-             f"🔍 BIRE v3.6 — Embeddings Unificados 768d + GIN + Híbrido + Auto-Tagging",
+             f"🔍 BIRE v3.7 — Embeddings Unificados 1024d + GIN + Híbrido + Auto-Tagging",
              f"   Consulta: \"{query}\"",
              f"   Resultados: {len(resultados)} encontrados {alpha_desc}{rerank_desc}",
              f"{'='*60}"]

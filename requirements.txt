@@ -1,7 +1,6 @@
 psycopg2-binary>=2.9
 pgvector>=0.4
 python-dotenv>=1.0
-google-genai>=1.0
 lxml>=5.0
 mcp>=1.0.0
-openai>=1.0.0
+openai>=2.0

@@ -1,46 +1,46 @@
 #!/usr/bin/env python3
-"""hipocampo_backfill_vectorial.py — Backfill embeddings 768d en memoria_vectorial.
+"""hipocampo_backfill_vectorial.py — Backfill embeddings 1024d en memoria_vectorial.
 
 Genera embeddings para registros existentes que tienen embedding IS NULL.
-Usa Gemini API (gemini-embedding-001, 768d) con rate limiting.
+Usa NVIDIA API (nvidia/nv-embedqa-e5-v5, 1024d).
 
 Uso:
     python3 scripts/hipocampo_backfill_vectorial.py
 """
 import psycopg2, os, time, sys
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 load_dotenv()
 
 DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
 DB_USER = os.getenv('DB_USER', 'postgres')
 DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
 
-client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.getenv("NVIDIA_API_KEY"),
+)
 
-BATCH_SIZE = 3
-DELAY_BETWEEN_BATCHES = 30.0
+BATCH_SIZE = 5
+DELAY_BETWEEN_BATCHES = 5.0
 
-def get_embedding_768(text, retries=3):
+def get_embedding_1024(text, retries=3):
     for attempt in range(retries):
         try:
-            result = client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=text[:3000],
-                config=types.EmbedContentConfig(
-                    task_type="RETRIEVAL_DOCUMENT",
-                    output_dimensionality=768
-                )
+            resp = client.embeddings.create(
+                input=text[:3000],
+                model="nvidia/nv-embedqa-e5-v5",
+                encoding_format="float",
+                extra_body={"input_type": "query"},
             )
-            return result.embeddings[0].values
+            return resp.data[0].embedding
         except Exception as e:
             err_str = str(e)
-            if '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
-                wait = 65 * (attempt + 1)
-                print(f"  Cuota agotada, esperando {wait}s...")
+            if '429' in err_str or 'RATE_LIMIT' in err_str:
+                wait = 10 * (attempt + 1)
+                print(f"  Rate limit, esperando {wait}s...")
                 time.sleep(wait)
                 continue
             print(f"  Error: {e}")
@@ -76,13 +76,13 @@ def main():
         print(f"\nLote {batch_num}/{total_batches}")
 
         for item_id, contenido in batch:
-            emb = get_embedding_768(contenido)
+            emb = get_embedding_1024(contenido)
             if emb is None:
                 errors += 1
                 print(f"  X {item_id}: error")
                 continue
             cur.execute(
-                "UPDATE memoria_vectorial SET embedding = %s::vector(768) WHERE id = %s",
+                "UPDATE memoria_vectorial SET embedding = %s::vector(1024) WHERE id = %s",
                 (emb, item_id)
             )
             processed += 1
@@ -98,7 +98,7 @@ def main():
     cur.execute("SELECT COUNT(*) FROM memoria_vectorial")
     total_items = cur.fetchone()[0]
 
-    print(f"\nResultado: {ok}/{total_items} registros con embedding 768d")
+    print(f"\nResultado: {ok}/{total_items} registros con embedding 1024d")
     print(f"Errores: {errors}")
 
     if errors > 0:

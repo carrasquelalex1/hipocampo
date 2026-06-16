@@ -52,10 +52,8 @@ DB_PASSWORD=  # Dejar vacío si usas autenticación por socket
 DB_HOST=/var/run/postgresql
 
 # === API NVIDIA (para embeddings con nv-embedqa-e5-v5) ===
+# === API NVIDIA (para embeddings) ===
 NVIDIA_API_KEY=nvapi-TuClaveAqui
-
-# === API Google Gemini (opcional, para embeddings alternativos) ===
-GOOGLE_API_KEY=tu_api_key_de_gemini
 ```
 
 > ⚠️ **Nota:** Si usas **NVIDIA NIM** para embeddings (recomendado), la `NVIDIA_API_KEY` es **obligatoria**.
@@ -199,9 +197,6 @@ DB_HOST=/var/run/postgresql
 
 # === NVIDIA NIM (Embeddings) ===
 NVIDIA_API_KEY=nvapi-TU_CLAVE_AQUI
-
-# === Google Gemini (Opcional) ===
-GOOGLE_API_KEY=tu_api_key_de_gemini
 
 # === OpenAI (Opcional, para compatibilidad) ===
 OPENAI_API_KEY=sk-...

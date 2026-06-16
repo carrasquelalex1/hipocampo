@@ -14,7 +14,7 @@ CREATE TABLE memoria_vectorial (
     id BIGSERIAL PRIMARY KEY,
     contenido TEXT,
     metadatos JSONB,
-    embedding VECTOR(768),
+    embedding VECTOR(1024),
     code_snippet TEXT
 );
 
@@ -51,7 +51,7 @@ CREATE TABLE memory_items (
     happened_at TIMESTAMP,
     extra JSONB,
     user_id VARCHAR,
-    embedding VECTOR(768)
+    embedding VECTOR(1024)
 );
 
 CREATE INDEX idx_memory_items_summary_gin

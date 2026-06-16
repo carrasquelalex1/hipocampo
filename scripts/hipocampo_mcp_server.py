@@ -127,7 +127,7 @@ def hipocampo_info() -> str:
     return (
         "🧠 Hipocampo Protocol v3.6\n"
         "Sistema de memoria dual con SSC (Sparse-Semantic Clusters)\n"
-        "· Búsqueda vectorial 768d (nvidia/nv-embedqa-e5-v5)\n"
+        "· Búsqueda vectorial 1024d (nvidia/nv-embedqa-e5-v5)\n"
         "· Búsqueda léxica expansiva (pg_trgm + GIN)\n"
         "· Re-ranking híbrido BIRE con auto-tagging\n"
         "· Tablas: memoria_vectorial, memory_items\n"
@@ -148,7 +148,7 @@ def _generar_embedding(texto: str) -> list[float]:
         encoding_format="float",
         extra_body={"input_type": "query"},
     )
-    return resp.data[0].embedding[:768]
+    return resp.data[0].embedding
 
 
 def _conn():

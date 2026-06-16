@@ -11,7 +11,7 @@ Built on top of **PostgreSQL 17** with `pgvector`, it introduces **Sparse Select
 
 ## 🚀 Key Features
 
-* **Dual-Memory Architecture**: Distinct storage layers for technical records (`memoria_vectorial`) and user profile data (`memory_items`), each utilizing 768-dimensional embeddings.
+* **Dual-Memory Architecture**: Distinct storage layers for technical records (`memoria_vectorial`) and user profile data (`memory_items`), each utilizing 1024-dimensional embeddings.
 * **Sparse Selective Caching (SSC)**: A state-of-the-art four-phase progressive retrieval pipeline that scales seamlessly: *Tag Router* → *pgvector Top-K* → *GIN Trigram* → *ILIKE Fallback*.
 * **Logarithmic Checkpointing**: Intelligently compresses historical memories based on time decay, shrinking 24-hour granular details into unified 90-day checkpoints.
 * **Automated Tagging Engine**: A robust, Regex-based rule engine that autonomously categorizes and tags records upon persistence.
@@ -25,7 +25,7 @@ Built on top of **PostgreSQL 17** with `pgvector`, it introduces **Sparse Select
 ### Prerequisites
 * **PostgreSQL 17+** (with `pgvector` and `pg_trgm` extensions enabled)
 * **Python 3.13+**
-* **Google AI API Key** (for `gemini-embedding-001` generation)
+* **NVIDIA API Key** (for `nvidia/nv-embedqa-e5-v5` generation)
 
 ### Installation
 
@@ -46,7 +46,7 @@ pip install -r requirements.txt
 
 # 4. Environment Configuration
 cp .env.example .env
-# Edit .env with your DB_HOST, DB_USER, and GOOGLE_API_KEY
+# Edit .env with your DB_HOST, DB_USER, and NVIDIA_API_KEY
 ```
 
 ### Basic Usage
@@ -74,7 +74,7 @@ The core of Hipocampo is backed by a relational and vector hybrid design:
 ```text
 hipocampo_db (PostgreSQL 17 + pgvector + pg_trgm)
 ├── memoria_vectorial (Technical Knowledge)
-│   ├── Columns: contenido (text), metadatos (jsonb), embedding (vector 768d)
+│   ├── Columns: contenido (text), metadatos (jsonb), embedding (vector 1024d)
 │   └── Indexes: HNSW (cosine similarity), GIN (trigram)
 ├── memory_items (User Profile & Events)
 │   ├── Columns: memory_type (profile|event|decision), summary, embedding, extra
@@ -165,7 +165,7 @@ Construido sobre **PostgreSQL 17** y `pgvector`, introduce **Sparse Selective Ca
 
 ## 🚀 Características Principales
 
-* **Arquitectura de Memoria Dual**: Capas de almacenamiento separadas para registros técnicos (`memoria_vectorial`) y datos de perfil (`memory_items`), ambas utilizando embeddings de 768 dimensiones.
+* **Arquitectura de Memoria Dual**: Capas de almacenamiento separadas para registros técnicos (`memoria_vectorial`) y datos de perfil (`memory_items`), ambas utilizando embeddings de 1024 dimensiones.
 * **Sparse Selective Caching (SSC)**: Algoritmo progresivo que escala según la necesidad: *Enrutador de Tags* → *pgvector Top-K* → *Trigramas GIN* → *Escaneo ILIKE*.
 * **Checkpointing Logarítmico**: Compresión inteligente basada en el decaimiento del tiempo, consolidando detalles granulares en un solo registro tras 90 días.
 * **Auto-MeJORA MCP**: Autodiagnóstico (health check + auto-repair), optimización dinámica (stats + tune), y mantenimiento de memoria (dedup + checkpoint) — todo desde herramientas MCP.
@@ -190,7 +190,7 @@ pip install -r requirements.txt
 
 # 3. Configurar variables de entorno
 cp .env.example .env
-# Editar .env con DB_HOST, DB_USER y GOOGLE_API_KEY
+# Editar .env con DB_HOST, DB_USER y NVIDIA_API_KEY
 ```
 
 Para usar la búsqueda directamente desde la terminal:

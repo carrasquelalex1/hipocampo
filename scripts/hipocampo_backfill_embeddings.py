@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""hipocampo_backfill_embeddings.py — Regenera embeddings 768d en memory_items.
+"""hipocampo_backfill_embeddings.py — Regenera embeddings 1024d en memory_items.
 
-Problema: memory_items fue poblado con embeddings 4096d (default de gemini-embedding-001
-sin output_dimensionality). memoria_vectorial usa 768d. Este script unifica ambos
-subsistemas al mismo modelo (gemini-embedding-001) y dimensionalidad (768d).
+Problema: memory_items fue poblado con embeddings 768d (gemini-embedding-001).
+memoria_vectorial tambien usaba 768d. Este script unifica ambos subsistemas al
+mismo modelo (nvidia/nv-embedqa-e5-v5) y dimensionalidad (1024d).
 
 Uso:
     python3 hipocampo_backfill_embeddings.py
 """
 import psycopg2, os, sys, time
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 load_dotenv()
 
@@ -20,29 +19,30 @@ DB_USER = os.getenv('DB_USER', 'alex')
 DB_PASSWORD = os.getenv('DB_PASSWORD', '')
 DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
 
-client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.getenv("NVIDIA_API_KEY"),
+)
 
-BATCH_SIZE = 2
-DELAY_BETWEEN_BATCHES = 60.0  # 1 minute between batches to respect rate limits
+BATCH_SIZE = 5
+DELAY_BETWEEN_BATCHES = 5.0
 
 
-def get_embedding_768(text, retries=3):
+def get_embedding_1024(text, retries=3):
     for attempt in range(retries):
         try:
-            result = client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=text,
-                config=types.EmbedContentConfig(
-                    task_type="RETRIEVAL_DOCUMENT",
-                    output_dimensionality=768
-                )
+            resp = client.embeddings.create(
+                input=text,
+                model="nvidia/nv-embedqa-e5-v5",
+                encoding_format="float",
+                extra_body={"input_type": "query"},
             )
-            return result.embeddings[0].values
+            return resp.data[0].embedding
         except Exception as e:
             err_str = str(e)
-            if '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
-                wait = 65 * (attempt + 1)
-                print(f"  ⏳ Cuota agotada, esperando {wait}s (intento {attempt+1}/{retries})...")
+            if '429' in err_str or 'RATE_LIMIT' in err_str:
+                wait = 10 * (attempt + 1)
+                print(f"  ⏳ Rate limit, esperando {wait}s (intento {attempt+1}/{retries})...")
                 time.sleep(wait)
                 continue
             print(f"  Error: {e}")
@@ -69,7 +69,7 @@ def main():
     if col_info:
         print(f"📊 Columna embedding existe: {col_info}")
 
-    # Check if column is vector(768) or just vector
+    # Check if column is vector(1024) or just vector
     cur.execute("""
         SELECT e.typname, e.typtype
         FROM pg_type e
@@ -79,7 +79,7 @@ def main():
     type_info = cur.fetchone()
     print(f"📊 Tipo de embedding: {type_info}")
 
-    # Fetch remaining records without 768d embeddings
+    # Fetch remaining records without embeddings
     cur.execute("""
         SELECT id, summary FROM memory_items
         WHERE embedding IS NULL
@@ -87,7 +87,7 @@ def main():
     """)
     rows = cur.fetchall()
     total = len(rows)
-    print(f"📦 {total} registros en memory_items necesitan embedding 768d")
+    print(f"📦 {total} registros en memory_items necesitan embedding 1024d")
 
     if total == 0:
         print("✅ Todo unificado — 0 registros por procesar")
@@ -105,13 +105,13 @@ def main():
         print(f"\n🔨 Lote {batch_num}/{total_batches} ({len(batch)} registros)")
 
         for item_id, summary in batch:
-            emb = get_embedding_768(summary)
+            emb = get_embedding_1024(summary)
             if emb is None:
                 errors += 1
                 print(f"  ❌ {item_id}: error (pendiente para próxima ejecución)")
                 continue
             cur.execute(
-                "UPDATE memory_items SET embedding = %s::vector(768) WHERE id = %s",
+                "UPDATE memory_items SET embedding = %s::vector(1024) WHERE id = %s",
                 (emb, item_id)
             )
             processed += 1
@@ -142,7 +142,7 @@ def main():
     total_items = cur.fetchone()[0]
 
     print(f"\n{'='*50}")
-    print(f"✅ Embeddings unificados: {ok}/{total_items} registros con embedding 768d")
+    print(f"✅ Embeddings unificados: {ok}/{total_items} registros con embedding 1024d")
     print(f"⚠️  Errores en esta ejecución: {errors}")
     print(f"📊 Índice HNSW: idx_memory_items_embedding (vector_cosine_ops)")
     print(f"{'='*50}")

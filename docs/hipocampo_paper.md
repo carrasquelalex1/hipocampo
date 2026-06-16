@@ -9,7 +9,7 @@
 
 ## Resumen
 
-Este documento describe la arquitectura y los fundamentos algorítmicos de **Hipocampo**, un sistema de memoria dual diseñado para asistentes de inteligencia artificial. El sistema almacena y recupera información estructurada y no estructurada utilizando dos subsistemas de memoria independientes pero complementarios: una base vectorial semántica y un almacén de perfiles categorizados. Se introduce el algoritmo **BIRE (Búsqueda Integrada por Relevancia Expansiva)**, un método de recuperación unificada que combina expansión léxica de consultas, búsqueda vectorial semántica (con embeddings unificados 768d en ambos subsistemas) y puntuación compuesta para superar las limitaciones de las búsquedas tradicionales basadas en `ILIKE` con límites fijos.
+Este documento describe la arquitectura y los fundamentos algorítmicos de **Hipocampo**, un sistema de memoria dual diseñado para asistentes de inteligencia artificial. El sistema almacena y recupera información estructurada y no estructurada utilizando dos subsistemas de memoria independientes pero complementarios: una base vectorial semántica y un almacén de perfiles categorizados. Se introduce el algoritmo **BIRE (Búsqueda Integrada por Relevancia Expansiva)**, un método de recuperación unificada que combina expansión léxica de consultas, búsqueda vectorial semántica (con embeddings unificados 1024d en ambos subsistemas) y puntuación compuesta para superar las limitaciones de las búsquedas tradicionales basadas en `ILIKE` con límites fijos.
 
 **Palabras clave:** memoria dual, búsqueda vectorial, RAG, pgvector, pg_trgm, índices GIN, expansión de consultas, relevancia compuesta, ponderación híbrida, embeddings unificados, auto-tagging, sistemas de memoria para IA.
 
@@ -51,10 +51,10 @@ hipocampo_db
 | `id` | `bigint PK` | Identificador autoincremental |
 | `contenido` | `text` | Texto completo del recuerdo |
 | `metadatos` | `jsonb` | Metadatos flexibles: path, type, tags, status, archivos |
-| `embedding` | `vector(768)` | Embedding semántico generado por `gemini-embedding-001` |
+| `embedding` | `vector(1024)` | Embedding semántico generado por `nvidia/nv-embedqa-e5-v5` |
 | `code_snippet` | `text` | Fragmento de código asociado (opcional) |
 
-La columna `embedding` está indexada mediante un **índice HNSW** con métrica de similitud coseno (`vector_cosine_ops`), permitiendo búsquedas `ORDER BY embedding <=> consulta` con complejidad **O(log n)** incluso sobre 680+ vectores de 768 dimensiones.
+La columna `embedding` está indexada mediante un **índice HNSW** con métrica de similitud coseno (`vector_cosine_ops`), permitiendo búsquedas `ORDER BY embedding <=> consulta` con complejidad **O(log n)** incluso sobre 680+ vectores de 1024 dimensiones.
 
 La persistencia en este subsistema se realiza a través de `mm_brain_tool.py`, que escribe simultáneamente en PostgreSQL y en un archivo XML Freeplane (`knowledge_base.mm`) para respaldo visual.
 
@@ -65,7 +65,7 @@ La persistencia en este subsistema se realiza a través de `mm_brain_tool.py`, q
 | `id` | `uuid PK` | Identificador único universal |
 | `memory_type` | `varchar` | Tipo de registro: `'profile'`, `'event'`, `'decision'` |
 | `summary` | `text` | Texto descriptivo del dato |
-| `embedding` | `vector(768)` | Embedding semántico unificado (misma dimensión que subsistema vectorial) |
+| `embedding` | `vector(1024)` | Embedding semántico unificado (misma dimensión que subsistema vectorial) |
 | `extra` | `jsonb` | Metadatos adicionales |
 | `user_id` | `varchar` | Identificador del usuario (ej: `'usuario_ejemplo'`) |
 
@@ -75,7 +75,7 @@ Cada registro en `memory_items` se asocia a una o más categorías a través de 
 
 ### 2.4 Independencia de Subsistemas
 
-Ambos subsistemas son **esquemáticamente independientes**: no comparten claves foráneas y cada uno mantiene su estructura de datos específica. Sin embargo, desde v3.6 comparten el **mismo modelo de embedding** (`gemini-embedding-001` con 768 dimensiones), lo que permite búsqueda vectorial cross-sistema unificada. La fusión semántica ocurre en la _capa de búsqueda_, donde el algoritmo BIRE consulta ambos sistemas y combina los resultados en un ranking único.
+Ambos subsistemas son **esquemáticamente independientes**: no comparten claves foráneas y cada uno mantiene su estructura de datos específica. Sin embargo, desde v3.6 comparten el **mismo modelo de embedding** (`nvidia/nv-embedqa-e5-v5` con 1024 dimensiones), lo que permite búsqueda vectorial cross-sistema unificada. La fusión semántica ocurre en la _capa de búsqueda_, donde el algoritmo BIRE consulta ambos sistemas y combina los resultados en un ranking único.
 
 ---
 
@@ -125,14 +125,14 @@ El resultado es un conjunto de términos _T_ = {_t₁, t₂, ..., tₙ_} que se 
 
 #### 4.2.1 Búsqueda Vectorial Semántica (Subsistema 1)
 
-Se genera un embedding de consulta _E_q_ utilizando el modelo `gemini-embedding-001` con dimensionalidad 768. Luego se ejecuta:
+Se genera un embedding de consulta _E_q_ utilizando el modelo `nvidia/nv-embedqa-e5-v5` con dimensionalidad 1024. Luego se ejecuta:
 
 ```sql
 SELECT id, contenido, metadatos, code_snippet,
-       1 - (embedding <=> %s::vector(768)) AS similitud
+       1 - (embedding <=> %s::vector(1024)) AS similitud
 FROM memoria_vectorial
 WHERE embedding IS NOT NULL
-ORDER BY embedding <=> %s::vector(768)
+ORDER BY embedding <=> %s::vector(1024)
 LIMIT 50;
 ```
 
@@ -224,7 +224,7 @@ La mejora es sustancial: BIRE recuperó el **100%** de los registros relevantes 
 
 ### 5.3 Falsos Positivos
 
-La búsqueda vectorial introduce resultados con relevancia semántica baja (score ~58-62) correspondientes a proyectos técnicos sin relación aparente con plantas medicinales, pero cuya representación vectorial resulta cercana en el espacio de 768 dimensiones. En la práctica, estos falsos positivos ocupan las primeras posiciones del ranking debido a que el embedding "planta medicinal" tiene vectores cercanos a términos como "proyecto", "sistema" y "desarrollo" en el corpus técnico del usuario.
+La búsqueda vectorial introduce resultados con relevancia semántica baja (score ~58-62) correspondientes a proyectos técnicos sin relación aparente con plantas medicinales, pero cuya representación vectorial resulta cercana en el espacio de 1024 dimensiones. En la práctica, estos falsos positivos ocupan las primeras posiciones del ranking debido a que el embedding "planta medicinal" tiene vectores cercanos a términos como "proyecto", "sistema" y "desarrollo" en el corpus técnico del usuario.
 
 Este es un comportamiento esperado en sistemas de búsqueda vectorial y puede mitigarse mediante:
 - Ajuste del umbral _θ_ (ej: _θ_ = 40 para filtrar ruido semántico)
@@ -248,14 +248,14 @@ El resto de resultados (50 registros de memoria_vectorial) corresponden a coinci
 | Fase | Complejidad | Notas |
 |------|------------|-------|
 | Expansión de consulta | O(k) | k = tokens en consulta (típicamente < 10) |
-| Búsqueda vectorial | O(log n × d) | Índice HNSW: log n ≈ 10 para n = 682, d = 768 |
+| Búsqueda vectorial | O(log n × d) | Índice HNSW: log n ≈ 10 para n = 682, d = 1024 |
 | Búsqueda léxica MV | O(n) | ILIKE ANY sobre 682 registros |
 | Búsqueda léxica MI | O(m) | ILIKE ANY sobre 208 registros |
 | Fusión y ranking | O(r × log r) | r = resultados fusionados |
 
 El cuello de botella es la búsqueda léxica `ILIKE ANY`, que requiere escaneo secuencial. Para conjuntos de datos más grandes (>10⁵ registros), se recomienda migrar a índices GIST/GIN con `pg_trgm` para acelerar `ILIKE`.
 
-**Tiempo medio de respuesta** (promedio de 10 consultas): ~1.5 segundos, de los cuales ~1.2 segundos corresponden a la generación del embedding (API Gemini).
+**Tiempo medio de respuesta** (promedio de 10 consultas): ~1.5 segundos, de los cuales ~1.2 segundos corresponden a la generación del embedding (API NVIDIA).
 
 ---
 
@@ -402,7 +402,7 @@ Para refinar el orden de los resultados más allá de la puntuación compuesta d
 
 **Problema:** La puntuación compuesta de BIRE (Fase 5) combina vectorial y léxico con pesos fijos, pero no captura la _intención semántica_ de la consulta. Por ejemplo, una búsqueda de "plantas medicinales" puede dar prioridad a resultados técnicos con alta coincidencia de tags sobre los registros de perfil que realmente contienen la información buscada.
 
-**Solución:** En lugar de hacer llamadas a APIs externas (Gemini), el script simplemente **marca los top resultados** con el flag `--rerank`, preservando los scores originales como `score_bire`. La salida incluye una línea **"RE-RANK PENDIENTE"** que indica al agente activo que debe re-ordenar los resultados según su criterio contextual.
+**Solución:** En lugar de hacer llamadas a APIs externas, el script simplemente **marca los top resultados** con el flag `--rerank`, preservando los scores originales como `score_bire`. La salida incluye una línea **"RE-RANK PENDIENTE"** que indica al agente activo que debe re-ordenar los resultados según su criterio contextual.
 
 **Flujo de re-ranking por agente activo:**
 
@@ -412,7 +412,7 @@ Para refinar el orden de los resultados más allá de la puntuación compuesta d
 4. Claude re-ordena los resultados mentalmente según relevancia contextual (entiende el query, conoce el perfil del usuario, tiene memoria de la conversación).
 
 **Ventajas frente a re-ranking con API externa:**
-- **Sin cuotas que agotar** — no depende de Gemini generateContent (que tiene límites gratuitos)
+- **Sin cuotas que agotar** — no depende de APIs de generación de texto
 - **Mayor precisión contextual** — el agente activo tiene acceso a toda la conversación, no solo al query aislado
 - **Sin latencia de red** — el reordenamiento es instantáneo
 - **Sin costo de API** — cero llamadas externas
@@ -425,42 +425,40 @@ python3 scripts/hipocampo_search.py "plantas medicinales" --rerank
 
 El output incluye `⚡ RE-RANK PENDIENTE` y `score_bire` preservado en cada resultado, permitiendo al agente comparar el orden original vs. su juicio de relevancia.
 
-### 8.7 Embeddings Unificados 768d v1.0 (Implementado en v3.6)
+### 8.7 Embeddings Unificados 1024d v2.0 (Implementado en v3.7)
 
-Para habilitar la **búsqueda vectorial cross-sistema**, se unificaron ambos subsistemas de memoria al mismo modelo de embeddings (`gemini-embedding-001`) con la misma dimensionalidad (768d).
+Para habilitar la **búsqueda vectorial cross-sistema** con el modelo `nvidia/nv-embedqa-e5-v5`, se unificaron ambos subsistemas de memoria a 1024 dimensiones y se migró desde Google Gemini a NVIDIA API.
 
-**Problema original:** `memory_items` almacenaba embeddings de 4096 dimensiones (default de `gemini-embedding-001` sin especificar `output_dimensionality`), mientras que `memoria_vectorial` usaba 768d (con `output_dimensionality=768`). Esto impedía la búsqueda vectorial en `memory_items`, ya que la similitud coseno requiere vectores de igual dimensión.
+**Problema original (v3.6):** Los embeddings se generaban con `gemini-embedding-001` (768d) vía `google-genai`. El MCP server truncaba los embeddings NVIDIA a 768d (`[:768]`), causando inconsistencia con los scripts que aún usaban Gemini.
 
-**Solución (3 pasos):**
+**Solución (v3.7):**
 
-**Paso 1 — Migración del esquema:** Se recreó la columna `embedding` en `memory_items` como `vector(768)` y se creó un índice HNSW con `vector_cosine_ops`:
+**Paso 1 — Migración del modelo:** Todos los scripts migraron de `google-genai`/`gemini-embedding-001` a `openai`/`nvidia/nv-embedqa-e5-v5` (1024d nativos, sin truncado).
+
+**Paso 2 — Migración del esquema:** Las columnas `embedding` en ambas tablas se ampliaron de `vector(768)` a `vector(1024)`, regenerando los índices HNSW:
 
 ```sql
-ALTER TABLE memory_items ADD COLUMN embedding vector(768);
-CREATE INDEX idx_memory_items_embedding
-ON memory_items USING hnsw (embedding vector_cosine_ops);
+ALTER TABLE memoria_vectorial ALTER COLUMN embedding TYPE vector(1024);
+ALTER TABLE memory_items ALTER COLUMN embedding TYPE vector(1024);
 ```
 
-**Paso 2 — Backfill de datos existentes:** El script `hipocampo_backfill_embeddings.py` regenera embeddings para todos los registros preexistentes en `memory_items`, usando el mismo modelo y configuración que `memoria_vectorial`:
+**Paso 3 — Backfill de embeddings:** Los scripts `hipocampo_backfill_embeddings.py` y `hipocampo_backfill_vectorial.py` regeneran embeddings 1024d para los ~1,000 registros existentes, usando la NVIDIA API:
 
 ```python
-result = client.models.embed_content(
-    model="gemini-embedding-001",
-    contents=summary,
-    config=types.EmbedContentConfig(
-        task_type="RETRIEVAL_DOCUMENT",
-        output_dimensionality=768
-    )
+client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.getenv("NVIDIA_API_KEY"),
 )
+resp = client.embeddings.create(
+    input=texto,
+    model="nvidia/nv-embedqa-e5-v5",
+    encoding_format="float",
+    extra_body={"input_type": "query"},
+)
+embedding_1024d = resp.data[0].embedding
 ```
 
-**Paso 3 — Búsqueda vectorial en `memory_items`:** Se implementó `buscar_vectorial_memory_items()` en `hipocampo_search.py`, que ejecuta `ORDER BY embedding <=> %s::vector(768)` con el mismo perfil boost que la búsqueda léxica (profile items reciben +5 en score raw).
-
-Los resultados vectoriales de `memory_items` se fusionan con los de `memoria_vectorial` en la puntuación compuesta de BIRE, compartiendo el mismo α=0.3 calibrado.
-
-**Optimización de cuotas:** El modelo gemini-embedding-001 tiene un límite de 1,500 solicitudes por minuto (o ~60/min en rate limiting conservador). El script de backfill procesa en lotes de 2-3 con 60s de espera entre lotes, requiriendo ~27 minutos para backfill completo de 218 registros.
-
-**Resultado:** Ambos subsistemas comparten el mismo espacio de embeddings, permitiendo que una sola consulta vectorial recupere resultados de ambas tablas simultáneamente. La búsqueda vectorial ahora cubre 682+218 = 900 registros unificados.
+**Resultado:** Ambos subsistemas comparten el mismo espacio de embeddings 1024d via NVIDIA API, eliminando la dependencia de Google Gemini y unificando la dimensionalidad en 1024.
 
 ---
 
@@ -476,7 +474,7 @@ Las contribuciones principales son:
 4. **Corte dinámico por relevancia** que elimina el límite fijo de resultados.
 5. **Índices GIN con pg_trgm**: Indexación trigramática de texto completo para búsqueda léxica acelerada, con ordenamiento por similitud trigramática.
 6. **Re-ranking por agente activo**: Paso opcional de reordenamiento delegado al agente de IA (Claude), que evita APIs externas y aprovecha el contexto conversacional completo para mayor precisión.
-7. **Embeddings unificados 768d**: Estandarización de ambos subsistemas al mismo modelo y dimensionalidad (`gemini-embedding-001` con 768d), permitiendo búsqueda vectorial cross-sistema sobre 900+ registros.
+7. **Embeddings unificados 1024d**: Estandarización de ambos subsistemas al mismo modelo y dimensionalidad (`nvidia/nv-embedqa-e5-v5` con 1024d), permitiendo búsqueda vectorial cross-sistema sobre 900+ registros.
 8. **Ponderación híbrida calibrada**: Fusión de puntuaciones vectoriales y léxicas con pesos α=0.3 optimizados mediante validación cruzada sobre 12 consultas etiquetadas.
 9. **Auto-Tagging v1.0**: Sistema de clasificación automática por reglas que asigna tags, categoría y tipo de memoria al persistir, eliminando la necesidad de etiquetado manual.
 10. **Validación empírica** que demuestra recuperación del 100% de registros relevantes versus 20% con el enfoque ingenuo.
@@ -497,10 +495,10 @@ hipocampo/
 ├── .env.example                      ← Template de variables de entorno
 │
 ├── scripts/
-│   ├── hipocampo_search.py           ← BIRE v3.6 — Motor de búsqueda unificada
+│   ├── hipocampo_search.py           ← BIRE v3.7 — Motor de búsqueda unificada
 │   ├── hipocampo_autotag.py          ← Auto-Tagging v1.0 — Clasificación por reglas
 │   ├── hipocampo_calibrate.py        ← Calibración de ponderación híbrida (α)
-│   ├── hipocampo_backfill_embeddings.py  ← Backfill de embeddings 768d
+│   ├── hipocampo_backfill_embeddings.py  ← Backfill de embeddings 1024d
 │   ├── hipocampo_hybrid_config.json  ← Config óptima de α (calibrada)
 │   ├── mm_brain_tool.py              ← Persistencia en memoria_vectorial + Freeplane XML
 │   ├── query_brain.py                ← Consulta directa a memoria_vectorial
@@ -518,9 +516,9 @@ hipocampo/
 | pgvector | 0.4+ | Indexación y búsqueda vectorial (HNSW) |
 | pg_trgm | (incluido en contrib) | Búsqueda textual con trigramas (GIN) |
 | Python | 3.13+ | Scripts de persistencia y búsqueda |
-| Google AI API key | — | Generación de embeddings (`gemini-embedding-001`) |
+| NVIDIA API Key | — | Generación de embeddings (`nvidia/nv-embedqa-e5-v5`) |
 | psycopg2 | 2.9+ | Conexión Python-PostgreSQL |
-| google-genai | 1.0+ | SDK de Gemini |
+| openai | 2.0+ | Cliente NVIDIA |
 
 ### 10.3 Instalación Paso a Paso
 
@@ -542,7 +540,7 @@ CREATE TABLE memoria_vectorial (
     id BIGSERIAL PRIMARY KEY,
     contenido TEXT,
     metadatos JSONB,
-    embedding VECTOR(768),
+    embedding VECTOR(1024),
     code_snippet TEXT
 );
 
@@ -563,7 +561,7 @@ CREATE TABLE memory_items (
     happened_at TIMESTAMP,
     extra JSONB,
     user_id VARCHAR,
-    embedding VECTOR(768)
+    embedding VECTOR(1024)
 );
 
 CREATE INDEX idx_memory_items_summary_gin
@@ -628,7 +626,7 @@ INSERT INTO memory_categories (id, name, description, user_id) VALUES
 ```bash
 python3 -m venv hipocampo_venv
 source hipocampo_venv/bin/activate
-pip install psycopg2-binary pgvector python-dotenv google-genai
+pip install psycopg2-binary pgvector python-dotenv openai
 ```
 
 **`requirements.txt`:**
@@ -636,7 +634,7 @@ pip install psycopg2-binary pgvector python-dotenv google-genai
 psycopg2-binary>=2.9
 pgvector>=0.4
 python-dotenv>=1.0
-google-genai>=1.0
+openai>=2.0
 lxml>=5.0
 ```
 
@@ -646,7 +644,7 @@ Crear `.env`:
 ```bash
 # .env
 DB_PASSWORD=tu_password_postgres
-GOOGLE_API_KEY=tu_api_key_de_gemini
+NVIDIA_API_KEY=tu_nvidia_api_key
 ```
 
 #### 6. Verificar la instalación
@@ -676,9 +674,9 @@ python3 scripts/hipocampo_search.py "prueba de instalación"
 | Package | Versión mínima | Propósito |
 |---------|---------------|-----------|
 | `psycopg2-binary` | 2.9 | Conexión PostgreSQL |
-| `pgvector` | 0.4 | Soporte `vector(768)` + HNSW |
+| `pgvector` | 0.4 | Soporte `vector(1024)` + HNSW |
 | `python-dotenv` | 1.0 | Carga de `.env` |
-| `google-genai` | 1.0 | Embeddings Gemini |
+| `openai` | 2.0 | Cliente OpenAI/NVIDIA |
 | `lxml` | 5.0 | Parseo XML Freeplane (mm_brain_tool) |
 
 ### 10.5 Cómo está construido el Skill
@@ -699,7 +697,7 @@ El skill de Hipocampo (el archivo `SKILL.md` que usa el agente) se compone de:
 3. **Base de datos PostgreSQL+pgvector** — Almacenamiento persistente con:
    - Índices HNSW para búsqueda vectorial O(log n)
    - Índices GIN+pg_trgm para búsqueda textual acelerada
-   - Embeddings unificados 768d en ambos subsistemas
+   - Embeddings unificados 1024d en ambos subsistemas
 
 ### 10.6 Flujo de Integración con el Agente
 
@@ -727,9 +725,9 @@ Usuario pregunta → Agente activa SKILL.md
 - Rocchio, J. J. (1971). *Relevance Feedback in Information Retrieval*. In The SMART Retrieval System.
 - PostgreSQL Global Development Group. *PostgreSQL 17 Documentation*. https://www.postgresql.org/docs/17/
 - pgvector. *Open-source vector similarity search for PostgreSQL*. https://github.com/pgvector/pgvector
-- Google. *Gemini Embedding Model*. https://ai.google.dev/gemini-api/docs/embeddings
+- NVIDIA. *NV-EmbedQA-E5-V5*. https://build.nvidia.com/nvidia/nv-embedqa-e5-v5
 - PostgreSQL pg_trgm. *Trigram-based text search for PostgreSQL*. https://www.postgresql.org/docs/17/pgtrgm.html
 
 ---
 
-*Documento generado el 24 de mayo de 2026. Sistema Hipocampo — BIRE v3.6 (Re-rank por Agente + Embeddings Unificados 768d + GIN+pg_trgm + Híbrido α=0.3 + Auto-Tagging).*
+*Documento generado el 24 de mayo de 2026. Actualizado junio 2026. Sistema Hipocampo — BIRE v3.7 (Re-rank por Agente + Embeddings Unificados NVIDIA 1024d + GIN+pg_trgm + Híbrido α=0.3 + Auto-Tagging).*

@@ -16,11 +16,13 @@ Uso:
 """
 import psycopg2, os, json, sys, re, time
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 load_dotenv()
-client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.getenv("NVIDIA_API_KEY"),
+)
 
 DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
 DB_USER = os.getenv('DB_USER', 'alex')
@@ -43,17 +45,15 @@ TECNICO_KEYWORDS = [
 ]
 
 
-def get_embedding(text, dims=768):
+def get_embedding(text, dims=1024):
     try:
-        result = client.models.embed_content(
-            model="gemini-embedding-001",
-            contents=text[:3000],
-            config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_QUERY",
-                output_dimensionality=dims
-            )
+        resp = client.embeddings.create(
+            input=text[:3000],
+            model="nvidia/nv-embedqa-e5-v5",
+            encoding_format="float",
+            extra_body={"input_type": "query"},
         )
-        return result.embeddings[0].values
+        return resp.data[0].embedding
     except Exception as e:
         return None
 
@@ -92,10 +92,10 @@ def ssc_vectorial(cur, query, router):
     # memoria_vectorial
     cur.execute("""
         SELECT id, contenido, metadatos::text, code_snippet,
-               1 - (embedding <=> %s::vector(768)) as similitud
+                1 - (embedding <=> %s::vector(1024)) as similitud
         FROM memoria_vectorial
         WHERE embedding IS NOT NULL
-        ORDER BY embedding <=> %s::vector(768)
+        ORDER BY embedding <=> %s::vector(1024)
         LIMIT %s
     """, (query_embed, query_embed, SSC_TOP_K))
 
@@ -117,12 +117,12 @@ def ssc_vectorial(cur, query, router):
     cur.execute("""
         SELECT mi.id::text, mi.summary, mi.memory_type,
                mc.name as categoria,
-               1 - (mi.embedding <=> %s::vector(768)) as similitud
+                1 - (mi.embedding <=> %s::vector(1024)) as similitud
         FROM memory_items mi
         LEFT JOIN category_items ci ON ci.item_id = mi.id
         LEFT JOIN memory_categories mc ON mc.id = ci.category_id
         WHERE mi.embedding IS NOT NULL
-        ORDER BY mi.embedding <=> %s::vector(768)
+        ORDER BY mi.embedding <=> %s::vector(1024)
         LIMIT %s
     """, (query_embed, query_embed, SSC_TOP_K))
 

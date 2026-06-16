@@ -14,7 +14,7 @@ description: Protocolo de memoria dual con Sparse Selective Caching (SSC). Persi
 ```text
 hipocampo_db (pgvector + pg_trgm)
 ├── 🧠 memoria_vectorial (Conocimiento Técnico)
-│   ├── Campos: contenido (text), metadatos (jsonb), embedding (vector 768d)
+│   ├── Campos: contenido (text), metadatos (jsonb), embedding (vector 1024d)
 │   └── Índices: HNSW (búsqueda por coseno), GIN (trigramas)
 ├── 🤖 memory_items (Perfil e Historial del Usuario)
 │   ├── Campos: memory_type ('profile' | 'event' | 'decision'), summary, embedding, extra
