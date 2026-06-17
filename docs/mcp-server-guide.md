@@ -27,7 +27,9 @@ pip3 install -r requirements.txt
 
 ### Running the Server
 
-The server supports two standard MCP transport layers: **Standard I/O (stdio)** and **Server-Sent Events (SSE)**.
+The server supports three transport layers:
+
+> **⚠️ SSE is deprecated** since MCP spec 2025-03-26. Use **Streamable HTTP** (`--http`) for all new deployments.
 
 **Mode 1: Standard I/O (Default)**
 Ideal for local clients running on the same machine (like Claude Desktop).
@@ -35,8 +37,17 @@ Ideal for local clients running on the same machine (like Claude Desktop).
 python3 scripts/hipocampo_mcp_server.py
 ```
 
-**Mode 2: SSE (HTTP Transport)**
-Ideal for remote clients or web-based agents. Binds to port `8001` by default.
+**Mode 2: Streamable HTTP (Recommended)**
+Ideal for remote clients or web-based agents. Uses a single endpoint `/mcp` for both POST and GET. Binds to port `8001` by default.
+```bash
+python3 scripts/hipocampo_mcp_server.py --http 8001
+
+# With custom host:
+python3 scripts/hipocampo_mcp_server.py --http 8001 --host 0.0.0.0
+```
+
+**Mode 3: SSE (Legacy)**
+Kept for backward compatibility with older MCP clients. Will be removed in a future release.
 ```bash
 python3 scripts/hipocampo_mcp_server.py --sse 8001
 ```
@@ -96,11 +107,24 @@ Add the following to your `opencode.json` or respective configuration file:
 }
 ```
 
+### Remote Client (Streamable HTTP)
+Connect to the hosted Hipocampo server from any MCP client that supports Streamable HTTP:
+
+```json
+{
+  "mcpServers": {
+    "hipocampo": {
+      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp"
+    }
+  }
+}
+```
+
 ---
 
 ## 🔄 Systemd Service (Linux)
 
-To ensure the server runs continuously in the background (especially useful for SSE mode), a systemd service is included:
+To ensure the server runs continuously in the background (especially useful for Streamable HTTP mode), a systemd service is included:
 
 ```bash
 # Copy the unit file

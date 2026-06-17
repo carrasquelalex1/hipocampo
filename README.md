@@ -2,22 +2,26 @@
 
 [![Version](https://img.shields.io/badge/version-3.8-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/sse)
+[![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-active-green)](https://registry.modelcontextprotocol.io/v0.1/servers?search=carrasquelalex1/hipocampo)
+
+> **⚠️ Transport Note:** SSE transport is deprecated since MCP spec 2025-03-26.
+> Hipocampo now uses **Streamable HTTP** (single endpoint `/mcp`) as the recommended remote transport.
+> SSE (`/sse`) remains available for backward compatibility but will be removed in a future release.
 
 ## 🌐 MCP Server — Live on Hugging Face
 
 Hipocampo runs as a **free MCP server** on Hugging Face Spaces. Connect from any MCP client:
 
 ```
-URL: https://alexbell1-hipocampo-mcp.hf.space/sse
+URL: https://alexbell1-hipocampo-mcp.hf.space/mcp
 ```
 
 ```json
 {
   "mcpServers": {
     "hipocampo": {
-      "url": "https://alexbell1-hipocampo-mcp.hf.space/sse"
+      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp"
     }
   }
 }
@@ -150,7 +154,10 @@ Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to
 # Standard I/O mode (default for local desktop clients)
 python3 scripts/hipocampo_mcp_server.py
 
-# SSE transport mode (for remote HTTP clients)
+# Streamable HTTP mode (recommended for remote clients)
+python3 scripts/hipocampo_mcp_server.py --http 8001
+
+# Legacy SSE mode (deprecated, only for backward compatibility)
 python3 scripts/hipocampo_mcp_server.py --sse 8001
 ```
 
@@ -225,7 +232,8 @@ python3 scripts/hipocampo_ssc_search.py "término de búsqueda"
 Para inicializar el servidor MCP:
 ```bash
 python3 scripts/hipocampo_mcp_server.py
-python3 scripts/hipocampo_mcp_server.py --sse 8001
+python3 scripts/hipocampo_mcp_server.py --http 8001   # Streamable HTTP (recomendado)
+python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 ```
 
 ### Herramientas MCP Disponibles

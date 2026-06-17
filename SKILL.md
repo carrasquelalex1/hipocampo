@@ -85,6 +85,9 @@ python3 scripts/hipocampo_checkpoint.py --force
 
 ## 🔌 MCP Server (11 tools)
 
+**Transportes:** `stdio` (local) · `--http <puerto>` (Streamable HTTP, recomendado) · `--sse <puerto>` (legacy, deprecado)
+Streamable HTTP reemplaza a SSE desde MCP spec 2025-03-26. Usa un solo endpoint `/mcp`.
+
 | Tool | Descripción |
 |---|---|
 | `search_hipocampo` | Búsqueda híbrida semántica + léxica |

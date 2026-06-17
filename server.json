@@ -3,11 +3,11 @@
   "name": "io.github.carrasquelalex1/hipocampo",
   "title": "Hipocampo MCP",
   "description": "Bilingual dual memory with SSC for AI agents. Semantic search, embeddings, profiles.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "remotes": [
     {
-      "type": "sse",
-      "url": "https://alexbell1-hipocampo-mcp.hf.space/sse"
+      "type": "streamable-http",
+      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp"
     }
   ]
 }

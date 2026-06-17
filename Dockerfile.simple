@@ -15,4 +15,4 @@ ENV GOOGLE_API_KEY=dummy
 
 EXPOSE 8001
 
-CMD ["python", "scripts/hipocampo_mcp_server.py", "--sse", "8001"]
+CMD ["python", "scripts/hipocampo_mcp_server.py", "--http", "8001"]

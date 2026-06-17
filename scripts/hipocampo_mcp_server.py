@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
-"""Hipocampo MCP Server v2 — MCP Native con FastMCP
+"""Hipocampo MCP Server v3 — MCP Native con FastMCP
 
-Expone el motor de búsqueda BIRE v3.6 como herramientas (tools) del
+Expone el motor de búsqueda BIRE v3.7 como herramientas (tools) del
 Model Context Protocol. Compatible con Claude Desktop, OpenCode y cualquier
 cliente MCP.
 
 Transportes soportados:
-  stdio (por defecto)   → Para clientes locales (Claude Desktop, etc.)
-  sse (--sse)           → Para clientes remotos por HTTP
+  stdio (por defecto)     → Para clientes locales (Claude Desktop, etc.)
+  http (--http)           → Streamable HTTP (recomendado para remoto)
+                           ╰ Single endpoint /mcp (POST + GET)
+  sse (--sse)             → SSE (deprecado, solo compatibilidad)
+
+Referencia:
+  - Streamable HTTP reemplaza a SSE desde spec MCP 2025-03-26
+  - https://spec.modelcontextprotocol.io
 
 Ejemplos:
     python hipocampo_mcp_server.py
-    python hipocampo_mcp_server.py --sse 8001
+    python hipocampo_mcp_server.py --http 8001
+    python hipocampo_mcp_server.py --http 8001 --host 0.0.0.0
+    python hipocampo_mcp_server.py --sse 8001        # legacy
 """
 import subprocess
 import logging
@@ -467,7 +475,19 @@ def hipocampo_maintenance() -> str:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--sse":
+    if len(sys.argv) > 1 and sys.argv[1] in ("--http", "--streamable-http"):
+        port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
+        host = "127.0.0.1"
+        if "--host" in sys.argv:
+            idx = sys.argv.index("--host")
+            if idx + 1 < len(sys.argv):
+                host = sys.argv[idx + 1]
+        logger.info("🔌 Iniciando Hipocampo MCP Server (Streamable HTTP) en %s:%d", host, port)
+        mcp.settings.port = port
+        mcp.settings.host = host
+        mcp.run(transport="streamable-http")
+    elif len(sys.argv) > 1 and sys.argv[1] == "--sse":
+        logger.warning("⚠️  --sse está deprecado desde spec MCP 2025-03-26. Usa --http en su lugar.")
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
         logger.info("🔌 Iniciando Hipocampo MCP Server (SSE) en puerto %d", port)
         mcp.settings.port = port

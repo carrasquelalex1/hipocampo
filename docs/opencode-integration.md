@@ -218,7 +218,8 @@ Si prefieres que el servidor MCP **siempre esté activo** (independientemente de
 
    [Service]
    Type=simple
-   ExecStart=/home/usuario/tu_venv/bin/python3 /home/usuario/hipocampo_mcp_server.py --sse 8001
+   ExecStart=/home/usuario/tu_venv/bin/python3 /home/usuario/hipocampo_mcp_server.py --http 8001  # Streamable HTTP (recomendado)
+# Para legacy SSE: python3 /home/usuario/hipocampo_mcp_server.py --sse 8001 (deprecado)
    WorkingDirectory=/home/usuario
    Restart=on-failure
    RestartSec=5
