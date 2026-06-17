@@ -2,6 +2,29 @@
 
 [![Version](https://img.shields.io/badge/version-3.8-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/sse)
+
+## 🌐 MCP Server — Live on Hugging Face
+
+Hipocampo runs as a **free MCP server** on Hugging Face Spaces. Connect from any MCP client:
+
+```
+URL: https://alexbell1-hipocampo-mcp.hf.space/sse
+```
+
+```json
+{
+  "mcpServers": {
+    "hipocampo": {
+      "url": "https://alexbell1-hipocampo-mcp.hf.space/sse"
+    }
+  }
+}
+```
+
+**Embedding model:** `sentence-transformers/all-MiniLM-L6-v2` (384 dims) via **Hugging Face Inference API** (free, no credit card required).
+
+---
 
 **Hipocampo** is an advanced dual-memory persistence architecture designed for autonomous AI agents. By maintaining both technical knowledge and user profiling data across sessions, Hipocampo provides a reliable, stateful context that enables agents to learn, adapt, and scale efficiently. 
 
@@ -25,7 +48,7 @@ Built on top of **PostgreSQL 17** with `pgvector`, it introduces **Sparse Select
 ### Prerequisites
 * **PostgreSQL 17+** (with `pgvector` and `pg_trgm` extensions enabled)
 * **Python 3.13+**
-* **NVIDIA API Key** (for `nvidia/nv-embedqa-e5-v5` embeddings)
+* **Hugging Face API Key** (for `sentence-transformers/all-MiniLM-L6-v2` embeddings) — or use the free HF Spaces MCP server above
 
 ### Installation
 
