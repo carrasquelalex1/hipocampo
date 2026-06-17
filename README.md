@@ -48,7 +48,7 @@ Built on top of **PostgreSQL 17** with `pgvector`, it introduces **Sparse Select
 ### Prerequisites
 * **PostgreSQL 17+** (with `pgvector` and `pg_trgm` extensions enabled)
 * **Python 3.13+**
-* **Hugging Face API Key** (for `sentence-transformers/all-MiniLM-L6-v2` embeddings) — or use the free HF Spaces MCP server above
+* **NVIDIA API Key** (for `nvidia/nv-embedqa-e5-v5` embeddings) — or **Hugging Face API Key** for `sentence-transformers/all-MiniLM-L6-v2` (free via HF Inference API)
 
 ### Installation
 
