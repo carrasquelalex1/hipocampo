@@ -1,3 +1,12 @@
+---
+title: Hipocampo MCP
+emoji: 🧠
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
+
 # Hipocampo: Dual-Memory System with Sparse Selective Caching
 
 [![Version](https://img.shields.io/badge/version-3.8-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
