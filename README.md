@@ -13,6 +13,7 @@ pinned: false
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-active-green)](https://registry.modelcontextprotocol.io/v0.1/servers?search=carrasquelalex1/hipocampo)
+[![Glama](https://img.shields.io/badge/Glama-Rating%20A-brightgreen)](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo)
 
 > **⚠️ Transport Note:** SSE transport is deprecated since MCP spec 2025-03-26.
 > Hipocampo now uses **Streamable HTTP** (single endpoint `/mcp`) as the recommended remote transport.
@@ -30,7 +31,8 @@ URL: https://alexbell1-hipocampo-mcp.hf.space/mcp
 {
   "mcpServers": {
     "hipocampo": {
-      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp"
+      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp",
+      "type": "streamable-http"
     }
   }
 }
@@ -210,7 +212,7 @@ Construido sobre **PostgreSQL 17** y `pgvector`, introduce **Sparse Selective Ca
 * **Checkpointing Logarítmico**: Compresión inteligente basada en el decaimiento del tiempo, consolidando detalles granulares en un solo registro tras 90 días.
 * **Auto-MeJORA MCP**: Autodiagnóstico (health check + auto-repair), optimización dinámica (stats + tune), y mantenimiento de memoria (dedup + checkpoint) — todo desde herramientas MCP.
 * **Motor de Auto-Etiquetado**: Reglas basadas en expresiones regulares que categorizan la información de manera autónoma al momento de la persistencia.
-* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante un servidor FastMCP con 11 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
+* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante un servidor FastMCP con 12 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
 
 ---
 
