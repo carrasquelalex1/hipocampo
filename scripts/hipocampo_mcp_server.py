@@ -476,7 +476,6 @@ def hipocampo_maintenance() -> str:
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] in ("--http", "--streamable-http"):
-        import uvicorn
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
         host = "127.0.0.1"
         if "--host" in sys.argv:
@@ -484,16 +483,10 @@ if __name__ == "__main__":
             if idx + 1 < len(sys.argv):
                 host = sys.argv[idx + 1]
         logger.info("🔌 Iniciando Hipocampo MCP Server (Streamable HTTP) en %s:%d", host, port)
-        starlette_app = mcp.streamable_http_app()
-        config = uvicorn.Config(
-            starlette_app,
-            host=host,
-            port=port,
-            log_level=mcp.settings.log_level.lower(),
-            proxy_headers=False,
-        )
-        server = uvicorn.Server(config)
-        server.run()
+        mcp.settings.port = port
+        mcp.settings.host = host
+        mcp.settings.transport_security.enable_dns_rebinding_protection = False
+        mcp.run(transport="streamable-http")
     elif len(sys.argv) > 1 and sys.argv[1] == "--sse":
         logger.warning("⚠️  --sse está deprecado desde spec MCP 2025-03-26. Usa --http en su lugar.")
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
