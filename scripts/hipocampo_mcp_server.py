@@ -34,6 +34,7 @@ import psycopg2
 from openai import OpenAI
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from starlette.responses import HTMLResponse
 
 # ─── CONFIGURACIÓN ─────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -482,11 +483,36 @@ if __name__ == "__main__":
             idx = sys.argv.index("--host")
             if idx + 1 < len(sys.argv):
                 host = sys.argv[idx + 1]
+        import uvicorn
+        from starlette.routing import Route
         logger.info("🔌 Iniciando Hipocampo MCP Server (Streamable HTTP) en %s:%d", host, port)
         mcp.settings.port = port
         mcp.settings.host = host
         mcp.settings.transport_security.enable_dns_rebinding_protection = False
-        mcp.run(transport="streamable-http")
+
+        async def info_page(request):
+            return HTMLResponse("""<!DOCTYPE html><html lang="es">
+<head><meta charset="utf-8"><title>Hipocampo MCP</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:system-ui;max-width:600px;margin:40px auto;padding:0 20px;line-height:1.6}
+code{background:#f0f0f0;padding:2px 6px;border-radius:3px}</style></head>
+<body><h1>🧠 Hipocampo MCP Server</h1>
+<p>Servidor MCP con memoria dual y Sparse Selective Caching.</p>
+<h2>🔌 Endpoint MCP</h2>
+<p><code>POST /mcp</code> — Streamable HTTP</p>
+<p>Content-Type: <code>application/json</code></p>
+<p>Accept: <code>application/json, text/event-stream</code></p>
+<h2>📋 Comandos</h2>
+<ul><li><code>search_hipocampo</code> — Búsqueda semántica+híbrida</li>
+<li><code>save_hipocampo</code> — Guardar recuerdo</li>
+<li><code>hipocampo_health</code> — Health check</li>
+<li><code>hipocampo_stats</code> — Estadísticas</li>
+<li><code>hipocampo_maintenance</code> — Mantenimiento completo</li></ul></body></html>""")
+
+        starlette_app = mcp.streamable_http_app()
+        starlette_app.router.routes.insert(0, Route("/", endpoint=info_page, methods=["GET"]))
+        config = uvicorn.Config(starlette_app, host=host, port=port, log_level=mcp.settings.log_level.lower())
+        uvicorn.Server(config).run()
     elif len(sys.argv) > 1 and sys.argv[1] == "--sse":
         logger.warning("⚠️  --sse está deprecado desde spec MCP 2025-03-26. Usa --http en su lugar.")
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
