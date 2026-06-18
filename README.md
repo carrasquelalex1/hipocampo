@@ -14,6 +14,7 @@ pinned: false
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-active-green)](https://registry.modelcontextprotocol.io/v0.1/servers?search=carrasquelalex1/hipocampo)
 [![Glama](https://img.shields.io/badge/Glama-Rating%20A-brightgreen)](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo)
+[![hipocampo MCP server](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo/badges/score.svg)](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo)
 
 > **⚠️ Transport Note:** SSE transport is deprecated since MCP spec 2025-03-26.
 > Hipocampo now uses **Streamable HTTP** (single endpoint `/mcp`) as the recommended remote transport.
@@ -200,6 +201,7 @@ This project is licensed under the **MIT License**.
 # Hipocampo: Sistema de Memoria Dual con Caché Selectivo (CS)
 
 [![Glama](https://img.shields.io/badge/Glama-Rating%20A-brightgreen)](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo)
+[![hipocampo MCP server](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo/badges/score.svg)](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
 
 > **⚠️ Nota de Transporte:** SSE está deprecado desde spec MCP 2025-03-26.
