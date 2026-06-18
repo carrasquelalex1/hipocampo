@@ -13,6 +13,6 @@ ENV DB_NAME=hipocampo_db
 ENV NVIDIA_API_KEY=dummy
 ENV GOOGLE_API_KEY=dummy
 
-EXPOSE 8001
+EXPOSE 7860
 
-CMD ["python", "scripts/hipocampo_mcp_server.py", "--http", "8001"]
+CMD ["python", "scripts/hipocampo_mcp_server.py", "--http", "7860", "--host", "0.0.0.0"]
