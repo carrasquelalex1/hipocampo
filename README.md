@@ -199,6 +199,27 @@ This project is licensed under the **MIT License**.
 
 # Hipocampo: Sistema de Memoria Dual con Caché Selectivo (SSC)
 
+[![Glama](https://img.shields.io/badge/Glama-Rating%20A-brightgreen)](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo)
+[![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
+
+> **⚠️ Nota de Transporte:** SSE está deprecado desde spec MCP 2025-03-26.
+> Hipocampo ahora usa **Streamable HTTP** (endpoint único `/mcp`) como transporte remoto recomendado.
+
+## 🌐 Servidor MCP — Live en Hugging Face
+
+Hipocampo corre como **servidor MCP gratuito** en Hugging Face Spaces. Conéctate desde cualquier cliente MCP:
+
+```json
+{
+  "mcpServers": {
+    "hipocampo": {
+      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp",
+      "type": "streamable-http"
+    }
+  }
+}
+```
+
 **Hipocampo** es una arquitectura avanzada de persistencia de memoria dual diseñada para agentes de Inteligencia Artificial. Al mantener tanto el conocimiento técnico como los datos del perfil del usuario entre sesiones, Hipocampo proporciona un contexto con estado confiable que permite a los agentes aprender, adaptarse y escalar eficientemente.
 
 Construido sobre **PostgreSQL 17** y `pgvector`, introduce **Sparse Selective Caching (SSC)**: un algoritmo de recuperación progresiva de cuatro fases inspirado en *"Memory Caching: RNNs with Growing Memory"* (Google, 2025).
