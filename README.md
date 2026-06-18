@@ -197,7 +197,7 @@ This project is licensed under the **MIT License**.
 
 ## 🇪🇸 Versión en Español
 
-# Hipocampo: Sistema de Memoria Dual con Caché Selectivo (SSC)
+# Hipocampo: Sistema de Memoria Dual con Caché Selectivo (CS)
 
 [![Glama](https://img.shields.io/badge/Glama-Rating%20A-brightgreen)](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
@@ -222,14 +222,14 @@ Hipocampo corre como **servidor MCP gratuito** en Hugging Face Spaces. Conéctat
 
 **Hipocampo** es una arquitectura avanzada de persistencia de memoria dual diseñada para agentes de Inteligencia Artificial. Al mantener tanto el conocimiento técnico como los datos del perfil del usuario entre sesiones, Hipocampo proporciona un contexto con estado confiable que permite a los agentes aprender, adaptarse y escalar eficientemente.
 
-Construido sobre **PostgreSQL 17** y `pgvector`, introduce **Sparse Selective Caching (SSC)**: un algoritmo de recuperación progresiva de cuatro fases inspirado en *"Memory Caching: RNNs with Growing Memory"* (Google, 2025).
+Construido sobre **PostgreSQL 17** y `pgvector`, introduce **Caché Selectivo (CS)**: un algoritmo de recuperación progresiva de cuatro fases inspirado en *"Memory Caching: RNNs with Growing Memory"* (Google, 2025).
 
 ---
 
 ## 🚀 Características Principales
 
 * **Arquitectura de Memoria Dual**: Capas de almacenamiento separadas para registros técnicos (`memoria_vectorial`) y datos de perfil (`memory_items`), ambas utilizando embeddings de 1024 dimensiones.
-* **Sparse Selective Caching (SSC)**: Algoritmo progresivo que escala según la necesidad: *Enrutador de Tags* → *pgvector Top-K* → *Trigramas GIN* → *Escaneo ILIKE*.
+* **Caché Selectivo (CS)**: Algoritmo progresivo que escala según la necesidad: *Enrutador de Tags* → *pgvector Top-K* → *Trigramas GIN* → *Escaneo ILIKE*.
 * **Checkpointing Logarítmico**: Compresión inteligente basada en el decaimiento del tiempo, consolidando detalles granulares en un solo registro tras 90 días.
 * **Auto-MeJORA MCP**: Autodiagnóstico (health check + auto-repair), optimización dinámica (stats + tune), y mantenimiento de memoria (dedup + checkpoint) — todo desde herramientas MCP.
 * **Motor de Auto-Etiquetado**: Reglas basadas en expresiones regulares que categorizan la información de manera autónoma al momento de la persistencia.
