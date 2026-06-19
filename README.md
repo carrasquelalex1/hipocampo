@@ -60,6 +60,52 @@ Built on top of **PostgreSQL 17** with `pgvector`, it introduces **Sparse Select
 
 ---
 
+## 🎯 Use Cases
+
+### Error → Learn → Never Repeat (AI Agent Learning Loop)
+
+Hipocampo enables AI agents to **learn from mistakes across sessions** using a simple cycle:
+
+```
+┌─ 1. SEARCH ─────────────────────────────┐
+│  Before executing a command, the agent   │
+│  searches Hipocampo for similar errors:  │
+│  search_hipocampo("error <context>")     │
+└───────────────────┬──────────────────────┘
+                    │
+┌─ 2. EXECUTE ──────▼──────────────────────┐
+│  If match found → apply known solution   │
+│  If not → attempt new approach           │
+└───────────────────┬──────────────────────┘
+                    │
+┌─ 3. EVALUATE ─────▼──────────────────────┐
+│  Did it fail? Capture:                   │
+│  - error context & exit code             │
+│  - what was attempted                    │
+│  - what happened                         │
+└───────────────────┬──────────────────────┘
+                    │
+┌─ 4. PERSIST ──────▼──────────────────────┐
+│  save_hipocampo(                          │
+│    content="Error X: tried Y, result Z", │
+│    memory_type="decision",               │
+│    code="error_<hash>",                  │
+│    categories=["bugfix", "<tool>"]       │
+│  )                                        │
+└──────────────────────────────────────────┘
+```
+
+**Real example:** An agent tries `flatpak install npm` and fails. It saves the error to Hipocampo: *"npm is a Node.js package manager, not a Flatpak package. Use npm directly."* Next time the same command is attempted, the agent finds this record and knows the solution immediately — without repeating the mistake.
+
+**Over time**, the agent's error knowledge base grows organically. Each failure makes future sessions smarter. This turns Hipocampo from a simple archive into a **continuous learning system** for AI agents.
+
+### Other use cases
+- **Persistent user profile**: Remember preferences, configs, and personal data across sessions
+- **Project state tracking**: Keep context on ongoing projects, decisions made, and pending tasks
+- **Cross-session knowledge**: Build on previous work without repeating context
+
+---
+
 ## 🛠️ Quick Start
 
 ### Prerequisites
@@ -236,6 +282,52 @@ Construido sobre **PostgreSQL 17** y `pgvector`, introduce **Caché Selectivo (C
 * **Auto-MeJORA MCP**: Autodiagnóstico (health check + auto-repair), optimización dinámica (stats + tune), y mantenimiento de memoria (dedup + checkpoint) — todo desde herramientas MCP.
 * **Motor de Auto-Etiquetado**: Reglas basadas en expresiones regulares que categorizan la información de manera autónoma al momento de la persistencia.
 * **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante un servidor FastMCP con 12 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
+
+---
+
+## 🎯 Casos de Uso
+
+### Error → Aprender → No Repetir (Ciclo de Aprendizaje para Agentes IA)
+
+Hipocampo permite que agentes de IA **aprendan de sus errores entre sesiones** con un ciclo simple:
+
+```
+┌─ 1. BUSCAR ─────────────────────────────┐
+│  Antes de ejecutar, el agente busca     │
+│  errores similares en Hipocampo:        │
+│  search_hipocampo("error <contexto>")   │
+└───────────────────┬──────────────────────┘
+                    │
+┌─ 2. EJECUTAR ─────▼──────────────────────┐
+│  Si hay match → aplicar solución conocida│
+│  Si no → intentar nuevo enfoque         │
+└───────────────────┬──────────────────────┘
+                    │
+┌─ 3. EVALUAR ──────▼──────────────────────┐
+│  ¿Falló? Capturar:                      │
+│  - contexto del error y exit code       │
+│  - qué se intentó                       │
+│  - qué pasó                             │
+└───────────────────┬──────────────────────┘
+                    │
+┌─ 4. PERSISTIR ────▼──────────────────────┐
+│  save_hipocampo(                          │
+│    content="Error X: intenté Y, pasó Z",│
+│    memory_type="decision",               │
+│    code="error_<hash>",                  │
+│    categories=["bugfix", "<herramienta>"]│
+│  )                                        │
+└──────────────────────────────────────────┘
+```
+
+**Ejemplo real:** Un agente intenta `flatpak install npm` y falla. Guarda el error en Hipocampo: *"npm es un gestor de paquetes de Node.js, no un paquete Flatpak. Usar npm directamente."* La próxima vez que se intente el mismo comando, el agente encuentra este registro y aplica la solución de inmediato.
+
+**Con el tiempo**, la base de conocimiento de errores crece orgánicamente. Cada fallo hace más inteligentes las sesiones futuras. Esto convierte a Hipocampo de un simple archivo en un **sistema de aprendizaje continuo** para agentes de IA.
+
+### Otros casos de uso
+- **Perfil de usuario persistente**: Recordar preferencias, configuraciones y datos personales entre sesiones
+- **Seguimiento de proyectos**: Mantener contexto de proyectos activos, decisiones tomadas y tareas pendientes
+- **Conocimiento entre sesiones**: Continuar trabajos previos sin repetir contexto
 
 ---
 
