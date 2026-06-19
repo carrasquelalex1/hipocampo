@@ -99,6 +99,31 @@ Hipocampo enables AI agents to **learn from mistakes across sessions** using a s
 
 **Over time**, the agent's error knowledge base grows organically. Each failure makes future sessions smarter. This turns Hipocampo from a simple archive into a **continuous learning system** for AI agents.
 
+### ⚙️ How to configure your agent
+
+To enable this behavior, you need to instruct your agent to use the cycle above. This is done by adding instructions to the agent's configuration file, depending on the client:
+
+| Agent | Configuration file | Example |
+|---|---|---|
+| **OpenCode** | `AGENTS.md` (project root) or `~/.opencode/AGENTS.md` | [See example](#) |
+| **Claude Code** | `CLAUDE.md` or `~/.claude/CLAUDE.md` | Similar approach |
+| **Cursor** | `.cursorrules` | Add instructions in plain text |
+| **Windsurf** | `.windsurfrules` | Same structure |
+| **Cline** | `CLINE.md` | Same structure |
+
+**Minimal example** for `AGENTS.md` / `CLAUDE.md`:
+
+```markdown
+## Error Learning Cycle
+
+1. Before running any command, search: `search_hipocampo("error <command> <context>")`
+2. If a similar error is found, apply the documented solution and skip the failing attempt
+3. If the command fails (exit code != 0, timeout, "error"/"failed" in output):
+   - Save to Hipocampo: `save_hipocampo(content="Error: {stderr[:500]}. Attempt: {what was tried}. Result: {what happened}.", memory_type="decision", code="error_<hash>", categories=["bugfix", "<language/tool>"])`
+```
+
+> 💡 **Tip:** For MCP-native agents (OpenCode, Claude Code), Hipocampo tools are available directly. For others, use the HTTP endpoint or CLI scripts.
+
 ### Other use cases
 - **Persistent user profile**: Remember preferences, configs, and personal data across sessions
 - **Project state tracking**: Keep context on ongoing projects, decisions made, and pending tasks
@@ -323,6 +348,31 @@ Hipocampo permite que agentes de IA **aprendan de sus errores entre sesiones** c
 **Ejemplo real:** Un agente intenta `flatpak install npm` y falla. Guarda el error en Hipocampo: *"npm es un gestor de paquetes de Node.js, no un paquete Flatpak. Usar npm directamente."* La próxima vez que se intente el mismo comando, el agente encuentra este registro y aplica la solución de inmediato.
 
 **Con el tiempo**, la base de conocimiento de errores crece orgánicamente. Cada fallo hace más inteligentes las sesiones futuras. Esto convierte a Hipocampo de un simple archivo en un **sistema de aprendizaje continuo** para agentes de IA.
+
+### ⚙️ Cómo configurar tu agente
+
+Para activar este comportamiento, hay que instruir al agente. Se hace agregando reglas en su archivo de configuración:
+
+| Agente | Archivo de configuración |
+|---|---|
+| **OpenCode** | `AGENTS.md` (raíz del proyecto) o `~/.opencode/AGENTS.md` |
+| **Claude Code** | `CLAUDE.md` o `~/.claude/CLAUDE.md` |
+| **Cursor** | `.cursorrules` |
+| **Windsurf** | `.windsurfrules` |
+| **Cline** | `CLINE.md` |
+
+**Ejemplo mínimo** para `AGENTS.md` / `CLAUDE.md`:
+
+```markdown
+## Ciclo de Aprendizaje de Errores
+
+1. Antes de ejecutar un comando, busca: `search_hipocampo("error <comando> <contexto>")`
+2. Si hay error similar, aplica la solución documentada y omite el intento fallido
+3. Si el comando falla (exit code != 0, timeout, "error"/"failed" en output):
+   - Guarda en Hipocampo: `save_hipocampo(content="Error: {stderr[:500]}. Intento: {qué se probó}. Resultado: {qué pasó}.", memory_type="decision", code="error_<hash>", categories=["bugfix", "<lenguaje/herramienta>"])`
+```
+
+> 💡 **Tip:** Para agentes nativos MCP (OpenCode, Claude Code), las tools de Hipocampo están disponibles directamente. Para otros, usa el endpoint HTTP o los scripts CLI.
 
 ### Otros casos de uso
 - **Perfil de usuario persistente**: Recordar preferencias, configuraciones y datos personales entre sesiones
