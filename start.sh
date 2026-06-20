@@ -3,11 +3,30 @@ set -e
 
 echo "=== Hipocampo Startup ==="
 
-export PGDATA="${PGDATA:-/var/lib/postgresql/data}"
-export PG_MAJOR="${PG_MAJOR:-15}"
-PG_BIN="/usr/lib/postgresql/${PG_MAJOR}/bin"
+PG_BIN="/usr/lib/postgresql/15/bin"
+PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 
-# Start postgres directly (not via entrypoint)
+# Initialize DB if empty
+if [ ! -s "$PGDATA/PG_VERSION" ]; then
+    echo "Initializing PostgreSQL..."
+    mkdir -p "$PGDATA"
+    chown -R postgres:postgres "$PGDATA"
+    su - postgres -c "${PG_BIN}/initdb -D $PGDATA"
+    
+    cat >> "$PGDATA/postgresql.conf" <<EOF
+listen_addresses = 'localhost'
+port = 5432
+EOF
+    
+    cat > "$PGDATA/pg_hba.conf" <<EOF
+local all all trust
+host all all 127.0.0.1/32 md5
+host all all ::1/128 md5
+EOF
+fi
+
+# Start PostgreSQL
+echo "Starting PostgreSQL..."
 su - postgres -c "${PG_BIN}/pg_ctl -D $PGDATA -l ${PGDATA}/pg.log start"
 
 echo "Waiting for PostgreSQL..."
