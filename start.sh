@@ -3,8 +3,12 @@ set -e
 
 echo "=== Hipocampo Startup ==="
 
-PG_BIN="/usr/lib/postgresql/15/bin"
+# Find postgres binaries
+PG_BIN=$(dirname $(find /usr/lib/postgresql -name "pg_ctl" 2>/dev/null | head -1))
 PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+
+echo "PG_BIN=$PG_BIN"
+echo "PGDATA=$PGDATA"
 
 # Initialize DB if empty
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
@@ -27,13 +31,22 @@ fi
 
 # Start PostgreSQL
 echo "Starting PostgreSQL..."
-su - postgres -c "${PG_BIN}/pg_ctl -D $PGDATA -l ${PGDATA}/pg.log start"
+su - postgres -c "${PG_BIN}/pg_ctl -D $PGDATA -l ${PGDATA}/pg.log start" || {
+    echo "ERROR: Failed to start PostgreSQL"
+    cat "${PGDATA}/pg.log" 2>/dev/null || true
+    exit 1
+}
 
 echo "Waiting for PostgreSQL..."
 for i in $(seq 1 20); do
     if su - postgres -c "${PG_BIN}/pg_isready -q" 2>/dev/null; then
         echo "PostgreSQL is ready"
         break
+    fi
+    if [ $i -eq 20 ]; then
+        echo "ERROR: PostgreSQL did not start in time"
+        cat "${PGDATA}/pg.log" 2>/dev/null || true
+        exit 1
     fi
     sleep 1
 done
