@@ -3,18 +3,15 @@ FROM python:3.12-slim-bookworm
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates gnupg \
+    postgresql-15 postgresql-client-15 postgresql-server-dev-15 \
+    build-essential git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+RUN git clone --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && cd /tmp/pgvector && make && make install && rm -rf /tmp/pgvector
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-16 postgresql-client-16 postgresql-16-pgvector \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV PG_MAJOR=16
-ENV PGDATA=/var/lib/postgresql/data
+ENV PG_MAJOR=15
+ENV PGDATA=/var/lib/postgresql/15/main
 ENV DB_HOST=localhost
 ENV DB_USER=hipocampo
 ENV DB_PASSWORD=hipocampo
