@@ -7,6 +7,7 @@ Usa expansión de consulta + búsqueda vectorial (ambas tablas, 1024d unificado)
 + expansión por tags.
 """
 import psycopg2, os, json, sys, re, math
+from datetime import date
 from dotenv import load_dotenv
 from pgvector.psycopg2 import register_vector
 from openai import OpenAI
@@ -458,6 +459,25 @@ def cargar_config_hibrida():
         return 0.6
 
 
+def _aplicar_decaimiento_temporal(resultados):
+    from datetime import date
+    hoy = date.today()
+    for r in resultados:
+        fecha_str = r.get('metadatos', {}).get('date', '')
+        if fecha_str:
+            try:
+                partes = fecha_str.split('-')
+                fecha = date(int(partes[0]), int(partes[1]), int(partes[2]))
+                dias = (hoy - fecha).days
+                if dias > 7:
+                    decay = max(0.3, 1.0 - 0.05 * (dias / 7))
+                    r['score'] = round(r['score'] * decay, 1)
+                    r['score_raw'] = r['score']
+            except (ValueError, IndexError):
+                pass
+    return resultados
+
+
 def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None):
     """Fusión con ponderación híbrida calibrada.
 
@@ -465,6 +485,8 @@ def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None):
     generado por hipocampo_calibrate.py.
 
     hybrid_score = alpha * best_vec_score + (1-alpha) * best_lex_score
+
+    Aplica decaimiento temporal: memorias >7 días pierden peso progresivamente.
     """
     if alpha is None:
         alpha = cargar_config_hibrida()
@@ -494,6 +516,8 @@ def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None):
             grupos[clave] = r
 
     fusionados = sorted(grupos.values(), key=lambda x: x['score'], reverse=True)
+    fusionados = _aplicar_decaimiento_temporal(fusionados)
+    fusionados.sort(key=lambda x: x['score'], reverse=True)
 
     return fusionados
 
@@ -590,7 +614,7 @@ def formatear_resultados(resultados, query):
 
 # ─── MAIN ──────────────────────────────────────────────────────────────────────
 
-def bire_search(query, umbral_minimo=10.0, rerank=False):
+def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
     conn = psycopg2.connect(
         dbname=DB_NAME,
         user=DB_USER,
@@ -627,6 +651,8 @@ def bire_search(query, umbral_minimo=10.0, rerank=False):
         fusionados = re_rank_results(fusionados, query, top_n=RE_RANK_TOP_N)
 
     filtrados = [r for r in fusionados if r['score'] >= umbral_minimo]
+    if session_id:
+        filtrados = [r for r in filtrados if r.get('metadatos', {}).get('session_id') == session_id]
 
     cur.close()
     conn.close()
@@ -635,23 +661,31 @@ def bire_search(query, umbral_minimo=10.0, rerank=False):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Uso: hipocampo_search.py <consulta> [umbral_minimo] [--rerank]")
-        print("  umbral_minimo: score mínimo (0-100, default 10)")
+        print("Uso: hipocampo_search.py <consulta> [umbral_minimo] [--rerank] [--session-id <id>]")
+        print("  umbral_minimo:  score mínimo (0-100, default 10)")
         print("  --rerank:       marcar top resultados para re-ranking por el agente activo (Claude)")
+        print("  --session-id:   filtrar por sesión")
         sys.exit(1)
 
     query = sys.argv[1]
     umbral = 10.0
     rerank = False
-    for arg in sys.argv[2:]:
+    session_id = ""
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
         if arg == '--rerank':
             rerank = True
+        elif arg == '--session-id' and i + 1 < len(sys.argv):
+            session_id = sys.argv[i + 1]
+            i += 1
         else:
             try:
                 umbral = float(arg)
             except ValueError:
                 pass
+        i += 1
 
-    resultados = bire_search(query, umbral_minimo=umbral, rerank=rerank)
+    resultados = bire_search(query, umbral_minimo=umbral, rerank=rerank, session_id=session_id)
     output = formatear_resultados(resultados, query)
     print(output)
