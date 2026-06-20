@@ -657,6 +657,124 @@ def hipocampo_maintenance() -> str:
     return "📋 Mantenimiento completo:\n" + "\n".join(report_parts)
 
 
+DEMO_HTML = """<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"><title>🧠 Hipocampo — Demo</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+header{background:linear-gradient(135deg,#1e3a5f,#0f172a);padding:24px;text-align:center;border-bottom:1px solid #1e293b}
+header h1{font-size:1.8rem;margin-bottom:4px}
+header p{color:#94a3b8;font-size:.9rem}
+.container{max-width:800px;margin:0 auto;padding:20px}
+.card{background:#1e293b;border-radius:12px;padding:20px;margin-bottom:16px;border:1px solid #334155}
+.card h2{font-size:1.1rem;margin-bottom:12px;color:#38bdf8}
+label{display:block;font-size:.85rem;color:#94a3b8;margin-bottom:4px}
+input,textarea,select{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#e2e8f0;font-size:.9rem;margin-bottom:12px}
+input:focus,textarea:focus{outline:2px solid #38bdf8;border-color:transparent}
+textarea{resize:vertical;min-height:60px;font-family:monospace}
+button{background:#38bdf8;color:#0f172a;border:none;padding:10px 20px;border-radius:8px;font-weight:600;cursor:pointer;font-size:.9rem;transition:.2s}
+button:hover{background:#7dd3fc}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.danger{background:#ef4444}
+button.danger:hover{background:#f87171}
+button.secondary{background:#475569}
+button.secondary:hover{background:#64748b}
+.flex{display:flex;gap:8px;flex-wrap:wrap}
+pre{background:#0f172a;border-radius:8px;padding:12px;overflow:auto;font-size:.8rem;max-height:300px;border:1px solid #334155;margin-top:8px;white-space:pre-wrap}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.75rem;font-weight:600}
+.badge.green{background:#166534;color:#86efac}
+.badge.blue{background:#1e3a5f;color:#93c5fd}
+.badge.yellow{background:#854d0e;color:#fde68a}
+.mt-8{margin-top:8px}
+.mb-8{margin-bottom:8px}
+small{color:#64748b;font-size:.8rem}
+a{color:#38bdf8}
+#status{text-align:center;margin-top:12px;font-size:.85rem;min-height:1.2em}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 Hipocampo</h1>
+  <p>Sistema de Memoria Dual para Agentes IA — <a href="https://github.com/carrasquelalex1/hipocampo">GitHub</a> · <a href="https://glama.ai/mcp/servers/carrasquelalex1/hipocampo">Glama</a></p>
+</header>
+<div class="container">
+
+<div class="card">
+  <h2>🔍 Buscar</h2>
+  <input id="query" placeholder='Ej: "proyecto contable", "planta medicinal", "API REST en Python"' onkeydown="if(event.key==='Enter') search()">
+  <div class="flex">
+    <button onclick="search()">Buscar</button>
+    <button class="secondary" onclick="document.getElementById('query').value=''; document.getElementById('results').textContent=''">Limpiar</button>
+  </div>
+  <pre id="results"></pre>
+</div>
+
+<div class="card">
+  <h2>💾 Guardar recuerdo</h2>
+  <textarea id="content" placeholder="¿Qué quieres que Hipocampo recuerde?"></textarea>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    <div>
+      <label>Tipo</label>
+      <select id="type"><option value="event">event</option><option value="decision">decision</option><option value="profile">profile</option></select>
+    </div>
+    <div>
+      <label>Código (opcional)</label>
+      <input id="code" placeholder="ej: bugfix, feature">
+    </div>
+  </div>
+  <button onclick="save()">Guardar</button>
+  <pre id="saveResult"></pre>
+</div>
+
+<div class="card">
+  <h2>❤️ Health Check</h2>
+  <button onclick="health()">Ejecutar health check</button>
+  <pre id="healthResult"></pre>
+</div>
+
+<p id="status">Listo para usar 🚀</p>
+</div>
+
+<script>
+function status(msg){document.getElementById('status').textContent=msg}
+async function search(){
+  const q=document.getElementById('query').value.trim()
+  if(!q)return status('Escribe una consulta primero')
+  status('Buscando...')
+  try{
+    const r=await fetch('/api/search?q='+encodeURIComponent(q))
+    const d=await r.json()
+    document.getElementById('results').textContent=d.ok ? d.results : '❌ '+d.error
+    status(d.ok ? '✅ Búsqueda completada ('+d.latency_ms+'ms)' : '❌ Error')
+  }catch(e){status('❌ '+e.message)}
+}
+async function save(){
+  const content=document.getElementById('content').value.trim()
+  if(!content)return status('Escribe contenido para guardar')
+  status('Guardando...')
+  try{
+    const r=await fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      content,type:document.getElementById('type').value,code:document.getElementById('code').value
+    })})
+    const d=await r.json()
+    document.getElementById('saveResult').textContent=d.ok ? '✅ Guardado id='+d.id : '❌ '+d.error
+    status(d.ok ? '✅ Guardado exitoso' : '❌ Error')
+  }catch(e){status('❌ '+e.message)}
+}
+async function health(){
+  status('Ejecutando health check...')
+  try{
+    const r=await fetch('/api/health')
+    const d=await r.json()
+    document.getElementById('healthResult').textContent=d.ok ? d.output : '❌ '+d.error
+    status(d.ok ? '✅ Health check completado' : '❌ Error')
+  }catch(e){status('❌ '+e.message)}
+}
+</script>
+</body></html>"""
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] in ("--http", "--streamable-http"):
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
@@ -667,32 +785,63 @@ if __name__ == "__main__":
                 host = sys.argv[idx + 1]
         import uvicorn
         from starlette.routing import Route
+        from starlette.responses import JSONResponse
         logger.info("🔌 Iniciando Hipocampo MCP Server (Streamable HTTP) en %s:%d", host, port)
         mcp.settings.port = port
         mcp.settings.host = host
         mcp.settings.transport_security.enable_dns_rebinding_protection = False
 
-        async def info_page(request):
-            return HTMLResponse("""<!DOCTYPE html><html lang="es">
-<head><meta charset="utf-8"><title>Hipocampo MCP</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{font-family:system-ui;max-width:600px;margin:40px auto;padding:0 20px;line-height:1.6}
-code{background:#f0f0f0;padding:2px 6px;border-radius:3px}</style></head>
-<body><h1>🧠 Hipocampo MCP Server</h1>
-<p>Servidor MCP con memoria dual y Sparse Selective Caching.</p>
-<h2>🔌 Endpoint MCP</h2>
-<p><code>POST /mcp</code> — Streamable HTTP</p>
-<p>Content-Type: <code>application/json</code></p>
-<p>Accept: <code>application/json, text/event-stream</code></p>
-<h2>📋 Comandos</h2>
-<ul><li><code>search_hipocampo</code> — Búsqueda semántica+híbrida</li>
-<li><code>save_hipocampo</code> — Guardar recuerdo</li>
-<li><code>hipocampo_health</code> — Health check</li>
-<li><code>hipocampo_stats</code> — Estadísticas</li>
-<li><code>hipocampo_maintenance</code> — Mantenimiento completo</li></ul></body></html>""")
+        async def demo_page(request):
+            return HTMLResponse(DEMO_HTML)
+
+        async def api_search(request):
+            q = request.query_params.get("q", "")
+            if not q:
+                return JSONResponse({"ok": False, "error": "query param 'q' required"})
+            try:
+                import time, subprocess
+                t0 = time.time()
+                r = subprocess.run([PYTHON_BIN, SEARCH_SCRIPT, q], capture_output=True, text=True, timeout=15)
+                return JSONResponse({"ok": True, "results": r.stdout, "latency_ms": int((time.time() - t0) * 1000)})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)})
+
+        async def api_save(request):
+            try:
+                body = await request.json()
+                content = body.get("content", "")
+                if not content:
+                    return JSONResponse({"ok": False, "error": "content required"})
+                import json as j
+                from datetime import date as d
+                embedding = _generar_embedding(content)
+                metadatos = {"type": body.get("type", "event"), "code": body.get("code", ""), "categories": body.get("categories", []), "date": str(d.today()), "source": "web_demo"}
+                sid = body.get("session_id", "")
+                if sid:
+                    metadatos["session_id"] = sid
+                conn = _conn()
+                cur = conn.cursor()
+                cur.execute("INSERT INTO memoria_vectorial (contenido, metadatos, embedding) VALUES (%s, %s, %s::vector(1024)) RETURNING id", (content, j.dumps(metadatos), embedding))
+                row_id = cur.fetchone()[0]
+                conn.commit()
+                cur.close()
+                conn.close()
+                return JSONResponse({"ok": True, "id": row_id})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)})
+
+        async def api_health(request):
+            try:
+                r = subprocess.run([PYTHON_BIN, HEALTH_SCRIPT], capture_output=True, text=True, timeout=15)
+                return JSONResponse({"ok": True, "output": r.stdout})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)})
 
         starlette_app = mcp.streamable_http_app()
-        starlette_app.router.routes.insert(0, Route("/", endpoint=info_page, methods=["GET"]))
+        starlette_app.router.routes.insert(0, Route("/", endpoint=demo_page, methods=["GET"]))
+        starlette_app.router.routes.insert(0, Route("/api/search", endpoint=api_search, methods=["GET"]))
+        starlette_app.router.routes.insert(0, Route("/api/save", endpoint=api_save, methods=["POST"]))
+        starlette_app.router.routes.insert(0, Route("/api/health", endpoint=api_health, methods=["GET"]))
         config = uvicorn.Config(starlette_app, host=host, port=port, log_level=mcp.settings.log_level.lower())
         uvicorn.Server(config).run()
     elif len(sys.argv) > 1 and sys.argv[1] == "--sse":
