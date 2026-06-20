@@ -10,8 +10,6 @@ RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN chmod +x /app/start.sh
-
 ENV DB_HOST=localhost
 ENV DB_USER=hipocampo
 ENV DB_PASSWORD=postgres
@@ -20,5 +18,7 @@ ENV NVIDIA_API_KEY=dummy
 ENV GOOGLE_API_KEY=dummy
 
 EXPOSE 7860
+
+RUN chmod +x /app/start.sh
 
 CMD ["/app/start.sh"]

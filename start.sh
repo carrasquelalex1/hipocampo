@@ -4,9 +4,11 @@ set -e
 PG_BIN="/usr/lib/postgresql/${PG_MAJOR:-15}/bin"
 PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 
-# Initialize if needed
+echo "=== Hipocampo Startup ==="
+
+# Initialize DB if needed
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
-    echo "Init PG..."
+    echo "Initializing PostgreSQL..."
     mkdir -p "$PGDATA"
     chown -R postgres:postgres "$PGDATA"
     gosu postgres "${PG_BIN}/initdb -D $PGDATA"
@@ -19,28 +21,39 @@ fi
 
 chown -R postgres:postgres "$PGDATA"
 
-# Start PG
+# Start PostgreSQL in background
+echo "Starting PostgreSQL..."
 gosu postgres "${PG_BIN}/pg_ctl -D $PGDATA -l /tmp/pg.log start"
 
+# Wait for PostgreSQL to be ready
+echo "Waiting for PostgreSQL..."
 for i in $(seq 1 30); do
-    gosu postgres "${PG_BIN}/pg_isready -q" 2>/dev/null && break
-    [ $i -eq 30 ] && exit 1
+    if gosu postgres "${PG_BIN}/pg_isready -q" 2>/dev/null; then
+        echo "PostgreSQL is ready!"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "ERROR: PostgreSQL did not start in time"
+        cat /tmp/pg.log 2>/dev/null | tail -20 || true
+        exit 1
+    fi
     sleep 1
 done
 
-echo "PG ready"
+# Create database and user
+echo "Setting up database..."
+gosu postgres "${PG_BIN}/psql -c \"CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASSWORD}';\"" 2>&1 || true
+gosu postgres "${PG_BIN}/psql -c \"CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};\"" 2>&1 || true
+gosu postgres "${PG_BIN}/psql -c \"GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};\"" 2>&1 || true
+gosu postgres "${PG_BIN}/psql -d ${DB_NAME} -c 'CREATE EXTENSION IF NOT EXISTS vector;'" 2>&1
+gosu postgres "${PG_BIN}/psql -d ${DB_NAME} -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'" 2>&1
 
-# Setup
-gosu postgres "${PG_BIN}/psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\" | grep -q 1" || \
-    gosu postgres "${PG_BIN}/psql -c \"CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASSWORD}';\""
-gosu postgres "${PG_BIN}/psql -tc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\" | grep -q 1" || \
-    gosu postgres "${PG_BIN}/psql -c \"CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};\""
-gosu postgres "${PG_BIN}/psql -c \"GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};\""
-gosu postgres "${PG_BIN}/psql -d ${DB_NAME} -c 'CREATE EXTENSION IF NOT EXISTS vector;'"
-gosu postgres "${PG_BIN}/psql -d ${DB_NAME} -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'"
-gosu postgres "${PG_BIN}/psql -d ${DB_NAME}" < /app/esquema.sql 2>/dev/null || true
-gosu postgres "${PG_BIN}/psql -d ${DB_NAME} -c \"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${DB_USER};\""
-gosu postgres "${PG_BIN}/psql -d ${DB_NAME} -c \"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};\""
+# Run schema
+gosu postgres "${PG_BIN}/psql -d ${DB_NAME}" < /app/esquema.sql 2>&1 || true
 
-echo "DB ready"
+# Grant permissions
+gosu postgres "${PG_BIN}/psql -d ${DB_NAME} -c \"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${DB_USER};\"" 2>&1 || true
+gosu postgres "${PG_BIN}/psql -d ${DB_NAME} -c \"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};\"" 2>&1 || true
+
+echo "=== Starting MCP server ==="
 exec python3 /app/scripts/hipocampo_mcp_server.py --http 7860 --host 0.0.0.0
