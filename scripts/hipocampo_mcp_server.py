@@ -657,143 +657,7 @@ def hipocampo_maintenance() -> str:
     return "📋 Mantenimiento completo:\n" + "\n".join(report_parts)
 
 
-DEMO_HTML = """<!DOCTYPE html>
-<html lang="es">
-<head><meta charset="utf-8"><title>Hipocampo — Memoria Dual para IA</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<style>
-:root{--bg:#0a0a0f;--surface:#12121a;--border:#1e1e2e;--text:#c4c4cf;--text-dim:#6b6b7e;--accent:#7c5cfc;--accent-glow:rgba(124,92,252,.25);--accent-light:#a78bfa;--green:#34d399;--radius:16px;--radius-sm:10px}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-a{color:var(--accent-light);text-decoration:none}
-nav{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid var(--border);background:var(--surface)}
-nav .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.15rem;color:#fff}
-nav .logo span{background:var(--accent);color:#fff;border-radius:8px;padding:2px 8px;font-size:.7rem;font-weight:600;margin-left:6px}
-nav .links{display:flex;gap:20px;font-size:.85rem;font-weight:500}
-nav .links a{color:var(--text-dim);transition:color .2s}
-nav .links a:hover{color:#fff}
-.hero{text-align:center;padding:60px 20px 40px;border-bottom:1px solid var(--border)}
-.hero h1{font-size:2.8rem;font-weight:800;color:#fff;letter-spacing:-.03em;line-height:1.1}
-.hero h1 em{font-style:normal;background:linear-gradient(135deg,var(--accent),var(--accent-light));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.hero p{color:var(--text-dim);font-size:1.05rem;margin-top:12px;max-width:480px;margin:12px auto 0;line-height:1.5}
-.hero .badges{display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap}
-.hero .badge{font-size:.75rem;padding:4px 12px;border-radius:999px;border:1px solid var(--border);color:var(--text-dim);font-weight:500}
-.hero .badge.active{border-color:var(--accent);color:var(--accent-light);background:var(--accent-glow)}
-.container{max-width:880px;margin:0 auto;padding:32px 20px}
-.tabs{display:flex;gap:4px;background:var(--surface);border-radius:10px;padding:4px;border:1px solid var(--border);margin-bottom:24px}
-.tab{padding:10px 20px;border-radius:8px;font-size:.85rem;font-weight:500;cursor:pointer;color:var(--text-dim);transition:all .2s;border:none;background:none;font-family:inherit}
-.tab:hover{color:var(--text)}
-.tab.active{background:var(--accent);color:#fff;box-shadow:0 0 20px var(--accent-glow)}
-.panel{display:none}
-.panel.active{display:block}
-.card{background:var(--surface);border-radius:16px;padding:24px;border:1px solid var(--border)}
-.card .label{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);margin-bottom:12px}
-input,textarea,select{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.9rem;font-family:inherit;transition:border-color .2s;outline:none}
-input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
-textarea{resize:vertical;min-height:70px;font-family:JetBrains Mono,monospace;font-size:.85rem}
-select{appearance:none;cursor:pointer}
-.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border-radius:10px;font-weight:600;font-size:.85rem;cursor:pointer;border:none;font-family:inherit;transition:all .2s}
-.btn-primary{background:var(--accent);color:#fff}
-.btn-primary:hover{box-shadow:0 0 24px var(--accent-glow);transform:translateY(-1px)}
-.btn-ghost{background:transparent;color:var(--text-dim);padding:8px 12px}
-.btn-ghost:hover{color:var(--text);background:var(--bg)}
-.btn-sm{padding:6px 14px;font-size:.8rem}
-.flex{display:flex;gap:8px;flex-wrap:wrap}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.output{background:var(--bg);border-radius:10px;padding:16px;overflow:auto;font-size:.82rem;max-height:360px;border:1px solid var(--border);margin-top:12px;white-space:pre-wrap;line-height:1.5;font-family:JetBrains Mono,monospace;color:var(--text-dim)}
-.output:empty{display:none}
-.output .ok{color:var(--green)}
-.status-bar{position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);padding:10px 32px;display:flex;align-items:center;justify-content:space-between;font-size:.8rem;color:var(--text-dim)}
-.status-bar .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:var(--green);box-shadow:0 0 8px rgba(52,211,153,.4)}
-@media(max-width:640px){.hero h1{font-size:1.8rem}.grid-2{grid-template-columns:1fr}nav{padding:12px 16px}}
-</style>
-</head>
-<body>
-<nav>
-  <div class="logo">
-    <svg width="28" height="28" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#7c5cfc"/><path d="M16 6c-4 0-7 2.5-7 7 0 3.5 2 5.5 7 9 5-3.5 7-5.5 7-9 0-4.5-3-7-7-7zm0 9a2 2 0 110-4 2 2 0 010 4z" fill="#fff"/></svg>
-    Hipocampo <span>v3.8</span>
-  </div>
-  <div class="links">
-    <a href="https://github.com/carrasquelalex1/hipocampo" target="_blank">GitHub</a>
-    <a href="https://glama.ai/mcp/servers/carrasquelalex1/hipocampo" target="_blank">Glama</a>
-    <a href="https://registry.modelcontextprotocol.io" target="_blank">MCP Registry</a>
-  </div>
-</nav>
 
-<section class="hero">
-  <h1><em>Hipocampo</em> es la memoria de tu agente</h1>
-  <p>Busca, guarda y gestiona recuerdos con búsqueda semántica + decaimiento temporal.</p>
-  <div class="badges">
-    <span class="badge active">🧠 Memoria Dual</span>
-    <span class="badge">⚡ BIRE v3.7</span>
-    <span class="badge">🔍 Embeddings 1024d</span>
-    <span class="badge">📡 16 Tools MCP</span>
-  </div>
-</section>
-
-<div class="container">
-  <div class="tabs">
-    <button class="tab active" data-tab="search">🔍 Buscar</button>
-    <button class="tab" data-tab="save">💾 Guardar</button>
-    <button class="tab" data-tab="health">❤️ Salud</button>
-  </div>
-
-  <div class="panel active" id="panel-search">
-    <div class="card">
-      <div class="label">Consulta semántica</div>
-      <div class="flex" style="margin-bottom:10px">
-        <input id="query" placeholder="Ej: proyecto contable, planta medicinal, API REST en Python" style="flex:1;margin-bottom:0">
-        <button class="btn btn-primary" onclick="search()">Buscar</button>
-        <button class="btn btn-ghost btn-sm" onclick="clean('query','results')">✕</button>
-      </div>
-      <div class="output" id="results"></div>
-    </div>
-  </div>
-
-  <div class="panel" id="panel-save">
-    <div class="card">
-      <div class="label">Nuevo recuerdo</div>
-      <textarea id="content" placeholder="¿Qué quieres que Hipocampo recuerde?"></textarea>
-      <div class="grid-2">
-        <div><label style="font-size:.75rem;color:var(--text-dim);margin-bottom:4px;display:block">Tipo</label><select id="type"><option value="event">event</option><option value="decision">decision</option><option value="profile">profile</option></select></div>
-        <div><label style="font-size:.75rem;color:var(--text-dim);margin-bottom:4px;display:block">Código</label><input id="code" placeholder="opcional: bugfix, feature"></div>
-      </div>
-      <div class="flex" style="margin-top:4px">
-        <button class="btn btn-primary" onclick="save()">Guardar</button>
-        <button class="btn btn-ghost btn-sm" onclick="clean('content','saveResult')">✕</button>
-      </div>
-      <div class="output" id="saveResult"></div>
-    </div>
-  </div>
-
-  <div class="panel" id="panel-health">
-    <div class="card">
-      <div class="label">Diagnóstico del sistema</div>
-      <p style="color:var(--text-dim);font-size:.85rem;margin-bottom:14px">Verifica PostgreSQL, API de embeddings, disco y extensiones.</p>
-      <button class="btn btn-primary" onclick="health()">Ejecutar health check</button>
-      <div class="output" id="healthResult"></div>
-    </div>
-  </div>
-</div>
-
-<div class="status-bar">
-  <span><span class="dot"></span>Hipocampo activo</span>
-  <span id="status">Listo para consultas</span>
-</div>
-
-<script>
-function st(m){document.getElementById('status').textContent=m}
-function tab(n){document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===n));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+n))}
-document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>tab(t.dataset.tab))
-function clean(...a){a.forEach(i=>{const e=document.getElementById(i);if(e)e.value='';const o=document.getElementById(i+'Result');if(o)o.innerHTML=''})}
-async function search(){const q=document.getElementById('query').value.trim();if(!q)return st('✕ Escribe una consulta');st('🔍 Buscando...');try{const r=await fetch('/api/search?q='+encodeURIComponent(q)),d=await r.json();document.getElementById('results').textContent=d.ok?d.results:'✕ '+d.error;st(d.ok?'✅ Busqueda completada ('+d.latency_ms+'ms)':'✕ Error')}catch(e){st('✕ '+e.message)}}
-async function save(){const c=document.getElementById('content').value.trim();if(!c)return st('✕ Escribe contenido');st('💾 Guardando...');try{const r=await fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:c,type:document.getElementById('type').value,code:document.getElementById('code').value})}),d=await r.json();document.getElementById('saveResult').innerHTML=d.ok?'<span class="ok">✅ Guardado</span> id <span style="color:var(--accent-light)">'+d.id+'</span>':'✕ '+d.error;st(d.ok?'✅ Guardado exitoso':'✕ Error')}catch(e){st('✕ '+e.message)}}
-async function health(){st('❤️ Ejecutando...');try{const r=await fetch('/api/health'),d=await r.json();document.getElementById('healthResult').textContent=d.ok?d.output:'✕ '+d.error;st(d.ok?'✅ Health check completado':'✕ Error')}catch(e){st('✕ '+e.message)}}
-</script>
-</body></html>"""
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] in ("--http", "--streamable-http"):
@@ -810,9 +674,6 @@ if __name__ == "__main__":
         mcp.settings.port = port
         mcp.settings.host = host
         mcp.settings.transport_security.enable_dns_rebinding_protection = False
-
-        async def demo_page(request):
-            return HTMLResponse(DEMO_HTML)
 
         async def api_search(request):
             q = request.query_params.get("q", "")
@@ -858,7 +719,6 @@ if __name__ == "__main__":
                 return JSONResponse({"ok": False, "error": str(e)})
 
         starlette_app = mcp.streamable_http_app()
-        starlette_app.router.routes.insert(0, Route("/", endpoint=demo_page, methods=["GET"]))
         starlette_app.router.routes.insert(0, Route("/api/search", endpoint=api_search, methods=["GET"]))
         starlette_app.router.routes.insert(0, Route("/api/save", endpoint=api_save, methods=["POST"]))
         starlette_app.router.routes.insert(0, Route("/api/health", endpoint=api_health, methods=["GET"]))
