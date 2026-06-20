@@ -10,8 +10,6 @@ RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN chmod +x /app/start.sh
-
 ENV DB_HOST=localhost
 ENV DB_USER=hipocampo
 ENV DB_PASSWORD=postgres
@@ -21,4 +19,4 @@ ENV GOOGLE_API_KEY=dummy
 
 EXPOSE 7860
 
-CMD ["/app/start.sh"]
+CMD ["python3", "scripts/hipocampo_mcp_server.py", "--http", "7860", "--host", "0.0.0.0"]
