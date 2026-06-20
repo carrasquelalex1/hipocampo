@@ -718,7 +718,11 @@ if __name__ == "__main__":
             except Exception as e:
                 return JSONResponse({"ok": False, "error": str(e)})
 
+        async def root_health(request):
+            return JSONResponse({"status": "ok", "server": "hipocampo", "endpoint": "/mcp"})
+
         starlette_app = mcp.streamable_http_app()
+        starlette_app.router.routes.insert(0, Route("/", endpoint=root_health, methods=["GET"]))
         starlette_app.router.routes.insert(0, Route("/api/search", endpoint=api_search, methods=["GET"]))
         starlette_app.router.routes.insert(0, Route("/api/save", endpoint=api_save, methods=["POST"]))
         starlette_app.router.routes.insert(0, Route("/api/health", endpoint=api_health, methods=["GET"]))
