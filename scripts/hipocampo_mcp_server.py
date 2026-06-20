@@ -34,6 +34,7 @@ import psycopg2
 from openai import OpenAI
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import ToolAnnotations
 from starlette.responses import HTMLResponse
 
 # ─── CONFIGURACIÓN ─────────────────────────────────────────────────────────
@@ -387,14 +388,32 @@ def hipocampo_tune() -> str:
 # ─── HERRAMIENTAS: MANTENIMIENTO (FASE 3) ─────────────────────────────────────
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+))
 def hipocampo_dedup(merge: bool = False) -> str:
     """
     Detecta y opcionalmente fusiona duplicados en las tablas de memoria.
 
+    Con merge=False (default) es solo lectura — seguro de ejecutar, no modifica datos.
+    Con merge=True es destructivo: consolida filas duplicadas en una sola, operación
+    irreversible. Usar con precaución. Ejecutar primero sin merge para previsualizar.
+
+    ¿Qué es un duplicado? Dos registros con alta similitud semántica (embedding
+    + texto), por encima del umbral configurable (default 0.95).
+
+    El reporte incluye: cantidad de duplicados encontrados, IDs afectados y
+    resumen de fusión si se ejecutó merge.
+
+    Para ejecutar dedup como parte del ciclo completo de mantenimiento, usar
+    hipocampo_maintenance (paso 2 del ciclo). Esta herramienta es para uso
+    puntual o previsualización antes del merge.
+
     Args:
-        merge: Si es True, fusiona los duplicados encontrados.
-               Si es False (default), solo muestra análisis.
+        merge: Si es True, fusiona los duplicados encontrados (irreversible).
+               Si es False (default), solo muestra análisis (seguro).
 
     Returns:
         Reporte de duplicados encontrados o fusionados.
