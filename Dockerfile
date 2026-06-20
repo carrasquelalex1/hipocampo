@@ -3,7 +3,14 @@ FROM python:3.12-slim-bookworm
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-16 postgresql-16-pgvector postgresql-client-16 \
+    curl ca-certificates gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-16 postgresql-client-16 postgresql-16-pgvector \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PG_MAJOR=16
