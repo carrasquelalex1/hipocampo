@@ -32,7 +32,8 @@ URL: https://alexbell1-hipocampo-mcp.hf.space/mcp
 {
   "mcpServers": {
     "hipocampo": {
-      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp"
+      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp",
+      "type": "streamable-http"
     }
   }
 }
@@ -293,7 +294,8 @@ Hipocampo corre como **servidor MCP gratuito** en Hugging Face Spaces. Conéctat
 {
   "mcpServers": {
     "hipocampo": {
-      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp"
+      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp",
+      "type": "streamable-http"
     }
   }
 }
