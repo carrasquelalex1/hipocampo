@@ -45,14 +45,15 @@ URL: https://alexbell1-hipocampo-mcp.hf.space/mcp
 
 **Hipocampo** is an advanced dual-memory persistence architecture designed for autonomous AI agents. By maintaining both technical knowledge and user profiling data across sessions, Hipocampo provides a reliable, stateful context that enables agents to learn, adapt, and scale efficiently. 
 
-Built on top of **PostgreSQL 17** with `pgvector`, it introduces **Sparse Selective Caching (SSC)**—a progressive four-phase retrieval algorithm inspired by *"Memory Caching: RNNs with Growing Memory"* (Google, 2025).
+Built on top of **PostgreSQL 17** with `pgvector`, it features **BIRE v3.7** — a hybrid retrieval engine combining semantic embeddings (1024d), lexical expansion, and GIN trigram search with dynamic score fusion. Also includes **Sparse Selective Caching (SSC)** as an experimental pipeline.
 
 ---
 
 ## 🚀 Key Features
 
 * **Dual-Memory Architecture**: Distinct storage layers for technical records (`memoria_vectorial`) and user profile data (`memory_items`), each utilizing 1024-dimensional embeddings.
-* **Sparse Selective Caching (SSC)**: A state-of-the-art four-phase progressive retrieval pipeline that scales seamlessly: *Tag Router* → *pgvector Top-K* → *GIN Trigram* → *ILIKE Fallback*.
+* **BIRE v3.7 (default)**: Hybrid search engine combining NVIDIA embeddings (1024d), query expansion, GIN trigram, and composite scoring — used by all MCP tools.
+* **SSC (experimental)**: Alternative four-phase progressive pipeline: *Tag Router* → *pgvector Top-K* → *GIN Trigram* → *ILIKE Fallback*.
 * **Logarithmic Checkpointing**: Intelligently compresses historical memories based on time decay, shrinking 24-hour granular details into unified 90-day checkpoints.
 * **Automated Tagging Engine**: A robust, Regex-based rule engine that autonomously categorizes and tags records upon persistence.
 * **Cross-System Vector Search**: Unified semantic search across over 1,100 records for deep cross-referencing.
@@ -165,11 +166,11 @@ cp .env.example .env
 Hipocampo provides specialized scripts to interact with the core engine:
 
 ```bash
-# Perform a search using the new SSC progressive retrieval algorithm
-python3 scripts/hipocampo_ssc_search.py "query term"
-
-# Perform a search using the legacy BIRE unified search
+# Perform a search using BIRE v3.7 (modern, recommended)
 python3 scripts/hipocampo_search.py "query term"
+
+# Perform a search using SSC v1.0 (experimental, legacy)
+python3 scripts/hipocampo_ssc_search.py "query term"
 
 # Compress older memories using Logarithmic Checkpointing
 python3 scripts/hipocampo_checkpoint.py --dry-run
@@ -195,9 +196,16 @@ hipocampo_db (PostgreSQL 17 + pgvector + pg_trgm)
 └── resources (Referenced Assets & URLs)
 ```
 
-### The SSC Pipeline (v3.7)
+### BIRE v3.7 — Hybrid Search Engine
 
-Sparse Selective Caching operates as a multi-tier fallback system to optimize both speed and accuracy:
+BIRE (Búsqueda Integrada por Relevancia Expansiva) is the default search engine used by all MCP tools. It combines vector and lexical search with dynamic score fusion:
+
+1. **Query Expansion** — Expands terms using synonyms and stemming before search.
+2. **Vector Search** — NVIDIA embeddings (1024d) cosine similarity across both tables.
+3. **GIN Trigram** — Lexical expansion when vector confidence is low.
+4. **Composite Scoring** — Weighted fusion of vector + lexical scores with adaptive cutoff.
+
+An **SSC (Sparse Selective Caching)** pipeline is also available as an experimental alternative:
 
 1. **Phase 1: Tag Router** – Classifies the query intent (profile vs. technical) and dynamically assigns weights.
 2. **Phase 2: PGVector Top-K** – Semantic search across both tables. Execution halts here if confidence ≥ 70%.
@@ -224,7 +232,7 @@ Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to
 
 **Performance Optimization (Fase 2):**
 * `hipocampo_stats()`: Query performance metrics, latency analysis, and optimization recommendations.
-* `hipocampo_tune()`: Auto-adjusts SSC thresholds and hybrid weights based on real usage data.
+* `hipocampo_tune()`: Auto-adjusts BIRE/SSC thresholds and hybrid weights based on real usage data.
 
 **Memory Maintenance (Fase 3):**
 * `hipocampo_dedup(merge)`: Detects and merges duplicate memories (exact + semantic via cosine similarity).
@@ -295,14 +303,15 @@ Hipocampo corre como **servidor MCP gratuito** en Hugging Face Spaces. Conéctat
 
 **Hipocampo** es una arquitectura avanzada de persistencia de memoria dual diseñada para agentes de Inteligencia Artificial. Al mantener tanto el conocimiento técnico como los datos del perfil del usuario entre sesiones, Hipocampo proporciona un contexto con estado confiable que permite a los agentes aprender, adaptarse y escalar eficientemente.
 
-Construido sobre **PostgreSQL 17** y `pgvector`, introduce **Caché Selectivo (CS)**: un algoritmo de recuperación progresiva de cuatro fases inspirado en *"Memory Caching: RNNs with Growing Memory"* (Google, 2025).
+Construido sobre **PostgreSQL 17** y `pgvector`, utiliza **BIRE v3.7** — un motor híbrido que combina embeddings semánticos (1024d), expansión léxica y búsqueda GIN trigram con fusión dinámica de puntuación. Incluye también **Caché Selectivo (CS/SSC)** como pipeline experimental.
 
 ---
 
 ## 🚀 Características Principales
 
 * **Arquitectura de Memoria Dual**: Capas de almacenamiento separadas para registros técnicos (`memoria_vectorial`) y datos de perfil (`memory_items`), ambas utilizando embeddings de 1024 dimensiones.
-* **Caché Selectivo (CS)**: Algoritmo progresivo que escala según la necesidad: *Enrutador de Tags* → *pgvector Top-K* → *Trigramas GIN* → *Escaneo ILIKE*.
+* **BIRE v3.7 (por defecto)**: Búsqueda híbrida con embeddings NVIDIA (1024d), expansión de consulta, GIN trigram y puntuación compuesta — usado por todas las tools MCP.
+* **Caché Selectivo (CS/SSC, experimental)**: Pipeline alternativo de 4 fases: *Tag Router* → *pgvector Top-K* → *GIN Trigram* → *ILIKE Fallback*.
 * **Checkpointing Logarítmico**: Compresión inteligente basada en el decaimiento del tiempo, consolidando detalles granulares en un solo registro tras 90 días.
 * **Auto-MeJORA MCP**: Autodiagnóstico (health check + auto-repair), optimización dinámica (stats + tune), y mantenimiento de memoria (dedup + checkpoint) — todo desde herramientas MCP.
 * **Motor de Auto-Etiquetado**: Reglas basadas en expresiones regulares que categorizan la información de manera autónoma al momento de la persistencia.
@@ -402,7 +411,8 @@ cp .env.example .env
 
 Para usar la búsqueda directamente desde la terminal:
 ```bash
-python3 scripts/hipocampo_ssc_search.py "término de búsqueda"
+python3 scripts/hipocampo_search.py "término de búsqueda"       # BIRE v3.7 (recomendado)
+python3 scripts/hipocampo_ssc_search.py "término de búsqueda"   # SSC v1.0 (experimental)
 ```
 
 Para inicializar el servidor MCP:
@@ -426,7 +436,7 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 
 **Optimización de Rendimiento (Fase 2):**
 * `hipocampo_stats()`: Métricas de rendimiento, latencia, y recomendaciones de optimización.
-* `hipocampo_tune()`: Ajusta thresholds SSC y pesos híbridos según uso real.
+* `hipocampo_tune()`: Ajusta thresholds BIRE/SSC y pesos híbridos según uso real.
 
 **Mantenimiento de Memoria (Fase 3):**
 * `hipocampo_dedup(fusionar)`: Detecta y fusiona memorias duplicadas (exactas + semánticas).
