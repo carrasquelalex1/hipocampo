@@ -1,6 +1,5 @@
 FROM pgvector/pgvector:pg15
 
-# Instalar Python 3 y pip
 RUN apt-get update && apt-get install -y python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,9 +19,6 @@ ENV GOOGLE_API_KEY=dummy
 
 EXPOSE 7860
 
-# Copiar y configurar el entrypoint que inicia PostgreSQL y la app
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /app/start.sh /app/docker-entrypoint.sh
 
-ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["python3", "scripts/hipocampo_mcp_server.py", "--http", "7860", "--host", "0.0.0.0"]
+CMD ["/app/start.sh"]
