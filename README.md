@@ -221,10 +221,14 @@ Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to
 ### Available MCP Tools
 
 **Memory Operations:**
-* `search_hipocampo(query)`: Unified semantic and lexical search (auto-records metrics).
+* `search_hipocampo(query, session_id?)`: Unified semantic and lexical search (auto-records metrics). Optionally filter by session.
 * `quick_hipocampo_search(query)`: Shorthand alias for rapid queries.
-* `save_hipocampo(content, memory_type, code, categories)`: Persist data into the technical memory store (`memoria_vectorial`).
+* `save_hipocampo(content, memory_type, code, categories, session_id?)`: Persist data into the technical memory store (`memoria_vectorial`). Supports optional session isolation.
 * `profile_hipocampo(summary, extra, categories)`: Store personal or event-driven user data (`memory_items`).
+
+**CRUD Operations:**
+* `update_hipocampo(id, content?, memory_type?, code?, categories?)`: Update an existing memory. Regenerates embedding if content changes.
+* `delete_hipocampo(id)`: Permanently delete a memory by ID.
 
 **Self-Diagnosis & Auto-Repair (Fase 1):**
 * `hipocampo_health()`: Full system health check (PostgreSQL, NVIDIA API, disk, extensions).
@@ -238,6 +242,14 @@ Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to
 * `hipocampo_dedup(merge)`: Detects and merges duplicate memories (exact + semantic via cosine similarity).
 * `hipocampo_checkpoint(dry_run)`: Logarithmic checkpointing to compress old memories.
 * `hipocampo_maintenance()`: Full maintenance cycle (repair → dedup → checkpoint → tune).
+
+**Time Decay:**
+* Scores of memories >7 days old automatically decay ~5% per week (floor at 30%), keeping recent knowledge at the top.
+
+**Webhook Watches:**
+* `watch_hipocampo(pattern, webhook_url)`: Register a webhook that fires on save/update/delete events matching a text pattern.
+* `unwatch_hipocampo(id)`: Remove a registered webhook.
+* `list_watches()`: List all registered webhooks and their targets.
 
 ### Starting the Server
 
@@ -425,10 +437,14 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 ### Herramientas MCP Disponibles
 
 **Operaciones de Memoria:**
-* `search_hipocampo(consulta)`: Búsqueda semántica + léxica híbrida (auto-registra métricas).
+* `search_hipocampo(consulta, session_id?)`: Búsqueda semántica + léxica híbrida (auto-registra métricas). Filtro opcional por sesión.
 * `quick_hipocampo_search(consulta)`: Alias rápido para búsquedas.
-* `save_hipocampo(contenido, tipo, codigo, categorias)`: Guarda datos técnicos en `memoria_vectorial`.
+* `save_hipocampo(contenido, tipo, codigo, categorias, session_id?)`: Guarda datos técnicos en `memoria_vectorial`. Soporta aislamiento por sesión.
 * `profile_hipocampo(resumen, extra, categorias)`: Guarda datos de perfil en `memory_items`.
+
+**Operaciones CRUD:**
+* `update_hipocampo(id, contenido?, tipo?, codigo?, categorias?)`: Actualiza un recuerdo existente. Regenera embedding si cambia el contenido.
+* `delete_hipocampo(id)`: Elimina un recuerdo permanentemente por ID.
 
 **Autodiagnóstico y Reparación (Fase 1):**
 * `hipocampo_health()`: Health check completo (PostgreSQL, NVIDIA API, disco, extensiones).
@@ -442,6 +458,14 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 * `hipocampo_dedup(fusionar)`: Detecta y fusiona memorias duplicadas (exactas + semánticas).
 * `hipocampo_checkpoint(seco)`: Checkpointing logarítmico para comprimir memorias antiguas.
 * `hipocampo_maintenance()`: Ciclo completo de mantenimiento (reparar → dedup → checkpoint → tune).
+
+**Decaimiento Temporal:**
+* Scores de memorias >7 días decaen ~5% por semana (piso 30%), priorizando conocimiento reciente.
+
+**Webhooks (Watch):**
+* `watch_hipocampo(patron, webhook_url)`: Registra un webhook que se dispara en eventos save/update/delete cuando el contenido coincide con un patrón.
+* `unwatch_hipocampo(id)`: Elimina un webhook registrado.
+* `list_watches()`: Lista todos los webhooks activos.
 
 *Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
 
