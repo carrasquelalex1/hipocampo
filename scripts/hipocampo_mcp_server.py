@@ -57,22 +57,32 @@ ENV_PATH = os.getenv("ENV_PATH", os.path.join(BASE_DIR, "..", ".env"))
 mcp = FastMCP("hipocampo")
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True,
+))
 def search_hipocampo(query: str) -> str:
     """
     Busca en el Hipocampo (memoria dual con SSC / BIRE v3.6).
+
+    Es solo lectura — no modifica datos, no tiene efectos secundarios.
+    Sin límites de tasa (rate limits).
 
     Realiza búsqueda semántica + léxica híbrida en las bases de datos de
     memoria del usuario, incluyendo memoria técnica (*memoria_vectorial*) y
     de perfil (*memory_items*).
 
+    Para búsquedas rápidas cuando el nombre corto sea preferido, usar
+    quick_hipocampo_search (alias idéntico). Esta herramienta es la
+    versión completa con nombre descriptivo.
+
     Args:
-        query: Texto de búsqueda. Ejemplos:
-               "proyecto contable", "perro", "planta medicinal",
+        query: Texto de búsqueda en lenguaje natural. Máximo 500 caracteres.
+               Ejemplos: "proyecto contable", "perro", "planta medicinal",
                "API REST en Python", "gusta del té".
 
     Returns:
         Resultados formateados del BIRE como texto plano.
+        Incluye: contenido encontrado, scores de relevancia, y metadatos.
         Si no hay coincidencias, indica búsqueda exitosa pero sin resultados.
     """
     import time
@@ -121,14 +131,27 @@ def search_hipocampo(query: str) -> str:
         return f"❌ Error en búsqueda Hipocampo:\n{e.stderr}"
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True,
+))
 def quick_hipocampo_search(query: str) -> str:
     """
     Búsqueda rápida en el Hipocampo (alias corto de search_hipocampo).
 
+    Es solo lectura — no modifica datos, no tiene efectos secundarios.
+    Comportamiento y salida idénticos a search_hipocampo.
+
     Útil cuando el cliente MCP prefiera nombres de herramienta más cortos.
+    Para nombre descriptivo, usar search_hipocampo.
+
+    Args:
+        query: Texto de búsqueda en lenguaje natural. Igual que
+               search_hipocampo. Ej: "API REST en Python", "presupuesto".
+
+    Returns:
+        Mismo formato que search_hipocampo: resultados como texto plano
+        con scores de relevancia y metadatos.
     """
-    return search_hipocampo(query)
 
 
 @mcp.resource("hipocampo://info")
@@ -363,14 +386,29 @@ def hipocampo_stats() -> str:
         return f"❌ Error en stats: {e}"
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    destructiveHint=True,
+    idempotentHint=True,
+))
 def hipocampo_tune() -> str:
     """
     Ajusta automáticamente los thresholds y pesos del SSC
     basado en las métricas de rendimiento acumuladas.
 
+    Es destructivo: modifica los thresholds y pesos de forma irreversible.
+    Sin embargo, es idempotente: ejecutarlo múltiples veces converge al
+    mismo resultado. Usar con precaución.
+
+    Para solo ver estadísticas sin modificar nada, usar hipocampo_stats
+    (solo lectura). Para ejecutar el ciclo completo de mantenimiento
+    (que incluye tune como paso 5), usar hipocampo_maintenance.
+
+    Recomendado ejecutar solo después de acumular suficientes métricas
+    (al menos 100 consultas registradas). No usar si el sistema funciona
+    correctamente sin degradación.
+
     Returns:
-        Reporte de ajustes aplicados.
+        Reporte de ajustes aplicados (nuevos thresholds y pesos).
     """
     try:
         result = subprocess.run(
@@ -429,17 +467,33 @@ def hipocampo_dedup(merge: bool = False) -> str:
         return f"❌ Error en dedup: {e}"
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    destructiveHint=True,
+    idempotentHint=True,
+))
 def hipocampo_checkpoint(dry_run: bool = True) -> str:
     """
     Comprime memorias antiguas usando checkpointing logarítmico.
 
+    Con dry_run=True (default) es solo lectura — seguro, no modifica datos.
+    Con dry_run=False es destructivo: comprime memorias antiguas de forma
+    irreversible (las originales se eliminan tras comprimir). Idempotente:
+    ejecutar múltiples veces no daña datos.
+
+    Para ejecutar checkpoint como parte del ciclo completo de mantenimiento,
+    usar hipocampo_maintenance (paso 3 del ciclo). Esta herramienta es para
+    ejecución puntual o previsualización.
+
+    Recomendado ejecutar periódicamente (semanal o mensual) para mantener
+    el rendimiento del sistema.
+
     Args:
         dry_run: Si es True (default), solo muestra qué se comprimiría.
-                 Si es False, ejecuta la compresión.
+                 Si es False, ejecuta la compresión (irreversible).
 
     Returns:
-        Reporte del checkpointing ejecutado.
+        Reporte del checkpointing ejecutado o simulado.
+        Incluye: cantidad de registros comprimidos, espacio liberado.
     """
     try:
         args = [PYTHON_BIN, CHECKPOINT_SCRIPT]
