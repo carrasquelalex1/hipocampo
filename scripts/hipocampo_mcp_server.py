@@ -303,6 +303,115 @@ def profile_hipocampo(
         return f"❌ Error al guardar perfil: {e}"
 
 
+# ─── HERRAMIENTAS: CRUD (UPDATE / DELETE) ──────────────────────────────────────
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    destructiveHint=True,
+    idempotentHint=True,
+))
+def update_hipocampo(
+    id: int,
+    content: str | None = None,
+    memory_type: str | None = None,
+    code: str | None = None,
+    categories: list[str] | None = None,
+) -> str:
+    """
+    Actualiza un recuerdo existente en el Hipocampo (memoria_vectorial).
+
+    Si se proporciona content, se regenera el embedding automáticamente.
+    Los campos no proporcionados no se modifican.
+
+    Args:
+        id: ID numérico del recuerdo a actualizar.
+        content: Nuevo texto del recuerdo (opcional). Si se provee, se regenera el embedding.
+        memory_type: Nuevo tipo de memoria (opcional). Ej: "event", "decision".
+        code: Nuevo código o etiqueta (opcional).
+        categories: Nueva lista de categorías (opcional).
+
+    Returns:
+        Confirmación de la actualización.
+    """
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute("SELECT contenido, metadatos FROM memoria_vectorial WHERE id = %s", (id,))
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            conn.close()
+            return f"❌ No se encontró recuerdo con id={id}"
+
+        current_content, current_metadatos = row
+        new_content = content if content is not None else current_content
+        new_metadatos = (current_metadatos or {}).copy()
+        new_metadatos["updated_at"] = str(date.today())
+
+        if memory_type is not None:
+            new_metadatos["type"] = memory_type
+        if code is not None:
+            new_metadatos["code"] = code
+        if categories is not None:
+            new_metadatos["categories"] = categories
+
+        if content is not None:
+            embedding = _generar_embedding(content)
+            cur.execute(
+                """UPDATE memoria_vectorial SET contenido=%s, metadatos=%s, embedding=%s::vector(1024)
+                   WHERE id=%s""",
+                (new_content, json.dumps(new_metadatos), embedding, id),
+            )
+        else:
+            cur.execute(
+                "UPDATE memoria_vectorial SET metadatos=%s WHERE id=%s",
+                (json.dumps(new_metadatos), id),
+            )
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("✅ Actualizado id=%s", id)
+        return f"✅ Actualizado recuerdo id={id}"
+    except Exception as e:
+        logger.error("❌ Error al actualizar: %s", e)
+        return f"❌ Error al actualizar recuerdo: {e}"
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    destructiveHint=True,
+))
+def delete_hipocampo(id: int) -> str:
+    """
+    Elimina un recuerdo del Hipocampo (memoria_vectorial) por su ID.
+
+    Esta operación es irreversible. Una vez eliminado, el recuerdo
+    no podrá recuperarse ni aparecerá en búsquedas futuras.
+
+    Args:
+        id: ID numérico del recuerdo a eliminar.
+
+    Returns:
+        Confirmación de eliminación.
+    """
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM memoria_vectorial WHERE id=%s", (id,))
+        if cur.rowcount == 0:
+            cur.close()
+            conn.close()
+            return f"❌ No se encontró recuerdo con id={id}"
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("🗑️ Eliminado id=%s", id)
+        return f"🗑️ Eliminado recuerdo id={id}"
+    except Exception as e:
+        logger.error("❌ Error al eliminar: %s", e)
+        return f"❌ Error al eliminar recuerdo: {e}"
+
+
 # ─── HERRAMIENTA: HEALTH CHECK ───────────────────────────────────────────────
 
 
