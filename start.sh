@@ -62,5 +62,11 @@ su -s /bin/bash postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'CREATE EXTENSION I
 echo "Running schema..."
 su -s /bin/bash postgres -c "${PG_BIN}/psql -d ${DB_NAME}" < /app/esquema.sql 2>&1 || true
 
+echo "Granting permissions..."
+su -s /bin/bash postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${DB_USER};'" 2>&1 || true
+su -s /bin/bash postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};'" 2>&1 || true
+su -s /bin/bash postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};'" 2>&1 || true
+su -s /bin/bash postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};'" 2>&1 || true
+
 echo "=== Starting MCP server ==="
 python3 /app/scripts/hipocampo_mcp_server.py --http 7860 --host 0.0.0.0
