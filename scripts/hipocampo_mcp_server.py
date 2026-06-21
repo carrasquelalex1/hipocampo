@@ -669,7 +669,7 @@ if __name__ == "__main__":
                 host = sys.argv[idx + 1]
         import uvicorn
         from starlette.routing import Route
-        from starlette.responses import JSONResponse
+        from starlette.responses import JSONResponse, HTMLResponse
         logger.info("🔌 Iniciando Hipocampo MCP Server (Streamable HTTP) en %s:%d", host, port)
         mcp.settings.port = port
         mcp.settings.host = host
@@ -721,8 +721,13 @@ if __name__ == "__main__":
         async def root_health(request):
             return JSONResponse({"status": "ok", "server": "hipocampo", "endpoint": "/mcp"})
 
+        async def playground(request):
+            html = open(os.path.join(BASE_DIR, "..", "playground.html"), encoding="utf-8").read()
+            return HTMLResponse(html)
+
         starlette_app = mcp.streamable_http_app()
         starlette_app.router.routes.insert(0, Route("/", endpoint=root_health, methods=["GET"]))
+        starlette_app.router.routes.insert(0, Route("/playground", endpoint=playground, methods=["GET"]))
         starlette_app.router.routes.insert(0, Route("/api/search", endpoint=api_search, methods=["GET"]))
         starlette_app.router.routes.insert(0, Route("/api/save", endpoint=api_save, methods=["POST"]))
         starlette_app.router.routes.insert(0, Route("/api/health", endpoint=api_health, methods=["GET"]))
