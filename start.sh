@@ -3,7 +3,8 @@ set -e
 
 echo "=== Hipocampo Startup ==="
 
-PG_BIN="${PG_BIN:-/usr/lib/postgresql/16/bin}"
+PG_MAJOR="${PG_MAJOR:-16}"
+PG_BIN="/usr/lib/postgresql/${PG_MAJOR}/bin"
 PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
