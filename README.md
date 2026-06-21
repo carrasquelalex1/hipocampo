@@ -480,3 +480,4 @@ Si este proyecto te es útil, considera apoyarlo:
 - **PayPal:** [paypal.me/carrasquealex](https://paypal.me/carrasquealex)
 - **USDT (TRC-20):** (próximamente)
 - Cada aporte ayuda a mantener vivo el proyecto 🧠✨
+
