@@ -718,21 +718,38 @@ if __name__ == "__main__":
             except Exception as e:
                 return JSONResponse({"ok": False, "error": str(e)})
 
-        async def root_handler(request):
-            if request.query_params.get("logs") == "container":
-                return JSONResponse({"status": "ok", "server": "hipocampo", "endpoint": "/mcp"})
-            html = open(os.path.join(BASE_DIR, "..", "playground.html"), encoding="utf-8").read()
-            return HTMLResponse(html)
+        from starlette.applications import Starlette as StarletteApp
+        from starlette.middleware import Middleware as SMiddleware
 
-        starlette_app = mcp.streamable_http_app()
-        custom_routes = [
-            Route("/", endpoint=root_handler, methods=["GET"]),
+        mcp_app = mcp.streamable_http_app()
+        api_app = StarletteApp(routes=[
             Route("/api/search", endpoint=api_search, methods=["GET"]),
             Route("/api/save", endpoint=api_save, methods=["POST"]),
             Route("/api/health", endpoint=api_health, methods=["GET"]),
-        ]
-        starlette_app.router.routes = custom_routes + starlette_app.router.routes
-        config = uvicorn.Config(starlette_app, host=host, port=port, log_level=mcp.settings.log_level.lower())
+        ])
+        playground_html = open(os.path.join(BASE_DIR, "..", "playground.html"), encoding="utf-8").read()
+
+        async def app(scope, receive, send):
+            if scope["type"] == "http":
+                path = scope["path"]
+                method = scope["method"]
+                if path == "/" and method == "GET":
+                    qs = scope.get("query_string", b"").decode()
+                    if "logs=container" in qs:
+                        body = b'{"status":"ok","server":"hipocampo","endpoint":"/mcp"}'
+                        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+                        await send({"type": "http.response.body", "body": body})
+                    else:
+                        body = playground_html.encode("utf-8")
+                        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/html; charset=utf-8")]})
+                        await send({"type": "http.response.body", "body": body})
+                    return
+                if path.startswith("/mcp") or path.startswith("/sse"):
+                    await mcp_app(scope, receive, send)
+                    return
+                await api_app(scope, receive, send)
+
+        config = uvicorn.Config(app, host=host, port=port, log_level=mcp.settings.log_level.lower())
         uvicorn.Server(config).run()
     elif len(sys.argv) > 1 and sys.argv[1] == "--sse":
         logger.warning("⚠️  --sse está deprecado desde spec MCP 2025-03-26. Usa --http en su lugar.")
