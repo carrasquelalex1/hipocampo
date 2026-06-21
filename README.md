@@ -28,9 +28,9 @@ Hipocampo runs as a **free MCP server** on Hugging Face Spaces. Connect from any
 URL: https://alexbell1-hipocampo-mcp.hf.space/mcp
 ```
 
-**🧪 Playground interactivo:** Prueba guardar y buscar recuerdos desde el navegador en [https://alexbell1-hipocampo-mcp.hf.space/](https://alexbell1-hipocampo-mcp.hf.space/) — sin registro ni cliente MCP.
+**🧪 Interactive Playground:** Try saving and searching memories from your browser at [https://alexbell1-hipocampo-mcp.hf.space/](https://alexbell1-hipocampo-mcp.hf.space/) — no registration or MCP client needed.
 
-> **⚠️ Importante:** El tier gratuito de Hugging Face es **efímero** — los datos se pierden al reiniciar/desplegar. Esta instancia es solo para pruebas y evaluación. Para almacenamiento persistente, ejecuta Hipocampo localmente (ver [Quick Start](#🛠-quick-start)) o conecta una base de datos externa (Neon, Supabase, etc.).
+> **⚠️ Important:** The Hugging Face free tier is **ephemeral** — data is lost on restart/deploy. This instance is intended for testing only. For persistent storage, run Hipocampo locally (see [Quick Start](#🛠-quick-start)) or connect an external database (Neon, Supabase, etc.).
 
 ```json
 {
