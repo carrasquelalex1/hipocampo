@@ -71,21 +71,22 @@ textarea{resize:vertical;min-height:60px;font-family:monospace}
 <script>
 async function api(url, opts={}){try{const r=await fetch(url,opts),d=await r.json();return d}catch(e){return{ok:false,error:e.message}}}
 
-function show(el, html){const o=document.getElementById(el);o.innerHTML=html;o.classList.add('show')}
+function show(el, html, asText){const o=document.getElementById(el);if(asText){o.textContent=html}else{o.innerHTML=html}o.classList.add('show')}
 
 async function save(){
 const content=document.getElementById('content').value.trim();
 if(!content)return show('saveOut','✕ Escribe contenido');
 show('saveOut','⏳ Guardando...');
 const r=await api('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content,type:document.getElementById('type').value,code:document.getElementById('code').value})});
-show('saveOut',r.ok?'<span class="ok">✅ Guardado</span> (id: '+r.id+')':'✕ '+r.error)}
+show('saveOut',r.ok?'✅ Guardado (id: '+r.id+')':'✕ '+r.error)}
 
 async function search(){
 const q=document.getElementById('query').value.trim();
 if(!q)return show('searchOut','✕ Escribe una consulta');
 show('searchOut','⏳ Buscando...');
 const r=await api('/api/search?q='+encodeURIComponent(q));
-show('searchOut',r.ok?r.results:'✕ '+r.error)}
+console.log('search result:', r);
+show('searchOut',r.ok?r.results:'✕ '+r.error, true)}
 
 async function health(){
 show('healthOut','⏳ Ejecutando...');
