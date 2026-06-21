@@ -49,5 +49,10 @@ if [ -f /app/esquema.sql ]; then
     su - postgres -c "${PG_BIN}/psql -d ${DB_NAME}" < /app/esquema.sql 2>&1 || true
 fi
 
+echo "Granting permissions..."
+su - postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'GRANT ALL ON ALL TABLES IN SCHEMA public TO ${DB_USER};'" 2>&1
+su - postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};'" 2>&1
+su - postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};'" 2>&1
+
 echo "=== Starting MCP server ==="
 exec python3 /app/scripts/hipocampo_mcp_server.py --http 7860 --host 0.0.0.0
