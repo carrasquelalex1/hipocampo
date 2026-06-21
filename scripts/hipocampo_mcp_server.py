@@ -725,10 +725,13 @@ if __name__ == "__main__":
             return HTMLResponse(html)
 
         starlette_app = mcp.streamable_http_app()
-        starlette_app.router.routes.insert(0, Route("/", endpoint=root_handler, methods=["GET"]))
-        starlette_app.router.routes.insert(0, Route("/api/search", endpoint=api_search, methods=["GET"]))
-        starlette_app.router.routes.insert(0, Route("/api/save", endpoint=api_save, methods=["POST"]))
-        starlette_app.router.routes.insert(0, Route("/api/health", endpoint=api_health, methods=["GET"]))
+        custom_routes = [
+            Route("/", endpoint=root_handler, methods=["GET"]),
+            Route("/api/search", endpoint=api_search, methods=["GET"]),
+            Route("/api/save", endpoint=api_save, methods=["POST"]),
+            Route("/api/health", endpoint=api_health, methods=["GET"]),
+        ]
+        starlette_app.router.routes = custom_routes + starlette_app.router.routes
         config = uvicorn.Config(starlette_app, host=host, port=port, log_level=mcp.settings.log_level.lower())
         uvicorn.Server(config).run()
     elif len(sys.argv) > 1 and sys.argv[1] == "--sse":
