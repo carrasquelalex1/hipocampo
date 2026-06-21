@@ -28,6 +28,8 @@ Hipocampo runs as a **free MCP server** on Hugging Face Spaces. Connect from any
 URL: https://alexbell1-hipocampo-mcp.hf.space/mcp
 ```
 
+**🧪 Playground interactivo:** Prueba guardar y buscar recuerdos desde el navegador en [https://alexbell1-hipocampo-mcp.hf.space/](https://alexbell1-hipocampo-mcp.hf.space/) — sin registro ni cliente MCP.
+
 ```json
 {
   "mcpServers": {
@@ -312,6 +314,8 @@ Hipocampo corre como **servidor MCP gratuito** en Hugging Face Spaces. Conéctat
   }
 }
 ```
+
+**🧪 Playground interactivo:** Prueba guardar y buscar recuerdos desde el navegador en [https://alexbell1-hipocampo-mcp.hf.space/](https://alexbell1-hipocampo-mcp.hf.space/) — sin registro ni cliente MCP.
 
 **Hipocampo** es una arquitectura avanzada de persistencia de memoria dual diseñada para agentes de Inteligencia Artificial. Al mantener tanto el conocimiento técnico como los datos del perfil del usuario entre sesiones, Hipocampo proporciona un contexto con estado confiable que permite a los agentes aprender, adaptarse y escalar eficientemente.
 
