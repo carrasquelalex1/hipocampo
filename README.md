@@ -500,6 +500,29 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 
 ---
 
+## 🧪 Tests
+
+Hipocampo incluye **78+ tests unitarios** cubriendo toda la lógica central:
+
+| Archivo | Qué cubre |
+|---------|-----------|
+| `tests/test_search.py` | Expansión de consulta (stem map + sinónimos), fusión de scores con alpha dinámico, decaimiento temporal (5%/semana), formateo de resultados |
+| `tests/test_autotag.py` | Las 17 reglas de tags, 16 reglas de categoría, detección automática de memory_type |
+| `tests/test_dedup.py` | Similitud coseno (vectores de 1024 dim), lógica de detección de duplicados exactos y semánticos |
+| `tests/test_checkpoint.py` | Clasificación por escalas de edad, agrupación por proyecto, generación de resúmenes |
+
+```bash
+# Ejecutar todos los tests
+python3 -m pytest tests/ -v
+
+# Con cobertura
+python3 -m pytest tests/ --cov=scripts --cov-report=term-missing
+```
+
+Los tests se ejecutan automáticamente en cada push vía [GitHub Actions](.github/workflows/test.yml) en Python 3.11–3.13.
+
+---
+
 ## ☕ Donaciones
 
 Si este proyecto te es útil, considera apoyarlo:
