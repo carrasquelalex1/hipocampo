@@ -270,6 +270,18 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001
 
 For advanced configuration, please refer to the [MCP Server Guide](docs/mcp-server-guide.md).
 
+### Modular Architecture
+
+DB connection, config loading, and embedding generation are centralized in the `hipocampo` package:
+
+```
+hipocampo/
+├── __init__.py       # Package init (version 3.8)
+└── db.py             # get_conn(), get_embedding(), load_config()
+```
+
+All scripts in `scripts/` import from `hipocampo.db` instead of duplicating the boilerplate. The MCP server also imports search/health/stats/dedup/checkpoint functions directly — no subprocess calls.
+
 ---
 
 ## ☕ Support / Donaciones
@@ -495,6 +507,18 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 * `watch_hipocampo(patron, webhook_url)`: Registra un webhook que se dispara en eventos save/update/delete cuando el contenido coincide con un patrón.
 * `unwatch_hipocampo(id)`: Elimina un webhook registrado.
 * `list_watches()`: Lista todos los webhooks activos.
+
+### Arquitectura Modular
+
+La conexión a BD, configuración y generación de embeddings están centralizadas en el paquete `hipocampo`:
+
+```
+hipocampo/
+├── __init__.py       # Inicialización del paquete (v3.8)
+└── db.py             # get_conn(), get_embedding(), load_config()
+```
+
+Todos los scripts en `scripts/` importan de `hipocampo.db` en lugar de duplicar el boilerplate. El servidor MCP importa las funciones de búsqueda/salud/estadísticas/dedup/checkpoint directamente — sin llamadas subprocess.
 
 *Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
 
