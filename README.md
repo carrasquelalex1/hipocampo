@@ -282,6 +282,12 @@ hipocampo/
 
 All scripts in `scripts/` import from `hipocampo.db` instead of duplicating the boilerplate. The MCP server also imports search/health/stats/dedup/checkpoint functions directly — no subprocess calls.
 
+**Before:** Each MCP search spawned `subprocess.run()` → fork Python interpreter → re-import everything → connect DB → generate embedding → run query → parse stdout. That's ~200–500ms of process + serialization overhead alone.
+
+**After:** Direct function call within the same process. The DB connection pool, OpenAI client, and modules are already cached. Overhead drops to microseconds.
+
+For individual searches the difference is marginal (~200ms), but for `hipocampo_maintenance()` it previously ran **4 serial subprocess forks** — now it's one direct call per phase, saving ~1–2 seconds.
+
 ---
 
 ## ☕ Support / Donaciones
@@ -519,6 +525,12 @@ hipocampo/
 ```
 
 Todos los scripts en `scripts/` importan de `hipocampo.db` en lugar de duplicar el boilerplate. El servidor MCP importa las funciones de búsqueda/salud/estadísticas/dedup/checkpoint directamente — sin llamadas subprocess.
+
+**Antes:** Cada búsqueda MCP ejecutaba `subprocess.run()` → fork del intérprete Python → re-importar todo → conectar DB → generar embedding → ejecutar query → parsear stdout. ~200–500ms solo de overhead de proceso y serialización.
+
+**Ahora:** Llamada directa a función en el mismo proceso. La DB connection pool, OpenAI client y módulos ya están cacheados. El overhead se reduce a microsegundos.
+
+Para búsquedas individuales la diferencia es marginal (~200ms), pero para `hipocampo_maintenance()` antes ejecutaba **4 forks subprocess en serie** — ahora es una llamada directa por fase, ahorrando ~1–2 segundos.
 
 *Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
 
