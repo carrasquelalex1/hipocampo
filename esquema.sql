@@ -112,3 +112,33 @@ INSERT INTO memory_categories (id, name, description, user_id) VALUES
     (gen_random_uuid()::text, 'work_life',       'Trabajo, vida profesional', 'usuario_ejemplo'),
     (gen_random_uuid()::text, 'activities',      'Actividades, hobbies', 'usuario_ejemplo'),
     (gen_random_uuid()::text, 'experiences',     'Experiencias pasadas', 'usuario_ejemplo');
+
+-- ============================================================
+-- query_stats — Métricas de rendimiento de búsquedas
+-- ============================================================
+CREATE TABLE IF NOT EXISTS query_stats (
+    id SERIAL PRIMARY KEY,
+    query_hash VARCHAR(64),
+    query_text TEXT,
+    latency_ms INTEGER,
+    results_count INTEGER,
+    method VARCHAR(20),
+    top_score REAL,
+    avg_score REAL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_query_stats_created ON query_stats(created_at);
+
+-- ============================================================
+-- watches — Webhooks para eventos de memoria
+-- ============================================================
+CREATE TABLE IF NOT EXISTS watches (
+    id SERIAL PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    webhook_url TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_triggered_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_watches_pattern ON watches(pattern);

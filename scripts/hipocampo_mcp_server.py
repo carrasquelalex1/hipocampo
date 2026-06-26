@@ -31,6 +31,7 @@ from datetime import date
 import uuid
 
 import psycopg2
+import urllib.request
 from openai import OpenAI
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
@@ -53,6 +54,59 @@ DB_USER = os.getenv("DB_USER", "alex")
 DB_NAME = os.getenv("DB_NAME", "hipocampo_db")
 ENV_PATH = os.getenv("ENV_PATH", os.path.join(BASE_DIR, "..", ".env"))
 
+WATCHES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS watches (
+    id SERIAL PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    webhook_url TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_triggered_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_watches_pattern ON watches(pattern);
+"""
+
+def _init_watches_table():
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        for stmt in WATCHES_TABLE_SQL.split(";"):
+            if stmt.strip():
+                cur.execute(stmt)
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning("No se pudo inicializar tabla watches: %s", e)
+
+def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        content_lower = (content or "").lower()
+        meta_str = json.dumps(metadatos).lower()
+        cur.execute("SELECT id, pattern, webhook_url FROM watches")
+        for row in cur.fetchall():
+            wid, pattern, url = row
+            if pattern.lower() in content_lower or pattern.lower() in meta_str:
+                payload = json.dumps({
+                    "event": event_type,
+                    "id": record_id,
+                    "content": content,
+                    "metadatos": metadatos,
+                }).encode("utf-8")
+                try:
+                    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+                    urllib.request.urlopen(req, timeout=5)
+                    cur.execute("UPDATE watches SET last_triggered_at = NOW() WHERE id = %s", (wid,))
+                    conn.commit()
+                    logger.info("Webhook %d disparado -> %s", wid, url)
+                except Exception as e:
+                    logger.warning("Webhook %d falló (%s): %s", wid, url, e)
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning("Error en webhooks: %s", e)
+
 # ─── INICIALIZACIÓN MCP ─────────────────────────────────────────────────────
 mcp = FastMCP("hipocampo")
 
@@ -60,7 +114,7 @@ mcp = FastMCP("hipocampo")
 @mcp.tool(annotations=ToolAnnotations(
     readOnlyHint=True,
 ))
-def search_hipocampo(query: str) -> str:
+def search_hipocampo(query: str, session_id: str = "") -> str:
     """
     Busca en el Hipocampo (memoria dual con SSC / BIRE v3.6).
 
@@ -71,6 +125,8 @@ def search_hipocampo(query: str) -> str:
     memoria del usuario, incluyendo memoria técnica (*memoria_vectorial*) y
     de perfil (*memory_items*).
 
+    Si se proporciona session_id, filtra solo memorias de esa sesión.
+
     Para búsquedas rápidas cuando el nombre corto sea preferido, usar
     quick_hipocampo_search (alias idéntico). Esta herramienta es la
     versión completa con nombre descriptivo.
@@ -79,6 +135,7 @@ def search_hipocampo(query: str) -> str:
         query: Texto de búsqueda en lenguaje natural. Máximo 500 caracteres.
                Ejemplos: "proyecto contable", "perro", "planta medicinal",
                "API REST en Python", "gusta del té".
+        session_id: Opcional. Filtra resultados a una sesión específica.
 
     Returns:
         Resultados formateados del BIRE como texto plano.
@@ -88,8 +145,11 @@ def search_hipocampo(query: str) -> str:
     import time
     t0 = time.time()
     try:
+        cmd = [PYTHON_BIN, SEARCH_SCRIPT, query]
+        if session_id:
+            cmd += ["--session-id", session_id]
         result = subprocess.run(
-            [PYTHON_BIN, SEARCH_SCRIPT, query],
+            cmd,
             capture_output=True,
             text=True,
             check=True,
@@ -134,7 +194,7 @@ def search_hipocampo(query: str) -> str:
 @mcp.tool(annotations=ToolAnnotations(
     readOnlyHint=True,
 ))
-def quick_hipocampo_search(query: str) -> str:
+def quick_hipocampo_search(query: str, session_id: str = "") -> str:
     """
     Búsqueda rápida en el Hipocampo (alias corto de search_hipocampo).
 
@@ -147,11 +207,13 @@ def quick_hipocampo_search(query: str) -> str:
     Args:
         query: Texto de búsqueda en lenguaje natural. Igual que
                search_hipocampo. Ej: "API REST en Python", "presupuesto".
+        session_id: Opcional. Filtra resultados a una sesión específica.
 
     Returns:
         Mismo formato que search_hipocampo: resultados como texto plano
         con scores de relevancia y metadatos.
     """
+    return search_hipocampo(query, session_id)
 
 
 @mcp.resource("hipocampo://info")
@@ -197,6 +259,7 @@ def save_hipocampo(
     memory_type: str = "event",
     code: str = "",
     categories: list[str] | None = None,
+    session_id: str = "",
 ) -> str:
     """
     Guarda un recuerdo en el Hipocampo (memoria_vectorial).
@@ -215,6 +278,7 @@ def save_hipocampo(
               Ej: "documentacion", "bugfix", "feature", "setup".
         categories: Lista de categorías (opcional).
                     Ej: ["python", "mcp", "infraestructura"].
+        session_id: Opcional. Identificador de sesión para aislar memorias.
 
     Returns:
         Confirmación con el ID asignado.
@@ -229,6 +293,8 @@ def save_hipocampo(
             "date": str(date.today()),
             "source": "mcp",
         }
+        if session_id:
+            metadatos["session_id"] = session_id
         conn = _conn()
         cur = conn.cursor()
         cur.execute(
@@ -240,6 +306,9 @@ def save_hipocampo(
         conn.commit()
         cur.close()
         conn.close()
+
+        _fire_webhooks("save", row_id, content, metadatos)
+
         logger.info("✅ Guardado id=%s", row_id)
         return f"✅ Guardado en Hipocampo (id={row_id})"
 
@@ -371,6 +440,9 @@ def update_hipocampo(
         conn.commit()
         cur.close()
         conn.close()
+
+        _fire_webhooks("update", id, new_content, new_metadatos)
+
         logger.info("✅ Actualizado id=%s", id)
         return f"✅ Actualizado recuerdo id={id}"
     except Exception as e:
@@ -405,6 +477,9 @@ def delete_hipocampo(id: int) -> str:
         conn.commit()
         cur.close()
         conn.close()
+
+        _fire_webhooks("delete", id, "", {})
+
         logger.info("🗑️ Eliminado id=%s", id)
         return f"🗑️ Eliminado recuerdo id={id}"
     except Exception as e:
@@ -657,9 +732,104 @@ def hipocampo_maintenance() -> str:
     return "📋 Mantenimiento completo:\n" + "\n".join(report_parts)
 
 
+# ─── HERRAMIENTAS: WEBHOOKS (WATCH) ──────────────────────────────────────────
+
+
+@mcp.tool()
+def watch_hipocampo(pattern: str, webhook_url: str) -> str:
+    """
+    Registra un webhook que se dispara cuando se crea/modifica/elimina
+    un recuerdo cuyo contenido o metadatos contengan el patrón dado.
+
+    Args:
+        pattern: Texto a buscar en contenido o metadatos del recuerdo.
+        webhook_url: URL que recibirá un POST con event, id, content, metadatos.
+
+    Returns:
+        Confirmación con ID del watch creado.
+    """
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO watches (pattern, webhook_url) VALUES (%s, %s) RETURNING id",
+            (pattern, webhook_url),
+        )
+        wid = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("🔔 Watch registrado id=%s pattern=%r -> %s", wid, pattern, webhook_url)
+        return f"🔔 Watch registrado (id={wid}) para patrón '{pattern}'"
+    except Exception as e:
+        logger.error("❌ Error al registrar watch: %s", e)
+        return f"❌ Error al registrar watch: {e}"
+
+
+@mcp.tool()
+def unwatch_hipocampo(id: int) -> str:
+    """
+    Elimina un webhook registrado por su ID.
+
+    Args:
+        id: ID del watch a eliminar.
+
+    Returns:
+        Confirmación de eliminación.
+    """
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM watches WHERE id = %s", (id,))
+        if cur.rowcount == 0:
+            cur.close()
+            conn.close()
+            return f"❌ No se encontró watch con id={id}"
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("🔕 Watch eliminado id=%s", id)
+        return f"🔕 Watch id={id} eliminado"
+    except Exception as e:
+        logger.error("❌ Error al eliminar watch: %s", e)
+        return f"❌ Error al eliminar watch: {e}"
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True,
+))
+def list_watches() -> str:
+    """
+    Lista todos los webhooks registrados.
+
+    Returns:
+        Lista de watches con ID, patrón y URL.
+    """
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute("SELECT id, pattern, webhook_url, created_at, last_triggered_at FROM watches ORDER BY id")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not rows:
+            return "No hay watches registrados."
+
+        lines = ["🔔 Watches registrados:"]
+        for row in rows:
+            last = row[4].strftime("%Y-%m-%d %H:%M") if row[4] else "nunca"
+            lines.append(f"  [{row[0]}] patrón: {row[1]!r}")
+            lines.append(f"       URL: {row[2]}")
+            lines.append(f"       creado: {row[3].strftime('%Y-%m-%d %H:%M')}  último trigger: {last}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error("❌ Error al listar watches: %s", e)
+        return f"❌ Error al listar watches: {e}"
 
 
 if __name__ == "__main__":
+    _init_watches_table()
     if len(sys.argv) > 1 and sys.argv[1] in ("--http", "--streamable-http"):
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
         host = "127.0.0.1"

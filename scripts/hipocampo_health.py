@@ -44,7 +44,7 @@ def check_postgresql():
         cur.execute("SELECT 1")
         results["checks"]["connection"] = "ok"
 
-        for table in ["memoria_vectorial", "memory_items", "memory_categories"]:
+        for table in ["memoria_vectorial", "memory_items", "memory_categories", "query_stats", "watches"]:
             cur.execute(
                 "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name=%s)", (table,)
             )
