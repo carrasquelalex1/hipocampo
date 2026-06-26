@@ -8,21 +8,11 @@ mismo modelo (nvidia/nv-embedqa-e5-v5) y dimensionalidad (1024d).
 Uso:
     python3 hipocampo_backfill_embeddings.py
 """
-import psycopg2, os, sys, time
-from dotenv import load_dotenv
-from openai import OpenAI
+import os, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, get_embedding, load_config
 
-load_dotenv()
-
-DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
-DB_USER = os.getenv('DB_USER', 'alex')
-DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
-
-client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.getenv("NVIDIA_API_KEY"),
-)
+load_config()
 
 BATCH_SIZE = 5
 DELAY_BETWEEN_BATCHES = 5.0
@@ -31,13 +21,9 @@ DELAY_BETWEEN_BATCHES = 5.0
 def get_embedding_1024(text, retries=3):
     for attempt in range(retries):
         try:
-            resp = client.embeddings.create(
-                input=text,
-                model="nvidia/nv-embedqa-e5-v5",
-                encoding_format="float",
-                extra_body={"input_type": "query"},
-            )
-            return resp.data[0].embedding
+            emb = get_embedding(text)
+            if emb is not None:
+                return emb
         except Exception as e:
             err_str = str(e)
             if '429' in err_str or 'RATE_LIMIT' in err_str:
@@ -51,40 +37,10 @@ def get_embedding_1024(text, retries=3):
 
 
 def main():
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST
-    )
+    conn = get_conn()
     cur = conn.cursor()
 
-    # Check current state of the column
-    cur.execute("""
-        SELECT column_name, udt_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'memory_items' AND column_name = 'embedding'
-    """)
-    col_info = cur.fetchone()
-    if col_info:
-        print(f"📊 Columna embedding existe: {col_info}")
-
-    # Check if column is vector(1024) or just vector
-    cur.execute("""
-        SELECT e.typname, e.typtype
-        FROM pg_type e
-        JOIN pg_attribute a ON a.atttypid = e.oid
-        WHERE a.attrelid = 'memory_items'::regclass AND a.attname = 'embedding'
-    """)
-    type_info = cur.fetchone()
-    print(f"📊 Tipo de embedding: {type_info}")
-
-    # Fetch remaining records without embeddings
-    cur.execute("""
-        SELECT id, summary FROM memory_items
-        WHERE embedding IS NULL
-        ORDER BY created_at
-    """)
+    cur.execute("SELECT id, summary FROM memory_items WHERE embedding IS NULL ORDER BY created_at")
     rows = cur.fetchall()
     total = len(rows)
     print(f"📦 {total} registros en memory_items necesitan embedding 1024d")
@@ -95,7 +51,6 @@ def main():
         conn.close()
         return
 
-    # Process in batches with rate limit awareness
     processed = 0
     errors = 0
     for i in range(0, total, BATCH_SIZE):
@@ -122,20 +77,6 @@ def main():
             print(f"  ⏳ Esperando {DELAY_BETWEEN_BATCHES}s...")
             time.sleep(DELAY_BETWEEN_BATCHES)
 
-    # Verify HNSW index exists
-    cur.execute("""
-        SELECT 1 FROM pg_indexes 
-        WHERE indexname = 'idx_memory_items_embedding'
-    """)
-    if not cur.fetchone():
-        print(f"\n📊 Creando índice HNSW en memory_items.embedding...")
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_memory_items_embedding
-            ON memory_items USING hnsw (embedding vector_cosine_ops)
-        """)
-        conn.commit()
-
-    # Summary
     cur.execute("SELECT COUNT(*) FROM memory_items WHERE embedding IS NOT NULL")
     ok = cur.fetchone()[0]
     cur.execute("SELECT COUNT(*) FROM memory_items")
@@ -144,7 +85,6 @@ def main():
     print(f"\n{'='*50}")
     print(f"✅ Embeddings unificados: {ok}/{total_items} registros con embedding 1024d")
     print(f"⚠️  Errores en esta ejecución: {errors}")
-    print(f"📊 Índice HNSW: idx_memory_items_embedding (vector_cosine_ops)")
     print(f"{'='*50}")
 
     cur.close()

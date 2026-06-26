@@ -15,30 +15,15 @@ import os, sys, json, time, logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("hipocampo_dedup")
 
-ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, load_config
+
 SIMILARITY_THRESHOLD = 0.92
-
-
-def _load_env():
-    from dotenv import load_dotenv
-    for candidate in [ENV_PATH, "/home/alex/scripts/.env", "/home/alex/.env"]:
-        if os.path.exists(candidate):
-            load_dotenv(candidate)
-            return
-
-
-def _conn():
-    import psycopg2
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "/var/run/postgresql"),
-        user=os.getenv("DB_USER", "alex"),
-        dbname=os.getenv("DB_NAME", "hipocampo_db"),
-    )
 
 
 def find_exact_duplicates(table, text_col):
     """Encuentra duplicados exactos por contenido."""
-    conn = _conn()
+    conn = get_conn()
     cur = conn.cursor()
     if table == "memoria_vectorial":
         cur.execute(f"""
@@ -66,7 +51,7 @@ def find_exact_duplicates(table, text_col):
 
 def find_semantic_duplicates(table, text_col, threshold=SIMILARITY_THRESHOLD):
     """Encuentra duplicados semánticos usando similitud de embeddings."""
-    conn = _conn()
+    conn = get_conn()
     cur = conn.cursor()
     cur.execute(f"SELECT COUNT(*) FROM {table}")
     total = cur.fetchone()[0]
@@ -117,7 +102,7 @@ def find_semantic_duplicates(table, text_col, threshold=SIMILARITY_THRESHOLD):
 
 def merge_exact_duplicates(table, text_col, groups, dry_run=True):
     """Fusiona duplicados exactos: conserva el más reciente, elimina el resto."""
-    conn = _conn()
+    conn = get_conn()
     cur = conn.cursor()
     merged_count = 0
     removed_count = 0
@@ -152,7 +137,7 @@ def merge_exact_duplicates(table, text_col, groups, dry_run=True):
 
 def merge_semantic_duplicates(table, text_col, groups, dry_run=True):
     """Fusiona duplicados semánticos: conserva el texto más largo, elimina el resto."""
-    conn = _conn()
+    conn = get_conn()
     cur = conn.cursor()
     merged_count = 0
     removed_count = 0
@@ -180,7 +165,7 @@ def merge_semantic_duplicates(table, text_col, groups, dry_run=True):
 
 def full_dedup_analysis(threshold=SIMILARITY_THRESHOLD):
     """Ejecuta análisis completo de duplicados en todas las tablas."""
-    _load_env()
+    load_config()
     results = {}
 
     for table, text_col in [("memoria_vectorial", "contenido"), ("memory_items", "summary")]:
@@ -205,7 +190,7 @@ def full_dedup_analysis(threshold=SIMILARITY_THRESHOLD):
 
 def full_dedup_merge(threshold=SIMILARITY_THRESHOLD):
     """Ejecuta fusión completa de duplicados."""
-    _load_env()
+    load_config()
     report = {"exact": {}, "semantic": {}}
 
     for table, text_col in [("memoria_vectorial", "contenido"), ("memory_items", "summary")]:

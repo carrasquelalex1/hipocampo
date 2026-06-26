@@ -8,22 +8,12 @@ Usa expansión de consulta + búsqueda vectorial (ambas tablas, 1024d unificado)
 """
 import psycopg2, os, json, sys, re, math
 from datetime import date
-from dotenv import load_dotenv
 from pgvector.psycopg2 import register_vector
-from openai import OpenAI
 
-ENV_PATH = os.getenv('ENV_PATH', '.env')
-load_dotenv(ENV_PATH)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, get_embedding, load_config
 
-DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
-DB_USER = os.getenv('DB_USER', 'alex')
-DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
-
-client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.getenv("NVIDIA_API_KEY"),
-)
+config = load_config()
 
 
 # ─── FASE 1: EXPANSIÓN DE CONSULTA ───────────────────────────────────────────
@@ -72,17 +62,7 @@ def generar_patrones_ILIKE(terms):
 
 # ─── FASE 2: BÚSQUEDA VECTORIAL ──────────────────────────────────────────────
 
-def get_embedding(text, dims=1024):
-    try:
-        resp = client.embeddings.create(
-            input=text,
-            model="nvidia/nv-embedqa-e5-v5",
-            encoding_format="float",
-            extra_body={"input_type": "query"},
-        )
-        return resp.data[0].embedding
-    except Exception as e:
-        return None
+# get_embedding is imported from hipocampo.db
 
 
 def buscar_vectorial(cur, query, limit=50):
@@ -614,13 +594,17 @@ def formatear_resultados(resultados, query):
 
 # ─── MAIN ──────────────────────────────────────────────────────────────────────
 
+def search(query: str, session_id: str = "") -> str:
+    """Run BIRE search and return the formatted result string.
+
+    Convenience wrapper for direct calls (MCP server, tests, etc.).
+    """
+    resultados = bire_search(query, session_id=session_id)
+    return formatear_resultados(resultados, query)
+
+
 def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST
-    )
+    conn = get_conn()
     register_vector(conn)
     cur = conn.cursor()
 

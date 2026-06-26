@@ -11,16 +11,15 @@ Uso:
 
 import sys, os, json, math, itertools
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hipocampo_search import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST
-DB_PASSWORD = ''
 from hipocampo_search import (expandir_consulta, generar_patrones_ILIKE,
                               buscar_vectorial, buscar_lexico_memoria_vectorial,
                               buscar_lexico_memory_items)
-import psycopg2
-from dotenv import load_dotenv
 from pgvector.psycopg2 import register_vector
 
-load_dotenv()
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, load_config
+
+load_config()
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hipocampo_hybrid_config.json")
 
@@ -207,12 +206,7 @@ def fusionar_hibrido(vectorial, lexico_mv, lexico_mi, alpha=0.5):
 
 def run_calibration():
     """Ejecuta validación cruzada para encontrar el alpha óptimo."""
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST
-    )
+    conn = get_conn()
     register_vector(conn)
     cur = conn.cursor()
 

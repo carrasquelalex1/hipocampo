@@ -15,18 +15,12 @@ Uso:
     python3 scripts/hipocampo_ssc_search.py "consulta" [umbral]
 """
 import psycopg2, os, json, sys, re, time
-from dotenv import load_dotenv
-from openai import OpenAI
+from pgvector.psycopg2 import register_vector
 
-load_dotenv()
-client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.getenv("NVIDIA_API_KEY"),
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, get_embedding, load_config
 
-DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
-DB_USER = os.getenv('DB_USER', 'alex')
-DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
+config = load_config()
 
 CONFIANZA_ALTA = 70.0
 CONFIANZA_MEDIA = 40.0
@@ -45,17 +39,7 @@ TECNICO_KEYWORDS = [
 ]
 
 
-def get_embedding(text, dims=1024):
-    try:
-        resp = client.embeddings.create(
-            input=text[:3000],
-            model="nvidia/nv-embedqa-e5-v5",
-            encoding_format="float",
-            extra_body={"input_type": "query"},
-        )
-        return resp.data[0].embedding
-    except Exception as e:
-        return None
+# get_embedding is imported from hipocampo.db
 
 
 # ─── FASE 1: TAG ROUTER ──────────────────────────────────────────────────────
@@ -82,7 +66,7 @@ def tag_router(query):
 
 def ssc_vectorial(cur, query, router):
     """Búsqueda pgvector en AMBAS tablas. Sin filtro de tags."""
-    query_embed = get_embedding(query)
+    query_embed = get_embedding(query[:3000])
     if query_embed is None:
         return [], 0.0
 
@@ -218,7 +202,8 @@ def ssc_ilike(cur, query, router):
 # ─── FUSIÓN SSC ───────────────────────────────────────────────────────────────
 
 def ssc_search(query, umbral_minimo=10.0):
-    conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, host=DB_HOST)
+    conn = get_conn()
+    register_vector(conn)
     cur = conn.cursor()
     start = time.time()
 

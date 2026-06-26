@@ -16,36 +16,21 @@ import os
 import time
 import json
 import fcntl
-import psycopg2
 from pgvector.psycopg2 import register_vector
-from openai import OpenAI
 from lxml import etree as ET
-from dotenv import load_dotenv
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, get_embedding, load_config
 
 # --- CONFIGURACIÓN (desde entorno) ---
-load_dotenv()
+load_config()
 BRAIN_PATH = os.getenv('BRAIN_PATH', os.path.expanduser('~/.gemini/brain/knowledge_base.mm'))
 CACHE_PATH = os.getenv('CACHE_PATH', os.path.expanduser('~/.gemini/brain/.mm_cache.json'))
-DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
-DB_USER = os.getenv('DB_USER', 'alex')
-DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
-
-client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.getenv("NVIDIA_API_KEY"),
-)
 
 def get_node_embedding(text):
     """Genera embedding usando NVIDIA API (1024 dimensiones)"""
     try:
-        resp = client.embeddings.create(
-            input=text,
-            model="nvidia/nv-embedqa-e5-v5",
-            encoding_format="float",
-            extra_body={"input_type": "query"},
-        )
-        return resp.data[0].embedding
+        return get_embedding(text)
     except Exception as e:
         print(f"DEBUG: Error Embedding: {e}")
         return None
@@ -53,12 +38,7 @@ def get_node_embedding(text):
 def save_to_vector_db(content, metadata, code_snippet=None):
     """Inserta el nuevo nodo en el Hipocampo Digital (PostgreSQL) con soporte para codigo"""
     try:
-        conn = psycopg2.connect(
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST
-        )
+        conn = get_conn()
         register_vector(conn)
         cur = conn.cursor()
         

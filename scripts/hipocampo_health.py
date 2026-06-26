@@ -14,32 +14,18 @@ import os, sys, json, time, subprocess, logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("hipocampo_health")
 
-ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYTHON_BIN = sys.executable
 
-
-def _load_env():
-    from dotenv import load_dotenv, find_dotenv
-    if os.path.exists(ENV_PATH):
-        load_dotenv(ENV_PATH)
-    else:
-        for candidate in ["/home/alex/scripts/.env", "/home/alex/.env"]:
-            if os.path.exists(candidate):
-                load_dotenv(candidate)
-                break
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, load_config
 
 
 def check_postgresql():
     """Verifica conexión a PostgreSQL y existencia de tablas."""
     results = {"status": "ok", "checks": {}}
     try:
-        import psycopg2
-        conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "/var/run/postgresql"),
-            user=os.getenv("DB_USER", "alex"),
-            dbname=os.getenv("DB_NAME", "hipocampo_db"),
-        )
+        conn = get_conn()
         cur = conn.cursor()
         cur.execute("SELECT 1")
         results["checks"]["connection"] = "ok"
@@ -125,12 +111,7 @@ def check_extensions():
     """Verifica extensiones de PostgreSQL."""
     results = {"status": "ok", "checks": {}}
     try:
-        import psycopg2
-        conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "/var/run/postgresql"),
-            user=os.getenv("DB_USER", "alex"),
-            dbname=os.getenv("DB_NAME", "hipocampo_db"),
-        )
+        conn = get_conn()
         cur = conn.cursor()
         for ext in ["vector", "pg_trgm"]:
             cur.execute("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname=%s)", (ext,))
@@ -148,7 +129,7 @@ def check_extensions():
 
 def full_health_check():
     """Ejecuta todos los health checks y retorna resultado consolidado."""
-    _load_env()
+    load_config()
     results = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "overall": "ok",
@@ -171,7 +152,7 @@ def full_health_check():
 
 def auto_repair():
     """Intenta reparar problemas detectados automáticamente."""
-    _load_env()
+    load_config()
     report = {"repaired": [], "failed": [], "skipped": []}
 
     pg = check_postgresql()
@@ -194,11 +175,7 @@ def auto_repair():
             schema_path = os.path.join(os.path.dirname(SCRIPTS_DIR), "esquema.sql")
             if os.path.exists(schema_path):
                 try:
-                    conn = psycopg2.connect(
-                        host=os.getenv("DB_HOST", "/var/run/postgresql"),
-                        user=os.getenv("DB_USER", "alex"),
-                        dbname=os.getenv("DB_NAME", "hipocampo_db"),
-                    )
+                    conn = get_conn()
                     cur = conn.cursor()
                     with open(schema_path) as f:
                         cur.execute(f.read())

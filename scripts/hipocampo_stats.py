@@ -15,9 +15,11 @@ import os, sys, json, time, subprocess, logging, statistics
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("hipocampo_stats")
 
-ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SCRIPTS_DIR, "hipocampo_hybrid_config.json")
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, load_config
 
 DEFAULT_THRESHOLDS = {
     "vectorial_confidence_min": 0.7,
@@ -42,26 +44,9 @@ CREATE INDEX IF NOT EXISTS idx_query_stats_created ON query_stats(created_at);
 """
 
 
-def _load_env():
-    from dotenv import load_dotenv
-    for candidate in [ENV_PATH, "/home/alex/scripts/.env", "/home/alex/.env"]:
-        if os.path.exists(candidate):
-            load_dotenv(candidate)
-            return
-
-
-def _conn():
-    import psycopg2
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "/var/run/postgresql"),
-        user=os.getenv("DB_USER", "alex"),
-        dbname=os.getenv("DB_NAME", "hipocampo_db"),
-    )
-
-
 def ensure_stats_table():
     """Crea la tabla de estadísticas si no existe."""
-    conn = _conn()
+    conn = get_conn()
     cur = conn.cursor()
     for stmt in LATENCY_TABLE_SQL.split(";"):
         if stmt.strip():
@@ -75,7 +60,7 @@ def record_query(query_text, latency_ms, results_count, method, top_score, avg_s
     """Registra una métrica de query en la tabla query_stats."""
     import hashlib
     query_hash = hashlib.sha256(query_text.encode()).hexdigest()[:12]
-    conn = _conn()
+    conn = get_conn()
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO query_stats (query_hash, query_text, latency_ms, results_count, method, top_score, avg_score)
@@ -89,7 +74,7 @@ def record_query(query_text, latency_ms, results_count, method, top_score, avg_s
 
 def get_stats(last_hours=24):
     """Obtiene estadísticas de las últimas N horas."""
-    conn = _conn()
+    conn = get_conn()
     cur = conn.cursor()
     cur.execute(
         f"""SELECT count(*), 
@@ -210,7 +195,7 @@ def format_result(data):
 
 
 if __name__ == "__main__":
-    _load_env()
+    load_config()
     ensure_stats_table()
 
     if len(sys.argv) > 1:

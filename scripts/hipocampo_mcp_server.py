@@ -21,7 +21,6 @@ Ejemplos:
     python hipocampo_mcp_server.py --http 8001 --host 0.0.0.0
     python hipocampo_mcp_server.py --sse 8001        # legacy
 """
-import subprocess
 import logging
 import sys
 import os
@@ -32,27 +31,24 @@ import uuid
 
 import psycopg2
 import urllib.request
-from openai import OpenAI
-from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import ToolAnnotations
-from starlette.responses import HTMLResponse
 
 # ─── CONFIGURACIÓN ─────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PYTHON_BIN = sys.executable
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SEARCH_SCRIPT = os.path.join(BASE_DIR, "hipocampo_search.py")
-HEALTH_SCRIPT = os.path.join(BASE_DIR, "hipocampo_health.py")
-STATS_SCRIPT = os.path.join(BASE_DIR, "hipocampo_stats.py")
-DEDUP_SCRIPT = os.path.join(BASE_DIR, "hipocampo_dedup.py")
-CHECKPOINT_SCRIPT = os.path.join(BASE_DIR, "hipocampo_checkpoint.py")
-DB_HOST = os.getenv("DB_HOST", "/var/run/postgresql")
-DB_USER = os.getenv("DB_USER", "alex")
-DB_NAME = os.getenv("DB_NAME", "hipocampo_db")
-ENV_PATH = os.getenv("ENV_PATH", os.path.join(BASE_DIR, "..", ".env"))
+sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, os.path.dirname(BASE_DIR))  # project root for hipocampo package
+
+from hipocampo.db import get_conn, get_embedding, load_config
+
+import hipocampo_search as _search
+import hipocampo_health as _health
+import hipocampo_stats as _stats
+import hipocampo_dedup as _dedup
+import hipocampo_checkpoint as _checkpoint
 
 WATCHES_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS watches (
@@ -145,22 +141,15 @@ def search_hipocampo(query: str, session_id: str = "") -> str:
     import time
     t0 = time.time()
     try:
-        cmd = [PYTHON_BIN, SEARCH_SCRIPT, query]
-        if session_id:
-            cmd += ["--session-id", session_id]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        output = _search.search(query, session_id)
+
         latency_ms = int((time.time() - t0) * 1000)
         logger.info("Hipocampo search OK query=%r latency=%dms", query, latency_ms)
 
         results_count = 0
         top_score = 0.0
         avg_score = 0.0
-        for line in result.stdout.split("\n"):
+        for line in output.split("\n"):
             if "📍" in line:
                 results_count += 1
             if "Score promedio:" in line:
@@ -178,17 +167,16 @@ def search_hipocampo(query: str, session_id: str = "") -> str:
                     except:
                         pass
 
-        subprocess.run(
-            [PYTHON_BIN, STATS_SCRIPT, "--record", query, str(latency_ms), str(results_count), "ssc", str(top_score), str(avg_score)],
-            capture_output=True,
-            timeout=10,
-        )
+        try:
+            _stats.record_query(query, latency_ms, results_count, "ssc", top_score, avg_score)
+        except Exception as e:
+            logger.warning("Stats record falló: %s", e)
 
-        return result.stdout
+        return output
 
-    except subprocess.CalledProcessError as e:
-        logger.error("Hipocampo search error: %s", e.stderr)
-        return f"❌ Error en búsqueda Hipocampo:\n{e.stderr}"
+    except Exception as e:
+        logger.error("Hipocampo search error: %s", e)
+        return f"❌ Error en búsqueda Hipocampo:\n{e}"
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -232,22 +220,14 @@ def hipocampo_info() -> str:
 # ─── EMBEDDING HELPER ────────────────────────────────────────────────────────
 
 def _generar_embedding(texto: str) -> list[float]:
-    load_dotenv(ENV_PATH)
-    client = OpenAI(
-        base_url="https://integrate.api.nvidia.com/v1",
-        api_key=os.getenv("NVIDIA_API_KEY"),
-    )
-    resp = client.embeddings.create(
-        input=texto,
-        model="nvidia/nv-embedqa-e5-v5",
-        encoding_format="float",
-        extra_body={"input_type": "query"},
-    )
-    return resp.data[0].embedding
+    emb = get_embedding(texto)
+    if emb is None:
+        raise RuntimeError("No se pudo generar embedding")
+    return emb
 
 
 def _conn():
-    return psycopg2.connect(host=DB_HOST, user=DB_USER, dbname=DB_NAME)
+    return get_conn()
 
 
 # ─── HERRAMIENTA: GUARDAR ────────────────────────────────────────────────────
@@ -501,15 +481,19 @@ def hipocampo_health() -> str:
         Reporte formateado del estado del sistema.
     """
     try:
-        result = subprocess.run(
-            [PYTHON_BIN, HEALTH_SCRIPT],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return result.stdout or "✅ Health check completado (sin salida)"
-    except subprocess.TimeoutExpired:
-        return "❌ Health check timed out (>30s)"
+        result = _health.full_health_check()
+        overall = result.get("overall", result.get("status", "unknown"))
+        emoji = {"ok": "✅", "degraded": "⚠️", "error": "❌"}.get(overall, "❓")
+        lines = [f"{emoji} Health: {overall.upper()}"]
+        lines.append(f"   Timestamp: {result.get('timestamp', 'N/A')}")
+        for category, checks in result.get("checks", {}).items():
+            lines.append(f"\n   📊 {category}:")
+            if isinstance(checks, dict):
+                for k, v in checks.items():
+                    lines.append(f"      {k}: {v}")
+            else:
+                lines.append(f"      {checks}")
+        return "\n".join(lines)
     except Exception as e:
         logger.error("Health check error: %s", e)
         return f"❌ Error en health check: {e}"
@@ -529,15 +513,15 @@ def hipocampo_auto_repair() -> str:
         Reporte de reparaciones ejecutadas.
     """
     try:
-        result = subprocess.run(
-            [PYTHON_BIN, HEALTH_SCRIPT, "--repair"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return result.stdout or "🔧 Auto-repair completado (sin salida)"
-    except subprocess.TimeoutExpired:
-        return "❌ Auto-repair timed out (>60s)"
+        report = _health.auto_repair()
+        lines = ["🔧 Auto-repair:"]
+        if report.get("repaired"):
+            lines.append(f"   ✅ Reparados: {', '.join(report['repaired'])}")
+        if report.get("failed"):
+            lines.append(f"   ❌ Fallaron: {', '.join(report['failed'])}")
+        if report.get("skipped"):
+            lines.append(f"   ⏭️  Omitidos: {', '.join(report['skipped'])}")
+        return "\n".join(lines) or "🔧 Auto-repair completado (sin novedades)"
     except Exception as e:
         logger.error("Auto-repair error: %s", e)
         return f"❌ Error en auto-repair: {e}"
@@ -558,13 +542,8 @@ def hipocampo_stats() -> str:
         Reporte de métricas y recomendaciones.
     """
     try:
-        result = subprocess.run(
-            [PYTHON_BIN, STATS_SCRIPT, "--analyze"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return result.stdout or "📊 Stats completados"
+        data = _stats.analyze()
+        return _stats.format_result(data)
     except Exception as e:
         logger.error("Stats error: %s", e)
         return f"❌ Error en stats: {e}"
@@ -595,13 +574,8 @@ def hipocampo_tune() -> str:
         Reporte de ajustes aplicados (nuevos thresholds y pesos).
     """
     try:
-        result = subprocess.run(
-            [PYTHON_BIN, STATS_SCRIPT, "--tune"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return result.stdout or "🔧 Tune completado"
+        data = _stats.tune_thresholds()
+        return _stats.format_result(data)
     except Exception as e:
         logger.error("Tune error: %s", e)
         return f"❌ Error en tune: {e}"
@@ -641,11 +615,26 @@ def hipocampo_dedup(merge: bool = False) -> str:
         Reporte de duplicados encontrados o fusionados.
     """
     try:
-        args = [PYTHON_BIN, DEDUP_SCRIPT]
         if merge:
-            args.append("--merge")
-        result = subprocess.run(args, capture_output=True, text=True, timeout=120)
-        return result.stdout or "✅ Dedup completado"
+            report = _dedup.full_dedup_merge()
+            total_removed = sum(v.get("removed", 0) for v in report["exact"].values()) + sum(v.get("removed", 0) for v in report["semantic"].values())
+            lines = [f"🔧 Dedup merge completado: {total_removed} registros eliminados"]
+            for k, v in report.items():
+                for t, r in v.items():
+                    if r.get("removed", 0) > 0:
+                        lines.append(f"   {t} ({k}): {r['merged_groups']} grupos fusionados, {r['removed']} eliminados")
+            return "\n".join(lines) + "\n   ✅ Proceso completado"
+        else:
+            info = _dedup.full_dedup_analysis()
+            lines = []
+            for table, data in info.items():
+                emoji = "⚠️" if data["total_recoverable"] > 0 else "✅"
+                lines.append(f"{emoji} {table}:")
+                lines.append(f"   Duplicados exactos: {data['exact_duplicates']} grupos ({data['exact_redundant_rows']} registros redundantes)")
+                lines.append(f"   Duplicados semánticos: {data['semantic_groups']} grupos ({data['semantic_redundant_rows']} registros redundantes)")
+                lines.append(f"   Espacio recuperable: {data['total_recoverable']} registros")
+            lines.append("\n💡 Ejecuta con merge=True para fusionar y limpiar")
+            return "\n".join(lines)
     except Exception as e:
         logger.error("Dedup error: %s", e)
         return f"❌ Error en dedup: {e}"
@@ -680,13 +669,7 @@ def hipocampo_checkpoint(dry_run: bool = True) -> str:
         Incluye: cantidad de registros comprimidos, espacio liberado.
     """
     try:
-        args = [PYTHON_BIN, CHECKPOINT_SCRIPT]
-        if dry_run:
-            args.append("--dry-run")
-        else:
-            args.append("--force")
-        result = subprocess.run(args, capture_output=True, text=True, timeout=60)
-        return result.stdout or "✅ Checkpoint completado"
+        return _checkpoint.run_checkpoint(dry_run=dry_run)
     except Exception as e:
         logger.error("Checkpoint error: %s", e)
         return f"❌ Error en checkpoint: {e}"
@@ -706,27 +689,28 @@ def hipocampo_maintenance() -> str:
     """
     report_parts = []
     try:
-        r = subprocess.run([PYTHON_BIN, HEALTH_SCRIPT, "--repair"], capture_output=True, text=True, timeout=60)
-        report_parts.append(f"🔧 Repair: {'✅' if 'repaired' in r.stdout else '⏭️'}")
-    except:
+        r = _health.auto_repair()
+        ok = len(r.get("repaired", [])) > 0 or len(r.get("skipped", [])) > 0
+        report_parts.append(f"🔧 Repair: {'✅' if ok else '❌'}")
+    except Exception:
         report_parts.append("🔧 Repair: ❌")
 
     try:
-        r = subprocess.run([PYTHON_BIN, DEDUP_SCRIPT, "--merge"], capture_output=True, text=True, timeout=120)
-        report_parts.append(f"🧹 Dedup: ✅ ({sum(1 for c in r.stdout if c=='✅')} ops)")
-    except:
+        r = _dedup.full_dedup_merge()
+        report_parts.append(f"🧹 Dedup: ✅")
+    except Exception:
         report_parts.append("🧹 Dedup: ❌")
 
     try:
-        r = subprocess.run([PYTHON_BIN, CHECKPOINT_SCRIPT, "--force"], capture_output=True, text=True, timeout=60)
+        _checkpoint.run_checkpoint(dry_run=False)
         report_parts.append(f"📦 Checkpoint: ✅")
-    except:
+    except Exception:
         report_parts.append("📦 Checkpoint: ❌")
 
     try:
-        r = subprocess.run([PYTHON_BIN, STATS_SCRIPT, "--tune"], capture_output=True, text=True, timeout=30)
+        _stats.tune_thresholds()
         report_parts.append(f"⚙️ Tune: ✅")
-    except:
+    except Exception:
         report_parts.append("⚙️ Tune: ❌")
 
     return "📋 Mantenimiento completo:\n" + "\n".join(report_parts)
@@ -850,10 +834,10 @@ if __name__ == "__main__":
             if not q:
                 return JSONResponse({"ok": False, "error": "query param 'q' required"})
             try:
-                import time, subprocess
+                import time
                 t0 = time.time()
-                r = subprocess.run([PYTHON_BIN, SEARCH_SCRIPT, q], capture_output=True, text=True, timeout=15)
-                return JSONResponse({"ok": True, "results": r.stdout, "latency_ms": int((time.time() - t0) * 1000)})
+                output = _search.search(q)
+                return JSONResponse({"ok": True, "results": output, "latency_ms": int((time.time() - t0) * 1000)})
             except Exception as e:
                 return JSONResponse({"ok": False, "error": str(e)})
 
@@ -883,8 +867,8 @@ if __name__ == "__main__":
 
         async def api_health(request):
             try:
-                r = subprocess.run([PYTHON_BIN, HEALTH_SCRIPT], capture_output=True, text=True, timeout=15)
-                return JSONResponse({"ok": True, "output": r.stdout})
+                r = _health.full_health_check()
+                return JSONResponse({"ok": True, "output": r})
             except Exception as e:
                 return JSONResponse({"ok": False, "error": str(e)})
 

@@ -18,15 +18,14 @@ Arquitectura de escalas temporales:
 Uso:
     python3 scripts/hipocampo_checkpoint.py [--dry-run] [--force]
 """
-import psycopg2, os, json, sys, re, time
+import os, json, sys, re, time
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
+from pgvector.psycopg2 import register_vector
 
-load_dotenv()
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, load_config
 
-DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
-DB_USER = os.getenv('DB_USER', 'alex')
-DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
+load_config()
 
 ESCALAS = [
     ('24h', timedelta(hours=24)),
@@ -224,12 +223,55 @@ def formatear_reporte(reportes, sin_fecha, dry_run):
     return '\n'.join(lines)
 
 
+def run_checkpoint(dry_run: bool = True):
+    """Ejecuta el checkpoint y retorna el texto formateado."""
+    conn = get_conn()
+    register_vector(conn)
+    cur = conn.cursor()
+
+    escalas, sin_fecha = obtener_edades(cur)
+    reportes = generar_checkpoints(escalas, sin_fecha, dry_run=dry_run)
+    output = formatear_reporte(reportes, sin_fecha, dry_run)
+
+    if not dry_run:
+        for r in reportes:
+            comprimidos = [s for s in r['resumenes'] if s['comprimido']]
+            for s in comprimidos:
+                resumen = s['resumen']
+                tags = s['tags']
+                try:
+                    cur.execute(
+                        "INSERT INTO memoria_vectorial (contenido, metadatos) VALUES (%s, %s)",
+                        (f"[CHECKPOINT {r['escala']}] {resumen}",
+                         json.dumps({
+                             'tipo': 'checkpoint',
+                             'escala': r['escala'],
+                             'fecha': datetime.now().isoformat(),
+                             'proyecto': s['proyecto'],
+                             'tags': tags + ['checkpoint'],
+                             'items_originales': s['original_count'],
+                         }))
+                    )
+                except Exception as e:
+                    print(f"  Error guardando checkpoint: {e}")
+        if comprimidos:
+            conn.commit()
+            output += f"\n  {len(comprimidos)} checkpoints guardados en memoria_vectorial"
+        else:
+            output += "\n  No se encontraron items para comprimir."
+    else:
+        output += "\n\nUsa --force para guardar los checkpoints en memoria_vectorial."
+
+    print(output)
+    cur.close()
+    conn.close()
+    return output
+
+
 def main():
     dry_run = '--dry-run' in sys.argv
     force = '--force' in sys.argv
-
-    conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, host=DB_HOST)
-    cur = conn.cursor()
+    run_checkpoint(dry_run=dry_run or not force)
 
     escalas, sin_fecha = obtener_edades(cur)
     reportes = generar_checkpoints(escalas, sin_fecha, dry_run=dry_run)

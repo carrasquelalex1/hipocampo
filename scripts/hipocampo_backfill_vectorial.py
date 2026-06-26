@@ -7,21 +7,11 @@ Usa NVIDIA API (nvidia/nv-embedqa-e5-v5, 1024d).
 Uso:
     python3 scripts/hipocampo_backfill_vectorial.py
 """
-import psycopg2, os, time, sys
-from dotenv import load_dotenv
-from openai import OpenAI
+import os, time, sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from hipocampo.db import get_conn, get_embedding, load_config
 
-load_dotenv()
-
-DB_NAME = os.getenv('DB_NAME', 'hipocampo_db')
-DB_USER = os.getenv('DB_USER', 'postgres')
-DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-DB_HOST = os.getenv('DB_HOST', '/var/run/postgresql')
-
-client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.getenv("NVIDIA_API_KEY"),
-)
+load_config()
 
 BATCH_SIZE = 5
 DELAY_BETWEEN_BATCHES = 5.0
@@ -29,13 +19,9 @@ DELAY_BETWEEN_BATCHES = 5.0
 def get_embedding_1024(text, retries=3):
     for attempt in range(retries):
         try:
-            resp = client.embeddings.create(
-                input=text[:3000],
-                model="nvidia/nv-embedqa-e5-v5",
-                encoding_format="float",
-                extra_body={"input_type": "query"},
-            )
-            return resp.data[0].embedding
+            emb = get_embedding(text[:3000])
+            if emb is not None:
+                return emb
         except Exception as e:
             err_str = str(e)
             if '429' in err_str or 'RATE_LIMIT' in err_str:
@@ -48,10 +34,7 @@ def get_embedding_1024(text, retries=3):
     return None
 
 def main():
-    conn = psycopg2.connect(
-        dbname=DB_NAME, user=DB_USER,
-        password=DB_PASSWORD, host=DB_HOST
-    )
+    conn = get_conn()
     cur = conn.cursor()
 
     cur.execute("""
