@@ -285,6 +285,27 @@ If this project helps you, consider supporting its development:
 
 ---
 
+## 🧪 Testing
+
+Hipocampo includes **78+ unit tests** covering all core logic:
+
+| Test file | What it covers |
+|-----------|---------------|
+| `tests/test_search.py` | Query expansion (stem map + synonyms), score fusion with dynamic alpha, temporal decay (5%/week), result formatting |
+| `tests/test_autotag.py` | All 17 tag rules, 16 category rules, memory_type auto-detection |
+| `tests/test_dedup.py` | Cosine similarity (including 1024-dim vectors), exact and semantic duplicate detection logic |
+| `tests/test_checkpoint.py` | Age scale classification, project grouping, summary generation |
+
+```bash
+# Run all tests
+python3 -m pytest tests/ -v
+
+# Run with coverage
+python3 -m pytest tests/ --cov=scripts --cov-report=term-missing
+```
+
+Tests run automatically on every push via [GitHub Actions](.github/workflows/test.yml) on Python 3.11–3.13.
+
 ## 📄 License
 
 This project is licensed under the **MIT License**.
