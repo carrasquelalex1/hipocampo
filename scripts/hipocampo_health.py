@@ -9,7 +9,13 @@ Uso:
     python3 scripts/hipocampo_health.py --json       # salida JSON
     python3 scripts/hipocampo_health.py --repair     # intenta reparar
 """
-import os, sys, json, time, subprocess, logging
+
+import os
+import sys
+import json
+import time
+import subprocess
+import logging
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("hipocampo_health")
@@ -17,7 +23,7 @@ logger = logging.getLogger("hipocampo_health")
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYTHON_BIN = sys.executable
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, load_config
 
 
@@ -31,9 +37,7 @@ def check_postgresql():
         results["checks"]["connection"] = "ok"
 
         for table in ["memoria_vectorial", "memory_items", "memory_categories", "query_stats", "watches"]:
-            cur.execute(
-                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name=%s)", (table,)
-            )
+            cur.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name=%s)", (table,))
             exists = cur.fetchone()[0]
             results["checks"][f"table_{table}"] = "ok" if exists else "missing"
             if not exists:
@@ -64,6 +68,7 @@ def check_nvidia_api():
     results["checks"]["api_key_present"] = "ok"
     try:
         from openai import OpenAI
+
         client = OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
             api_key=api_key,
@@ -93,7 +98,7 @@ def check_disk_space():
     results = {"status": "ok", "checks": {}}
     try:
         st = os.statvfs("/")
-        free_gb = (st.f_frsize * st.f_bavail) / (1024 ** 3)
+        free_gb = (st.f_frsize * st.f_bavail) / (1024**3)
         results["checks"]["disk_free_gb"] = round(free_gb, 1)
         if free_gb < 1:
             results["status"] = "error"
@@ -198,12 +203,19 @@ def auto_repair():
 
 
 if __name__ == "__main__":
-    if "--repair" in sys.argv:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Health check y auto-repair del sistema Hipocampo")
+    parser.add_argument("--repair", action="store_true", help="Ejecutar auto-repair en lugar de health check")
+    parser.add_argument("--json", action="store_true", help="Salida en formato JSON")
+    args = parser.parse_args()
+
+    if args.repair:
         result = auto_repair()
     else:
         result = full_health_check()
 
-    if "--json" in sys.argv:
+    if args.json:
         print(json.dumps(result, indent=2))
     else:
         overall = result.get("overall", result.get("status", "unknown"))

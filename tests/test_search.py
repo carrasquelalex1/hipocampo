@@ -1,5 +1,5 @@
-import pytest
-import sys, os, json, math
+import sys
+import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
@@ -65,9 +65,15 @@ class TestGenerarPatrones:
 class TestFusionarResultados:
     def test_solo_vectorial(self):
         vec = [
-            {"contenido": "test", "score": 80.0, "method": "vectorial",
-             "source": "memoria_vectorial", "tabla": "memoria_vectorial",
-             "metadatos": {"date": "2026-06-26"}, "code_snippet": None}
+            {
+                "contenido": "test",
+                "score": 80.0,
+                "method": "vectorial",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "metadatos": {"date": "2026-06-26"},
+                "code_snippet": None,
+            }
         ]
         result = fusionar_resultados(vec, [], [], alpha=0.6)
         assert len(result) == 1
@@ -75,23 +81,41 @@ class TestFusionarResultados:
 
     def test_solo_lexico(self):
         lex = [
-            {"contenido": "test", "score": 60.0, "method": "lexico_expansivo",
-             "source": "memoria_vectorial", "tabla": "memoria_vectorial",
-             "metadatos": {"date": "2026-06-26"}, "code_snippet": None}
+            {
+                "contenido": "test",
+                "score": 60.0,
+                "method": "lexico_expansivo",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "metadatos": {"date": "2026-06-26"},
+                "code_snippet": None,
+            }
         ]
         result = fusionar_resultados([], [], lex, alpha=0.6)
         assert len(result) == 1
 
     def test_fusion_hibrida_mismo_contenido(self):
         vec = [
-            {"contenido": "python api", "score": 80.0, "method": "vectorial",
-             "source": "memoria_vectorial", "tabla": "memoria_vectorial",
-             "metadatos": {"date": "2026-06-26"}, "code_snippet": None}
+            {
+                "contenido": "python api",
+                "score": 80.0,
+                "method": "vectorial",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "metadatos": {"date": "2026-06-26"},
+                "code_snippet": None,
+            }
         ]
         lex = [
-            {"contenido": "python api", "score": 60.0, "method": "lexico_expansivo",
-             "source": "memoria_vectorial", "tabla": "memoria_vectorial",
-             "metadatos": {"date": "2026-06-26"}, "code_snippet": None}
+            {
+                "contenido": "python api",
+                "score": 60.0,
+                "method": "lexico_expansivo",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "metadatos": {"date": "2026-06-26"},
+                "code_snippet": None,
+            }
         ]
         result = fusionar_resultados(vec, [], lex, alpha=0.6)
         assert len(result) == 1  # dedup por contenido
@@ -99,28 +123,52 @@ class TestFusionarResultados:
 
     def test_alpha_0_vectorial(self):
         vec = [
-            {"contenido": "test", "score": 90.0, "method": "vectorial",
-             "source": "memoria_vectorial", "tabla": "memoria_vectorial",
-             "metadatos": {"date": "2026-06-26"}, "code_snippet": None}
+            {
+                "contenido": "test",
+                "score": 90.0,
+                "method": "vectorial",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "metadatos": {"date": "2026-06-26"},
+                "code_snippet": None,
+            }
         ]
         lex = [
-            {"contenido": "test", "score": 50.0, "method": "lexico_expansivo",
-             "source": "memoria_vectorial", "tabla": "memoria_vectorial",
-             "metadatos": {"date": "2026-06-26"}, "code_snippet": None}
+            {
+                "contenido": "test",
+                "score": 50.0,
+                "method": "lexico_expansivo",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "metadatos": {"date": "2026-06-26"},
+                "code_snippet": None,
+            }
         ]
         result = fusionar_resultados(vec, [], lex, alpha=1.0)
         assert result[0]["score"] == 90.0
 
     def test_contenidos_diferentes(self):
         vec = [
-            {"contenido": "aaaa", "score": 80.0, "method": "vectorial",
-             "source": "memoria_vectorial", "tabla": "memoria_vectorial",
-             "metadatos": {"date": "2026-06-26"}, "code_snippet": None}
+            {
+                "contenido": "aaaa",
+                "score": 80.0,
+                "method": "vectorial",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "metadatos": {"date": "2026-06-26"},
+                "code_snippet": None,
+            }
         ]
         lex = [
-            {"contenido": "bbbb", "score": 60.0, "method": "lexico_expansivo",
-             "source": "memoria_vectorial", "tabla": "memoria_vectorial",
-             "metadatos": {"date": "2026-06-26"}, "code_snippet": None}
+            {
+                "contenido": "bbbb",
+                "score": 60.0,
+                "method": "lexico_expansivo",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "metadatos": {"date": "2026-06-26"},
+                "code_snippet": None,
+            }
         ]
         result = fusionar_resultados(vec, [], lex, alpha=0.6)
         assert len(result) == 2
@@ -129,20 +177,34 @@ class TestFusionarResultados:
 class TestDecaimientoTemporal:
     def test_reciente_sin_decaimiento(self):
         items = [
-            {"contenido": "nuevo", "score": 80.0, "metadatos": {"date": "2026-06-26"},
-             "method": "vectorial", "source": "memoria_vectorial",
-             "tabla": "memoria_vectorial", "code_snippet": None,
-             "vec_score": 0, "lex_score": 0}
+            {
+                "contenido": "nuevo",
+                "score": 80.0,
+                "metadatos": {"date": "2026-06-26"},
+                "method": "vectorial",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "code_snippet": None,
+                "vec_score": 0,
+                "lex_score": 0,
+            }
         ]
         result = _aplicar_decaimiento_temporal(items)
         assert result[0]["score"] == 80.0
 
     def test_antiguo_con_decaimiento(self):
         items = [
-            {"contenido": "viejo", "score": 80.0, "metadatos": {"date": "2026-01-01"},
-             "method": "vectorial", "source": "memoria_vectorial",
-             "tabla": "memoria_vectorial", "code_snippet": None,
-             "vec_score": 0, "lex_score": 0}
+            {
+                "contenido": "viejo",
+                "score": 80.0,
+                "metadatos": {"date": "2026-01-01"},
+                "method": "vectorial",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "code_snippet": None,
+                "vec_score": 0,
+                "lex_score": 0,
+            }
         ]
         result = _aplicar_decaimiento_temporal(items)
         assert result[0]["score"] < 80.0  # debe decaer
@@ -150,10 +212,17 @@ class TestDecaimientoTemporal:
 
     def test_sin_fecha_sin_decaimiento(self):
         items = [
-            {"contenido": "sin fecha", "score": 50.0, "metadatos": {},
-             "method": "vectorial", "source": "memoria_vectorial",
-             "tabla": "memoria_vectorial", "code_snippet": None,
-             "vec_score": 0, "lex_score": 0}
+            {
+                "contenido": "sin fecha",
+                "score": 50.0,
+                "metadatos": {},
+                "method": "vectorial",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "code_snippet": None,
+                "vec_score": 0,
+                "lex_score": 0,
+            }
         ]
         result = _aplicar_decaimiento_temporal(items)
         assert result[0]["score"] == 50.0
@@ -166,10 +235,15 @@ class TestFormatearResultados:
 
     def test_con_resultados(self):
         items = [
-            {"contenido": "resultado de prueba", "score": 85.0,
-             "metadatos": {"tags": ["test"]},
-             "method": "vectorial", "source": "memoria_vectorial",
-             "tabla": "memoria_vectorial", "code_snippet": "print('hola')"}
+            {
+                "contenido": "resultado de prueba",
+                "score": 85.0,
+                "metadatos": {"tags": ["test"]},
+                "method": "vectorial",
+                "source": "memoria_vectorial",
+                "tabla": "memoria_vectorial",
+                "code_snippet": "print('hola')",
+            }
         ]
         output = formatear_resultados(items, "prueba")
         assert "85.0" in output

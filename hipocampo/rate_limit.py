@@ -11,6 +11,7 @@ Usage:
     if not embedding_limiter.acquire():
         return "⏳ Demasiadas solicitudes. Intenta en N segundos."
 """
+
 import time
 import logging
 import threading

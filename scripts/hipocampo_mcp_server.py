@@ -21,6 +21,7 @@ Ejemplos:
     python hipocampo_mcp_server.py --http 8001 --host 0.0.0.0
     python hipocampo_mcp_server.py --sse 8001        # legacy
 """
+
 import asyncio
 import logging
 import sys
@@ -43,10 +44,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, os.path.dirname(BASE_DIR))  # project root for hipocampo package
 
-import psycopg2
 
-from hipocampo.db import get_conn, get_embedding, load_config, init_pool, validate_config
-from hipocampo.rate_limit import embedding_limiter, tool_limiter, watch_limiter
+from hipocampo.db import get_conn, get_embedding, init_pool, validate_config
+from hipocampo.rate_limit import embedding_limiter, tool_limiter
 
 import hipocampo_search as _search
 import hipocampo_health as _health
@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS watches (
 CREATE INDEX IF NOT EXISTS idx_watches_pattern ON watches(pattern);
 """
 
+
 def _init_watches_table():
     try:
         conn = _conn()
@@ -80,6 +81,7 @@ def _init_watches_table():
     except Exception as e:
         logger.warning("Error inesperado al inicializar tabla watches: %s", e)
 
+
 def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
     try:
         conn = _conn()
@@ -90,12 +92,14 @@ def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
         for row in cur.fetchall():
             wid, pattern, url = row
             if pattern.lower() in content_lower or pattern.lower() in meta_str:
-                payload = json.dumps({
-                    "event": event_type,
-                    "id": record_id,
-                    "content": content,
-                    "metadatos": metadatos,
-                }).encode("utf-8")
+                payload = json.dumps(
+                    {
+                        "event": event_type,
+                        "id": record_id,
+                        "content": content,
+                        "metadatos": metadatos,
+                    }
+                ).encode("utf-8")
                 try:
                     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
                     urllib.request.urlopen(req, timeout=5)
@@ -113,13 +117,16 @@ def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
     except Exception as e:
         logger.warning("Error inesperado en webhooks: %s", e)
 
+
 # ─── INICIALIZACIÓN MCP ─────────────────────────────────────────────────────
 mcp = FastMCP("hipocampo")
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    readOnlyHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+    )
+)
 async def search_hipocampo(query: str, session_id: str = "") -> str:
     """
     Busca en el Hipocampo (memoria dual con SSC / BIRE v3.6).
@@ -149,6 +156,7 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
         Si no hay coincidencias, indica búsqueda exitosa pero sin resultados.
     """
     import time
+
     t0 = time.time()
 
     rate_err = _check_rate(tool_limiter, "search_hipocampo")
@@ -172,14 +180,14 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
                 if len(parts) >= 2:
                     try:
                         avg_score = float(parts[1].strip())
-                    except:
+                    except Exception:
                         pass
             if "🏆 Mejor score:" in line:
                 parts = line.split(":")
                 if len(parts) >= 2:
                     try:
                         top_score = float(parts[1].strip())
-                    except:
+                    except Exception:
                         pass
 
         try:
@@ -195,9 +203,11 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
         return _tool_err("search_hipocampo", e)
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    readOnlyHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+    )
+)
 async def quick_hipocampo_search(query: str, session_id: str = "") -> str:
     """
     Búsqueda rápida en el Hipocampo (alias corto de search_hipocampo).
@@ -235,6 +245,7 @@ def hipocampo_info() -> str:
 
 # ─── EMBEDDING HELPER ────────────────────────────────────────────────────────
 
+
 def _generar_embedding(texto: str, tool_name: str = "unknown") -> list[float]:
     rate_err = _check_rate(embedding_limiter, tool_name)
     if rate_err:
@@ -250,8 +261,7 @@ def _conn():
 
 
 _RATE_LIMIT_TOOL_RESPONSE = (
-    "⏳ Demasiadas solicitudes. Límite: {max} por {window}s. "
-    "Espera {wait:.0f}s o reduce la frecuencia de llamadas."
+    "⏳ Demasiadas solicitudes. Límite: {max} por {window}s. Espera {wait:.0f}s o reduce la frecuencia de llamadas."
 )
 
 
@@ -259,10 +269,17 @@ def _check_rate(limiter, tool_name: str) -> str | None:
     """Check a rate limiter and return an error message if exceeded."""
     if not limiter.acquire():
         wait = limiter.wait_time()
-        logger.warning("Rate limit excedido en %s: %s activas de %s, espera %.0fs",
-                       tool_name, limiter.stats["active"], limiter.max_calls, wait)
+        logger.warning(
+            "Rate limit excedido en %s: %s activas de %s, espera %.0fs",
+            tool_name,
+            limiter.stats["active"],
+            limiter.max_calls,
+            wait,
+        )
         return _RATE_LIMIT_TOOL_RESPONSE.format(
-            max=limiter.max_calls, window=limiter.window_seconds, wait=wait,
+            max=limiter.max_calls,
+            window=limiter.window_seconds,
+            wait=wait,
         )
     return None
 
@@ -404,7 +421,12 @@ async def profile_hipocampo(
         cur.execute(
             """INSERT INTO memory_items (id, summary, memory_type, extra, embedding, created_at, updated_at)
                VALUES (%s, %s, 'profile', %s, %s::vector(1024), NOW(), NOW())""",
-            (row_id, summary, json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today())}), embedding),
+            (
+                row_id,
+                summary,
+                json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today())}),
+                embedding,
+            ),
         )
 
         for cat in cat_list:
@@ -431,10 +453,12 @@ async def profile_hipocampo(
 # ─── HERRAMIENTAS: CRUD (UPDATE / DELETE) ──────────────────────────────────────
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    destructiveHint=True,
-    idempotentHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        destructiveHint=True,
+        idempotentHint=True,
+    )
+)
 async def update_hipocampo(
     id: int,
     content: str | None = None,
@@ -512,9 +536,11 @@ async def update_hipocampo(
         return _tool_err("update_hipocampo", e)
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    destructiveHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        destructiveHint=True,
+    )
+)
 async def delete_hipocampo(id: int) -> str:
     """
     Elimina un recuerdo del Hipocampo (memoria_vectorial) por su ID.
@@ -558,9 +584,11 @@ async def delete_hipocampo(id: int) -> str:
 # ─── HERRAMIENTA: HEALTH CHECK ───────────────────────────────────────────────
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    readOnlyHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+    )
+)
 async def hipocampo_health() -> str:
     """
     Ejecuta un health check completo del sistema Hipocampo.
@@ -618,9 +646,11 @@ async def hipocampo_auto_repair() -> str:
 # ─── HERRAMIENTAS: STATS Y AJUSTE DINÁMICO ────────────────────────────────────
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    readOnlyHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+    )
+)
 async def hipocampo_stats() -> str:
     """
     Muestra estadísticas de rendimiento del sistema Hipocampo.
@@ -638,10 +668,12 @@ async def hipocampo_stats() -> str:
         return _tool_err("hipocampo_stats", e)
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    destructiveHint=True,
-    idempotentHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        destructiveHint=True,
+        idempotentHint=True,
+    )
+)
 async def hipocampo_tune() -> str:
     """
     Ajusta automáticamente los thresholds y pesos del SSC
@@ -672,11 +704,13 @@ async def hipocampo_tune() -> str:
 # ─── HERRAMIENTAS: MANTENIMIENTO (FASE 3) ─────────────────────────────────────
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+    )
+)
 async def hipocampo_dedup(merge: bool = False) -> str:
     """
     Detecta y opcionalmente fusiona duplicados en las tablas de memoria.
@@ -705,7 +739,9 @@ async def hipocampo_dedup(merge: bool = False) -> str:
     try:
         if merge:
             report = await asyncio.to_thread(_dedup.full_dedup_merge)
-            total_removed = sum(v.get("removed", 0) for v in report["exact"].values()) + sum(v.get("removed", 0) for v in report["semantic"].values())
+            total_removed = sum(v.get("removed", 0) for v in report["exact"].values()) + sum(
+                v.get("removed", 0) for v in report["semantic"].values()
+            )
             lines = [f"🔧 Dedup merge completado: {total_removed} registros eliminados"]
             for k, v in report.items():
                 for t, r in v.items():
@@ -718,8 +754,12 @@ async def hipocampo_dedup(merge: bool = False) -> str:
             for table, data in info.items():
                 emoji = "⚠️" if data["total_recoverable"] > 0 else "✅"
                 lines.append(f"{emoji} {table}:")
-                lines.append(f"   Duplicados exactos: {data['exact_duplicates']} grupos ({data['exact_redundant_rows']} registros redundantes)")
-                lines.append(f"   Duplicados semánticos: {data['semantic_groups']} grupos ({data['semantic_redundant_rows']} registros redundantes)")
+                lines.append(
+                    f"   Duplicados exactos: {data['exact_duplicates']} grupos ({data['exact_redundant_rows']} registros redundantes)"
+                )
+                lines.append(
+                    f"   Duplicados semánticos: {data['semantic_groups']} grupos ({data['semantic_redundant_rows']} registros redundantes)"
+                )
                 lines.append(f"   Espacio recuperable: {data['total_recoverable']} registros")
             lines.append("\n💡 Ejecuta con merge=True para fusionar y limpiar")
             return "\n".join(lines)
@@ -727,10 +767,12 @@ async def hipocampo_dedup(merge: bool = False) -> str:
         return _tool_err("hipocampo_dedup", e)
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    destructiveHint=True,
-    idempotentHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        destructiveHint=True,
+        idempotentHint=True,
+    )
+)
 async def hipocampo_checkpoint(dry_run: bool = True) -> str:
     """
     Comprime memorias antiguas usando checkpointing logarítmico.
@@ -773,6 +815,7 @@ async def hipocampo_maintenance() -> str:
     Returns:
         Reporte consolidado del mantenimiento.
     """
+
     def _do_maintenance():
         report_parts = []
         try:
@@ -784,19 +827,19 @@ async def hipocampo_maintenance() -> str:
 
         try:
             _dedup.full_dedup_merge()
-            report_parts.append(f"🧹 Dedup: ✅")
+            report_parts.append("🧹 Dedup: ✅")
         except Exception:
             report_parts.append("🧹 Dedup: ❌")
 
         try:
             _checkpoint.run_checkpoint(dry_run=False)
-            report_parts.append(f"📦 Checkpoint: ✅")
+            report_parts.append("📦 Checkpoint: ✅")
         except Exception:
             report_parts.append("📦 Checkpoint: ❌")
 
         try:
             _stats.tune_thresholds()
-            report_parts.append(f"⚙️ Tune: ✅")
+            report_parts.append("⚙️ Tune: ✅")
         except Exception:
             report_parts.append("⚙️ Tune: ❌")
 
@@ -883,9 +926,11 @@ async def unwatch_hipocampo(id: int) -> str:
         return _tool_err("unwatch_hipocampo", e)
 
 
-@mcp.tool(annotations=ToolAnnotations(
-    readOnlyHint=True,
-))
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+    )
+)
 async def list_watches() -> str:
     """
     Lista todos los webhooks registrados.
@@ -893,6 +938,7 @@ async def list_watches() -> str:
     Returns:
         Lista de watches con ID, patrón y URL.
     """
+
     def _do():
         conn = _conn()
         cur = conn.cursor()
@@ -919,22 +965,48 @@ async def list_watches() -> str:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Hipocampo MCP Server — memoria dual con BIRE v3.7")
+    parser.add_argument(
+        "--http",
+        "--streamable-http",
+        nargs="?",
+        const=8001,
+        type=int,
+        metavar="PORT",
+        dest="http_port",
+        help="Iniciar en modo Streamable HTTP (default puerto 8001)",
+    )
+    parser.add_argument(
+        "--sse", nargs="?", const=8001, type=int, metavar="PORT", help="Iniciar en modo SSE (deprecado)"
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="Host para modo HTTP (default 127.0.0.1)")
+    parser.add_argument("--transport", choices=("stdio", "http", "sse"), help="Transporte (alternativa a --http/--sse)")
+    args = parser.parse_args()
+
     cfg_errors = validate_config()
     if cfg_errors:
         for err in cfg_errors:
             logger.warning("⚠️  Config: %s", err)
     _init_watches_table()
     init_pool()
-    if len(sys.argv) > 1 and sys.argv[1] in ("--http", "--streamable-http"):
-        port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
-        host = "127.0.0.1"
-        if "--host" in sys.argv:
-            idx = sys.argv.index("--host")
-            if idx + 1 < len(sys.argv):
-                host = sys.argv[idx + 1]
+
+    http_port = args.http_port
+    if not http_port and args.transport == "http":
+        http_port = 8001
+
+    sse_port = args.sse
+    if not sse_port and args.transport == "sse":
+        sse_port = 8001
+
+    if http_port:
+        port = http_port
+        host = args.host
         import uvicorn
         from starlette.routing import Route
-        from starlette.responses import JSONResponse, HTMLResponse
+        from starlette.responses import JSONResponse
+
         logger.info("🔌 Iniciando Hipocampo MCP Server (Streamable HTTP) en %s:%d", host, port)
         mcp.settings.port = port
         mcp.settings.host = host
@@ -946,6 +1018,7 @@ if __name__ == "__main__":
                 return JSONResponse({"ok": False, "error": "query param 'q' required"})
             try:
                 import time
+
                 t0 = time.time()
                 output = await asyncio.to_thread(_search.search, q)
                 return JSONResponse({"ok": True, "results": output, "latency_ms": int((time.time() - t0) * 1000)})
@@ -958,22 +1031,34 @@ if __name__ == "__main__":
                 content = body.get("content", "")
                 if not content:
                     return JSONResponse({"ok": False, "error": "content required"})
+
                 def _do_save():
                     import json as j
                     from datetime import date as d
+
                     embedding = _generar_embedding(content)
-                    metadatos = {"type": body.get("type", "event"), "code": body.get("code", ""), "categories": body.get("categories", []), "date": str(d.today()), "source": "web_demo"}
+                    metadatos = {
+                        "type": body.get("type", "event"),
+                        "code": body.get("code", ""),
+                        "categories": body.get("categories", []),
+                        "date": str(d.today()),
+                        "source": "web_demo",
+                    }
                     sid = body.get("session_id", "")
                     if sid:
                         metadatos["session_id"] = sid
                     conn = _conn()
                     cur = conn.cursor()
-                    cur.execute("INSERT INTO memoria_vectorial (contenido, metadatos, embedding) VALUES (%s, %s, %s::vector(1024)) RETURNING id", (content, j.dumps(metadatos), embedding))
+                    cur.execute(
+                        "INSERT INTO memoria_vectorial (contenido, metadatos, embedding) VALUES (%s, %s, %s::vector(1024)) RETURNING id",
+                        (content, j.dumps(metadatos), embedding),
+                    )
                     row_id = cur.fetchone()[0]
                     conn.commit()
                     cur.close()
                     conn.close()
                     return {"ok": True, "id": row_id}
+
                 result = await asyncio.to_thread(_do_save)
                 return JSONResponse(result)
             except Exception as e:
@@ -987,14 +1072,15 @@ if __name__ == "__main__":
                 return JSONResponse({"ok": False, "error": str(e)})
 
         from starlette.applications import Starlette as StarletteApp
-        from starlette.middleware import Middleware as SMiddleware
 
         mcp_app = mcp.streamable_http_app()
-        api_app = StarletteApp(routes=[
-            Route("/api/search", endpoint=api_search, methods=["GET"]),
-            Route("/api/save", endpoint=api_save, methods=["POST"]),
-            Route("/api/health", endpoint=api_health, methods=["GET"]),
-        ])
+        api_app = StarletteApp(
+            routes=[
+                Route("/api/search", endpoint=api_search, methods=["GET"]),
+                Route("/api/save", endpoint=api_save, methods=["POST"]),
+                Route("/api/health", endpoint=api_health, methods=["GET"]),
+            ]
+        )
         playground_html = open(os.path.join(BASE_DIR, "..", "playground.html"), encoding="utf-8").read()
 
         async def app(scope, receive, send):
@@ -1005,11 +1091,23 @@ if __name__ == "__main__":
                     qs = scope.get("query_string", b"").decode()
                     if "logs=container" in qs:
                         body = b'{"status":"ok","server":"hipocampo","endpoint":"/mcp"}'
-                        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": 200,
+                                "headers": [(b"content-type", b"application/json")],
+                            }
+                        )
                         await send({"type": "http.response.body", "body": body})
                     else:
                         body = playground_html.encode("utf-8")
-                        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/html; charset=utf-8")]})
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": 200,
+                                "headers": [(b"content-type", b"text/html; charset=utf-8")],
+                            }
+                        )
                         await send({"type": "http.response.body", "body": body})
                     return
                 if path.startswith("/mcp") or path.startswith("/sse"):
@@ -1019,11 +1117,10 @@ if __name__ == "__main__":
 
         config = uvicorn.Config(app, host=host, port=port, log_level=mcp.settings.log_level.lower())
         uvicorn.Server(config).run()
-    elif len(sys.argv) > 1 and sys.argv[1] == "--sse":
+    elif sse_port:
         logger.warning("⚠️  --sse está deprecado desde spec MCP 2025-03-26. Usa --http en su lugar.")
-        port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
-        logger.info("🔌 Iniciando Hipocampo MCP Server (SSE) en puerto %d", port)
-        mcp.settings.port = port
+        logger.info("🔌 Iniciando Hipocampo MCP Server (SSE) en puerto %d", sse_port)
+        mcp.settings.port = sse_port
         mcp.run(transport="sse")
     else:
         logger.info("🔌 Iniciando Hipocampo MCP Server (stdio)")

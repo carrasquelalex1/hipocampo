@@ -9,14 +9,22 @@ Uso:
     python3 hipocampo_calibrate.py
 """
 
-import sys, os, json, math, itertools
+import sys
+import os
+import json
+import math
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hipocampo_search import (expandir_consulta, generar_patrones_ILIKE,
-                              buscar_vectorial, buscar_lexico_memoria_vectorial,
-                              buscar_lexico_memory_items)
+from hipocampo_search import (
+    expandir_consulta,
+    generar_patrones_ILIKE,
+    buscar_vectorial,
+    buscar_lexico_memoria_vectorial,
+    buscar_lexico_memory_items,
+)
 from pgvector.psycopg2 import register_vector
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, load_config
 
 load_config()
@@ -118,14 +126,14 @@ LABELED_QUERIES = [
 
 # ─── MÉTRICAS DE EVALUACIÓN ─────────────────────────────────────────────────
 
+
 def ndcg_at_k(resultados, relevant_set, k=10):
     """NDCG (Normalized Discounted Cumulative Gain) @ k."""
     dcg = 0.0
     idcg = 0.0
     for i, r in enumerate(resultados[:k]):
-        clave = r['contenido'][:120].lower()
-        rel = 1.0 if any(clave in rel[:120].lower() or rel[:120].lower() in clave
-                         for rel in relevant_set) else 0.0
+        clave = r["contenido"][:120].lower()
+        rel = 1.0 if any(clave in rel[:120].lower() or rel[:120].lower() in clave for rel in relevant_set) else 0.0
         dcg += rel / math.log2(i + 2)
 
     for i in range(min(len(relevant_set), k)):
@@ -138,9 +146,8 @@ def precision_at_k(resultados, relevant_set, k=10):
     """Precisión @ k."""
     count = 0
     for r in resultados[:k]:
-        clave = r['contenido'][:120].lower()
-        if any(clave in rel[:120].lower() or rel[:120].lower() in clave
-               for rel in relevant_set):
+        clave = r["contenido"][:120].lower()
+        if any(clave in rel[:120].lower() or rel[:120].lower() in clave for rel in relevant_set):
             count += 1
     return count / min(k, len(resultados)) if resultados else 0.0
 
@@ -149,9 +156,8 @@ def recall_at_k(resultados, relevant_set, k=10):
     """Recall @ k."""
     encontrados = 0
     for r in resultados[:k]:
-        clave = r['contenido'][:120].lower()
-        if any(clave in rel[:120].lower() or rel[:120].lower() in clave
-               for rel in relevant_set):
+        clave = r["contenido"][:120].lower()
+        if any(clave in rel[:120].lower() or rel[:120].lower() in clave for rel in relevant_set):
             encontrados += 1
     return encontrados / len(relevant_set) if relevant_set else 0.0
 
@@ -167,6 +173,7 @@ def evaluate(resultados, relevant_set):
 
 # ─── FUSIÓN HÍBRIDA CALIBRADA ──────────────────────────────────────────────
 
+
 def fusionar_hibrido(vectorial, lexico_mv, lexico_mi, alpha=0.5):
     """Fusión híbrida: combina vectorial y léxico con peso alpha.
 
@@ -181,28 +188,27 @@ def fusionar_hibrido(vectorial, lexico_mv, lexico_mi, alpha=0.5):
 
     grupos = {}
     for r in todos:
-        clave = r['contenido'][:120].lower()
+        clave = r["contenido"][:120].lower()
         if clave in grupos:
             existente = grupos[clave]
-            existente['vec_score'] = max(existente.get('vec_score', 0),
-                                         r['score'] if r['method'] == 'vectorial' else 0)
-            existente['lex_score'] = max(existente.get('lex_score', 0),
-                                         r['score'] if r['method'] != 'vectorial' else 0)
+            existente["vec_score"] = max(existente.get("vec_score", 0), r["score"] if r["method"] == "vectorial" else 0)
+            existente["lex_score"] = max(existente.get("lex_score", 0), r["score"] if r["method"] != "vectorial" else 0)
             # Recalcular híbrido con el nuevo score
-            raw = alpha * existente['vec_score'] + (1 - alpha) * existente['lex_score']
-            existente['score'] = round(raw, 1)
+            raw = alpha * existente["vec_score"] + (1 - alpha) * existente["lex_score"]
+            existente["score"] = round(raw, 1)
         else:
-            r['vec_score'] = r['score'] if r['method'] == 'vectorial' else 0
-            r['lex_score'] = r['score'] if r['method'] != 'vectorial' else 0
-            raw = alpha * r['vec_score'] + (1 - alpha) * r['lex_score']
-            r['score'] = round(raw, 1)
+            r["vec_score"] = r["score"] if r["method"] == "vectorial" else 0
+            r["lex_score"] = r["score"] if r["method"] != "vectorial" else 0
+            raw = alpha * r["vec_score"] + (1 - alpha) * r["lex_score"]
+            r["score"] = round(raw, 1)
             grupos[clave] = r
 
-    fusionados = sorted(grupos.values(), key=lambda x: x['score'], reverse=True)
+    fusionados = sorted(grupos.values(), key=lambda x: x["score"], reverse=True)
     return fusionados
 
 
 # ─── CALIBRACIÓN ────────────────────────────────────────────────────────────
+
 
 def run_calibration():
     """Ejecuta validación cruzada para encontrar el alpha óptimo."""
@@ -212,8 +218,7 @@ def run_calibration():
 
     alpha_values = [i / 10.0 for i in range(0, 11)]  # 0.0, 0.1, ..., 1.0
 
-    results_by_alpha = {alpha: {"ndcg": [], "precision": [], "recall": [], "f1": []}
-                        for alpha in alpha_values}
+    results_by_alpha = {alpha: {"ndcg": [], "precision": [], "recall": [], "f1": []} for alpha in alpha_values}
 
     for q in LABELED_QUERIES:
         query = q["query"]
@@ -281,11 +286,11 @@ def save_config(alpha, filepath=CONFIG_PATH):
     config = {
         "alpha": alpha,
         "beta": round(1.0 - alpha, 1),
-        "description": f"Ponderación híbrida calibrada: {alpha*100:.0f}% vectorial + {(1-alpha)*100:.0f}% léxico",
+        "description": f"Ponderación híbrida calibrada: {alpha * 100:.0f}% vectorial + {(1 - alpha) * 100:.0f}% léxico",
         "calibrated_at": "2026-05-24",
         "dataset_size": len(LABELED_QUERIES),
     }
-    with open(filepath, 'w') as f:
+    with open(filepath, "w") as f:
         json.dump(config, f, indent=2)
     print(f"💾 Config guardada en {filepath}")
     print(json.dumps(config, indent=2))
@@ -301,7 +306,16 @@ def load_config(filepath=CONFIG_PATH):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Calibración híbrida BIRE — ajusta ponderación vectorial vs léxica")
+    parser.add_argument(
+        "--save", action="store_true", default=True, help="Guardar configuración calibrada (default: True)"
+    )
+    args = parser.parse_args()
+
     avg_metrics, best_alpha, best_ndcg, best_precision = run_calibration()
     optimal = print_results(avg_metrics, best_alpha, best_ndcg, best_precision)
 
-    save_config(optimal)
+    if args.save:
+        save_config(optimal)

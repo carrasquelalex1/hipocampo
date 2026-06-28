@@ -1,6 +1,7 @@
-import pytest
-import sys, os, json
-from datetime import datetime, timedelta
+import sys
+import os
+import json
+from datetime import timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 

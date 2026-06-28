@@ -1,6 +1,6 @@
 """Tests for hipocampo/rate_limit.py"""
+
 import time
-import pytest
 from hipocampo.rate_limit import RateLimiter
 
 
@@ -64,6 +64,7 @@ class TestRateLimiter:
 
     def test_default_limiters_exist(self):
         from hipocampo.rate_limit import embedding_limiter, tool_limiter, watch_limiter
+
         for limiter, name, max_calls in [
             (embedding_limiter, "embedding", 30),
             (tool_limiter, "tool", 60),
@@ -77,6 +78,7 @@ class TestRateLimiter:
 class TestToolErr:
     def test_basic(self):
         from hipocampo_mcp_server import _tool_err
+
         result = _tool_err("test_tool", ValueError("bad value"))
         assert "Error de validación" in result
         assert "test_tool" in result
@@ -84,12 +86,14 @@ class TestToolErr:
 
     def test_unknown_type(self):
         from hipocampo_mcp_server import _tool_err
+
         result = _tool_err("test_tool", RuntimeError("crash"))
         assert "Error inesperado" in result
 
     def test_db_error(self):
         from hipocampo_mcp_server import _tool_err
         import psycopg2
+
         try:
             # psycopg2 can construct errors without a real connection
             e = psycopg2.OperationalError("connection failed")

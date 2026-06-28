@@ -20,53 +20,65 @@ import re
 # ─── REGLAS DE TAGS ──────────────────────────────────────────────────────────
 
 TAG_RULES = [
-    (r'\b(esposa|esposo|casad[ao]|matrimonio|cónyuge|conyuge|pareja|novi[ao])\b', ['familia']),
-    (r'\b(herman[ao]|hermanas?|cuñad[ao]|suegr[ao]|tí[ao]|prim[ao]|abuel[ao]|niet[ao])\b', ['familia']),
-    (r'\b(hij[oa]s?|hijos?|bebé|bebe|niñ[oa]s?)\b', ['familia']),
-    (r'\b(madre|padre|mamá|papá|mama|papa)\b', ['familia']),
-    (r'\b(familia|familiar|familiares|parientes?)\b', ['familia']),
-    (r'\b(planta[sz]?|medicinal|medicinales|hierba[sz]?|herbal|curativa|tisana|infusi[oó]n)\b', ['plantas_medicinales']),
-    (r'\b(malojillo|or[eé]gano|manzanilla|jengibre|canela|toronjil|albahaca|romero)\b', ['plantas_medicinales']),
-    (r'\b(t[eé]|infusi[oó]n)\b', ['plantas_medicinales']),
-    (r'\b(azul|rojo|verde|amarillo|blanco|negro|gris|marr[oó]n|naranja|rosado|violeta|celeste|dorado|plateado)\b', ['colores']),
-    (r'\b(color|colores|tono|tonalidad|sombre|matiz)\b', ['colores']),
-    (r'\b(pintur[oa]|brocha|rodillo|pared|paredes|pintar)\b', ['hogar', 'mantenimiento']),
-    (r'\b(linux|ubuntu|debian|bash|terminal|servidor|vps|docker|nginx|apache|ssh)\b', ['servidores', 'linux']),
-    (r'\b(python|javascript|typescript|php|java|rust|golang|ruby|swift|kotlin)\b', ['programacion']),
-    (r'\b(base de datos|postgres|mysql|sqlite|mongodb|redis|sql|query)\b', ['programacion']),
-    (r'\b(proyecto|app|aplicación|sistema|software|código|codigo|repositorio|github)\b', ['programacion']),
-    (r'\b(telegram|bot|bots|chatbot|mensaje)\b', ['programacion', 'telegram']),
-    (r'\b(inversi[oó]n|ahorro|bol[íi]var|d[óo]lar|divisa|cripto|bitcoin|cuenta|banco)\b', ['finanzas', 'ahorros']),
-    (r'\b(receta|cocina|cocinar|comida|plato|almuerzo|cena|desayuno)\b', ['cocina']),
-    (r'\b(música|musica|canciones|canción|banda|artista|género|playlist)\b', ['entretenimiento']),
-    (r'\b(pelicula|película|serie|netflix|youtube|video|vhdl)\b', ['entretenimiento']),
-    (r'\b(gym|gimnasio|ejercicio|entrenar|pesas|caminar|correr|salud)\b', ['salud', 'fitness']),
-    (r'\b(departamento|casa|vivienda|alquiler|renta|mudanza|cuarto|habitación)\b', ['hogar']),
-    (r'\b(meta|objetivo|aspiración|quiero|llegar a ser|plan a futuro)\b', ['metas']),
+    (r"\b(esposa|esposo|casad[ao]|matrimonio|cónyuge|conyuge|pareja|novi[ao])\b", ["familia"]),
+    (r"\b(herman[ao]|hermanas?|cuñad[ao]|suegr[ao]|tí[ao]|prim[ao]|abuel[ao]|niet[ao])\b", ["familia"]),
+    (r"\b(hij[oa]s?|hijos?|bebé|bebe|niñ[oa]s?)\b", ["familia"]),
+    (r"\b(madre|padre|mamá|papá|mama|papa)\b", ["familia"]),
+    (r"\b(familia|familiar|familiares|parientes?)\b", ["familia"]),
+    (
+        r"\b(planta[sz]?|medicinal|medicinales|hierba[sz]?|herbal|curativa|tisana|infusi[oó]n)\b",
+        ["plantas_medicinales"],
+    ),
+    (r"\b(malojillo|or[eé]gano|manzanilla|jengibre|canela|toronjil|albahaca|romero)\b", ["plantas_medicinales"]),
+    (r"\b(t[eé]|infusi[oó]n)\b", ["plantas_medicinales"]),
+    (
+        r"\b(azul|rojo|verde|amarillo|blanco|negro|gris|marr[oó]n|naranja|rosado|violeta|celeste|dorado|plateado)\b",
+        ["colores"],
+    ),
+    (r"\b(color|colores|tono|tonalidad|sombre|matiz)\b", ["colores"]),
+    (r"\b(pintur[oa]|brocha|rodillo|pared|paredes|pintar)\b", ["hogar", "mantenimiento"]),
+    (r"\b(linux|ubuntu|debian|bash|terminal|servidor|vps|docker|nginx|apache|ssh)\b", ["servidores", "linux"]),
+    (r"\b(python|javascript|typescript|php|java|rust|golang|ruby|swift|kotlin)\b", ["programacion"]),
+    (r"\b(base de datos|postgres|mysql|sqlite|mongodb|redis|sql|query)\b", ["programacion"]),
+    (r"\b(proyecto|app|aplicación|sistema|software|código|codigo|repositorio|github)\b", ["programacion"]),
+    (r"\b(telegram|bot|bots|chatbot|mensaje)\b", ["programacion", "telegram"]),
+    (r"\b(inversi[oó]n|ahorro|bol[íi]var|d[óo]lar|divisa|cripto|bitcoin|cuenta|banco)\b", ["finanzas", "ahorros"]),
+    (r"\b(receta|cocina|cocinar|comida|plato|almuerzo|cena|desayuno)\b", ["cocina"]),
+    (r"\b(música|musica|canciones|canción|banda|artista|género|playlist)\b", ["entretenimiento"]),
+    (r"\b(pelicula|película|serie|netflix|youtube|video|vhdl)\b", ["entretenimiento"]),
+    (r"\b(gym|gimnasio|ejercicio|entrenar|pesas|caminar|correr|salud)\b", ["salud", "fitness"]),
+    (r"\b(departamento|casa|vivienda|alquiler|renta|mudanza|cuarto|habitación)\b", ["hogar"]),
+    (r"\b(meta|objetivo|aspiración|quiero|llegar a ser|plan a futuro)\b", ["metas"]),
 ]
 
 # ─── REGLAS DE CATEGORÍA ─────────────────────────────────────────────────────
 
 CATEGORY_RULES = [
-    (r'\b(espos[ao]|casad[ao]|herman[ao]|cuñad[ao]|hij[oa]s?|madre|padre|familia|parientes?|suegr[ao]|tí[ao]|abuel[oa]|novi[ao]|pareja|primo)\b', 'relationships'),
-    (r'\b(gusta|gustan|gustaba|favorit[oa]|prefiere|preferida|encanta|feliz|amo|amor|quiero mucho)\b', 'preferences'),
-    (r'\b(planta[sz]?|medicinal|hierba[sz]?|t[eé]|infusi[oó]n|malojillo|or[eé]gano|romero|albahaca|manzanilla)\b', 'knowledge'),
-    (r'\b(color|colores|azul|rojo|verde|amarillo|tono|pintur[oa])\b', 'preferences'),
-    (r'\b(proyecto|trabajo|empleo|oficina|cliente|empresa|negocio|startup)\b', 'work_life'),
-    (r'\b(código|codigo|programar|desarrollar|sistema|software|app|bot|script)\b', 'work_life'),
-    (r'\b(nombre|llama|llaman|edad|años|años|vive|ubicación|dirección|naci[oó])\b', 'personal_info'),
-    (r'\b(rutina|acostumbra|siempre|diario|cada día|mañana|tarde|noche)\b', 'habits'),
-    (r'\b(meta|objetivo|aspira|sueño|quiero lograr|plan para)\b', 'goals'),
-    (r'\b(aprend[ií]|estudi[oó]|sabe|conoce|le[íi]do|investig[uú]|curso|leer|lectura)\b', 'knowledge'),
-    (r'\b(pienso|creo|opina|opinión|parece|considero|para m[íi])\b', 'opinions'),
-    (r'\b(hobby|actividad|tiempo libre|fines de semana|descanso|ocio|jugar)\b', 'activities'),
-    (r'\b(experiencia|recuerda|pasado|cuando era|antes|anteriormente|viv[ií])\b', 'experiences'),
-    (r'\b(gym|gimnasio|ejercicio|deporte|entrenar|pesas|caminar|correr|fútbol|futbol|beisbol|béisbol)\b', 'activities'),
-    (r'\b(música|música|canciones|tocar|cantar|piano|guitarra|instrumento)\b', 'activities'),
-    (r'\b(inversi[oó]n|ahorro|ahorros|bol[íi]var|d[óo]lar|divisa|banco|cuenta|presupuesto)\b', 'goals'),
+    (
+        r"\b(espos[ao]|casad[ao]|herman[ao]|cuñad[ao]|hij[oa]s?|madre|padre|familia|parientes?|suegr[ao]|tí[ao]|abuel[oa]|novi[ao]|pareja|primo)\b",
+        "relationships",
+    ),
+    (r"\b(gusta|gustan|gustaba|favorit[oa]|prefiere|preferida|encanta|feliz|amo|amor|quiero mucho)\b", "preferences"),
+    (
+        r"\b(planta[sz]?|medicinal|hierba[sz]?|t[eé]|infusi[oó]n|malojillo|or[eé]gano|romero|albahaca|manzanilla)\b",
+        "knowledge",
+    ),
+    (r"\b(color|colores|azul|rojo|verde|amarillo|tono|pintur[oa])\b", "preferences"),
+    (r"\b(proyecto|trabajo|empleo|oficina|cliente|empresa|negocio|startup)\b", "work_life"),
+    (r"\b(código|codigo|programar|desarrollar|sistema|software|app|bot|script)\b", "work_life"),
+    (r"\b(nombre|llama|llaman|edad|años|años|vive|ubicación|dirección|naci[oó])\b", "personal_info"),
+    (r"\b(rutina|acostumbra|siempre|diario|cada día|mañana|tarde|noche)\b", "habits"),
+    (r"\b(meta|objetivo|aspira|sueño|quiero lograr|plan para)\b", "goals"),
+    (r"\b(aprend[ií]|estudi[oó]|sabe|conoce|le[íi]do|investig[uú]|curso|leer|lectura)\b", "knowledge"),
+    (r"\b(pienso|creo|opina|opinión|parece|considero|para m[íi])\b", "opinions"),
+    (r"\b(hobby|actividad|tiempo libre|fines de semana|descanso|ocio|jugar)\b", "activities"),
+    (r"\b(experiencia|recuerda|pasado|cuando era|antes|anteriormente|viv[ií])\b", "experiences"),
+    (r"\b(gym|gimnasio|ejercicio|deporte|entrenar|pesas|caminar|correr|fútbol|futbol|beisbol|béisbol)\b", "activities"),
+    (r"\b(música|música|canciones|tocar|cantar|piano|guitarra|instrumento)\b", "activities"),
+    (r"\b(inversi[oó]n|ahorro|ahorros|bol[íi]var|d[óo]lar|divisa|banco|cuenta|presupuesto)\b", "goals"),
 ]
 
-DEFAULT_CATEGORY = 'personal_info'
+DEFAULT_CATEGORY = "personal_info"
 
 
 def auto_tag(summary: str) -> list:
@@ -127,24 +139,22 @@ def auto_tag_full(summary: str, memory_type: str = None) -> dict:
 
     # Auto-detectar memory_type si no se especificó
     if memory_type is None:
-        rel_cats = {'relationships', 'personal_info'}
+        rel_cats = {"relationships", "personal_info"}
         if category in rel_cats:
-            memory_type = 'profile'
-        elif category in {'goals', 'opinions', 'preferences'}:
-            memory_type = 'profile'
+            memory_type = "profile"
+        elif category in {"goals", "opinions", "preferences"}:
+            memory_type = "profile"
         else:
-            memory_type = 'event'
+            memory_type = "event"
 
     return {
-        'tags': tags,
-        'category': category,
-        'memory_type': memory_type,
+        "tags": tags,
+        "category": category,
+        "memory_type": memory_type,
     }
 
 
 if __name__ == "__main__":
-    import sys
-
     test_summaries = [
         "La esposa del usuario se llama Gaudi Concepción Puente Godoy",
         "El usuario está casado con Gaudi",
@@ -157,8 +167,14 @@ if __name__ == "__main__":
         "Alexander José Carrasquel Burgos se llama el usuario",
     ]
 
-    if len(sys.argv) > 1:
-        test_summaries = [sys.argv[1]]
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Auto-Tag Engine — etiqueta y categoriza resúmenes automáticamente")
+    parser.add_argument(
+        "summary", nargs="?", default="Mi esposa se llama María y tenemos un hijo", help="Texto del resumen a etiquetar"
+    )
+    args = parser.parse_args()
+    test_summaries = [args.summary]
 
     print("=" * 60)
     print("🤖 Hipocampo Auto-Tag v1.0")

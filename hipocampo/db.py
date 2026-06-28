@@ -4,10 +4,11 @@ Replaces the duplicated boilerplate previously found in 11+ scripts.
 Usage:
     from hipocampo.db import get_conn, get_embedding, load_config, validate_config
 """
+
 import os
-import sys
 import logging
 import threading
+import openai
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -23,20 +24,20 @@ def _project_root():
 
 def load_config(env_path=None):
     if env_path is None:
-        env_path = os.getenv('ENV_PATH')
+        env_path = os.getenv("ENV_PATH")
     if env_path is None or not os.path.exists(env_path):
-        candidate = os.path.join(_project_root(), '.env')
+        candidate = os.path.join(_project_root(), ".env")
         if os.path.exists(candidate):
             env_path = candidate
     if env_path:
         load_dotenv(env_path)
 
     return {
-        'DB_NAME': os.getenv('DB_NAME', 'hipocampo_db'),
-        'DB_USER': os.getenv('DB_USER', 'alex'),
-        'DB_PASSWORD': os.getenv('DB_PASSWORD', ''),
-        'DB_HOST': os.getenv('DB_HOST', '/var/run/postgresql'),
-        'NVIDIA_API_KEY': os.getenv('NVIDIA_API_KEY', ''),
+        "DB_NAME": os.getenv("DB_NAME", "hipocampo_db"),
+        "DB_USER": os.getenv("DB_USER", "alex"),
+        "DB_PASSWORD": os.getenv("DB_PASSWORD", ""),
+        "DB_HOST": os.getenv("DB_HOST", "/var/run/postgresql"),
+        "NVIDIA_API_KEY": os.getenv("NVIDIA_API_KEY", ""),
     }
 
 
@@ -50,10 +51,12 @@ def validate_config(config=None):
 
     errors = []
     missing = []
-    for key, label in [('DB_HOST', 'DB_HOST'),
-                       ('DB_USER', 'DB_USER'),
-                       ('DB_PASSWORD', 'DB_PASSWORD'),
-                       ('DB_NAME', 'DB_NAME')]:
+    for key, label in [
+        ("DB_HOST", "DB_HOST"),
+        ("DB_USER", "DB_USER"),
+        ("DB_PASSWORD", "DB_PASSWORD"),
+        ("DB_NAME", "DB_NAME"),
+    ]:
         if not config.get(key):
             missing.append(label)
 
@@ -63,10 +66,9 @@ def validate_config(config=None):
             f"configurados en .env o variables de entorno."
         )
 
-    if not config.get('NVIDIA_API_KEY'):
+    if not config.get("NVIDIA_API_KEY"):
         errors.append(
-            "NVIDIA_API_KEY no está configurada. Embeddings fallarán. "
-            "Configúrala en .env: NVIDIA_API_KEY=tu_key"
+            "NVIDIA_API_KEY no está configurada. Embeddings fallarán. Configúrala en .env: NVIDIA_API_KEY=tu_key"
         )
 
     return errors
@@ -78,19 +80,20 @@ def init_pool(minconn=1, maxconn=10):
         with _pool_lock:
             if _pool is None:
                 import psycopg2.pool
+
                 config = load_config()
                 errs = validate_config(config)
                 if errs:
                     raise RuntimeError(
-                        "No se puede inicializar el pool de conexiones:\n" +
-                        "\n".join(f"  - {e}" for e in errs)
+                        "No se puede inicializar el pool de conexiones:\n" + "\n".join(f"  - {e}" for e in errs)
                     )
                 _pool = psycopg2.pool.ThreadedConnectionPool(
-                    minconn, maxconn,
-                    host=config['DB_HOST'],
-                    user=config['DB_USER'],
-                    dbname=config['DB_NAME'],
-                    password=config['DB_PASSWORD'],
+                    minconn,
+                    maxconn,
+                    host=config["DB_HOST"],
+                    user=config["DB_USER"],
+                    dbname=config["DB_NAME"],
+                    password=config["DB_PASSWORD"],
                 )
 
 
@@ -103,8 +106,8 @@ def close_pool():
 
 class _PooledConnection:
     def __init__(self, conn, pool):
-        object.__setattr__(self, '_conn', conn)
-        object.__setattr__(self, '_pool', pool)
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_pool", pool)
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
@@ -113,8 +116,8 @@ class _PooledConnection:
         setattr(self._conn, name, value)
 
     def close(self):
-        pool = object.__getattribute__(self, '_pool')
-        conn = object.__getattribute__(self, '_conn')
+        pool = object.__getattribute__(self, "_pool")
+        conn = object.__getattribute__(self, "_conn")
         if pool is not None:
             pool.putconn(conn)
         else:
@@ -130,23 +133,41 @@ def get_conn(config=None):
         raw_conn = _pool.getconn()
     else:
         import psycopg2
+
         errs = validate_config(config)
         if errs:
-            raise RuntimeError(
-                "No se puede conectar a PostgreSQL:\n" +
-                "\n".join(f"  - {e}" for e in errs)
-            )
+            raise RuntimeError("No se puede conectar a PostgreSQL:\n" + "\n".join(f"  - {e}" for e in errs))
         raw_conn = psycopg2.connect(
-            host=config['DB_HOST'],
-            user=config['DB_USER'],
-            dbname=config['DB_NAME'],
-            password=config['DB_PASSWORD'],
+            host=config["DB_HOST"],
+            user=config["DB_USER"],
+            dbname=config["DB_NAME"],
+            password=config["DB_PASSWORD"],
         )
 
     from pgvector.psycopg2 import register_vector
+
     register_vector(raw_conn)
 
     return _PooledConnection(raw_conn, _pool)
+
+
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+
+def _is_retryable_openai_error(exc):
+    """Return True for transient OpenAI errors that should be retried."""
+    import openai
+
+    return isinstance(
+        exc,
+        (
+            openai.RateLimitError,
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+            openai.APIStatusError,
+        ),
+    ) and not isinstance(exc, (openai.AuthenticationError, openai.BadRequestError))
 
 
 def get_embedding(text, dims=1024, api_key=None):
@@ -155,7 +176,29 @@ def get_embedding(text, dims=1024, api_key=None):
     if not api_key:
         logger.warning("NVIDIA_API_KEY no configurada — no se puede generar embedding")
         return None
-    try:
+
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=1, max=30),
+        retry=retry_if_exception_type(
+            (
+                openai.RateLimitError,
+                openai.APITimeoutError,
+                openai.APIConnectionError,
+                openai.InternalServerError,
+                openai.APIStatusError,
+            )
+        ),
+        reraise=False,
+        before_sleep=lambda retry_state: logger.warning(
+            "Embedding retry %d/%d tras %.1fs: %s",
+            retry_state.attempt_number,
+            5,
+            retry_state.outcome_timestamp - retry_state.start_time if retry_state.outcome_timestamp else 0,
+            retry_state.outcome.exception() if retry_state.outcome else "unknown",
+        ),
+    )
+    def _do():
         client = OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
             api_key=api_key,
@@ -167,5 +210,15 @@ def get_embedding(text, dims=1024, api_key=None):
             extra_body={"input_type": "query"},
         )
         return resp.data[0].embedding
-    except Exception:
+
+    try:
+        return _do()
+    except openai.AuthenticationError:
+        logger.warning("NVIDIA_API_KEY inválida o expirada — embedding falló")
+        return None
+    except openai.BadRequestError as e:
+        logger.warning("Bad request a API NVIDIA: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("Embedding falló tras 5 intentos: %s", e)
         return None

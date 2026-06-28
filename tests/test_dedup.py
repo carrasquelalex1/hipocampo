@@ -1,7 +1,10 @@
 import pytest
-import sys, os, math, json
+import sys
+import os
+import math
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+
 
 # Pure logic extracted from hipocampo_dedup.py for unit testing
 def cosine_sim(a, b):

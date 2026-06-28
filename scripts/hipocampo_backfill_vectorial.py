@@ -7,14 +7,19 @@ Usa NVIDIA API (nvidia/nv-embedqa-e5-v5, 1024d).
 Uso:
     python3 scripts/hipocampo_backfill_vectorial.py
 """
-import os, time, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+import os
+import time
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, get_embedding, load_config
 
 load_config()
 
 BATCH_SIZE = 5
 DELAY_BETWEEN_BATCHES = 5.0
+
 
 def get_embedding_1024(text, retries=3):
     for attempt in range(retries):
@@ -24,7 +29,7 @@ def get_embedding_1024(text, retries=3):
                 return emb
         except Exception as e:
             err_str = str(e)
-            if '429' in err_str or 'RATE_LIMIT' in err_str:
+            if "429" in err_str or "RATE_LIMIT" in err_str:
                 wait = 10 * (attempt + 1)
                 print(f"  Rate limit, esperando {wait}s...")
                 time.sleep(wait)
@@ -32,6 +37,7 @@ def get_embedding_1024(text, retries=3):
             print(f"  Error: {e}")
             return None
     return None
+
 
 def main():
     conn = get_conn()
@@ -48,12 +54,14 @@ def main():
 
     if total == 0:
         print("TODO unificado — 0 registros por procesar")
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         return
 
-    processed = 0; errors = 0
+    processed = 0
+    errors = 0
     for i in range(0, total, BATCH_SIZE):
-        batch = rows[i:i + BATCH_SIZE]
+        batch = rows[i : i + BATCH_SIZE]
         batch_num = i // BATCH_SIZE + 1
         total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
         print(f"\nLote {batch_num}/{total_batches}")
@@ -64,10 +72,7 @@ def main():
                 errors += 1
                 print(f"  X {item_id}: error")
                 continue
-            cur.execute(
-                "UPDATE memoria_vectorial SET embedding = %s::vector(1024) WHERE id = %s",
-                (emb, item_id)
-            )
+            cur.execute("UPDATE memoria_vectorial SET embedding = %s::vector(1024) WHERE id = %s", (emb, item_id))
             processed += 1
             print(f"  OK {item_id}: {contenido[:60]}...")
 
@@ -87,7 +92,15 @@ def main():
     if errors > 0:
         print("Re-ejecutar el script para los registros faltantes.")
 
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
+
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Backfill: genera embeddings vectoriales faltantes en memoria_vectorial"
+    )
+    parser.parse_args()
     main()

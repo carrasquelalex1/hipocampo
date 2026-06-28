@@ -58,7 +58,7 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001
 
 Once connected, your AI agent gains access to the following tools:
 
-1. **`search_hipocampo`**: 
+1. **`search_hipocampo`**:
    * **Purpose**: Performs a hybrid semantic/lexical search across both the technical and profile memory layers.
    * **Parameters**: `query` (string)
 

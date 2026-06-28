@@ -18,21 +18,24 @@ Arquitectura de escalas temporales:
 Uso:
     python3 scripts/hipocampo_checkpoint.py [--dry-run] [--force]
 """
-import os, json, sys, re, time
+
+import os
+import json
+import sys
 from datetime import datetime, timedelta
 from pgvector.psycopg2 import register_vector
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, load_config
 
 load_config()
 
 ESCALAS = [
-    ('24h', timedelta(hours=24)),
-    ('7d', timedelta(days=7)),
-    ('30d', timedelta(days=30)),
-    ('90d', timedelta(days=90)),
-    ('all', None),
+    ("24h", timedelta(hours=24)),
+    ("7d", timedelta(days=7)),
+    ("30d", timedelta(days=30)),
+    ("90d", timedelta(days=90)),
+    ("all", None),
 ]
 
 
@@ -52,21 +55,21 @@ def obtener_edades(cur):
 
     for row in rows:
         meta = json.loads(row[2])
-        fecha_str = meta.get('fecha')
+        fecha_str = meta.get("fecha")
         if fecha_str:
             try:
                 fecha = datetime.fromisoformat(fecha_str)
                 edad = ahora - fecha
                 if edad < timedelta(hours=24):
-                    escalas['24h'].append(row)
+                    escalas["24h"].append(row)
                 elif edad < timedelta(days=7):
-                    escalas['7d'].append(row)
+                    escalas["7d"].append(row)
                 elif edad < timedelta(days=30):
-                    escalas['30d'].append(row)
+                    escalas["30d"].append(row)
                 elif edad < timedelta(days=90):
-                    escalas['90d'].append(row)
+                    escalas["90d"].append(row)
                 else:
-                    escalas['all'].append(row)
+                    escalas["all"].append(row)
             except (ValueError, TypeError):
                 sin_fecha.append(row)
         else:
@@ -80,7 +83,7 @@ def agrupar_por_proyecto(entries):
     grupos = {}
     for row in entries:
         meta = json.loads(row[2])
-        proyecto = meta.get('proyecto', meta.get('path', 'general'))
+        proyecto = meta.get("proyecto", meta.get("path", "general"))
         if proyecto not in grupos:
             grupos[proyecto] = []
         grupos[proyecto].append(row)
@@ -99,19 +102,19 @@ def generar_resumen(grupo, max_chars=300):
 
     resumen = " | ".join(titulos)
     if len(resumen) > max_chars:
-        resumen = resumen[:max_chars-3] + "..."
+        resumen = resumen[: max_chars - 3] + "..."
 
     tags = set()
     for row in grupo:
         meta = json.loads(row[2])
-        ts = meta.get('tags', [])
+        ts = meta.get("tags", [])
         if isinstance(ts, list):
             tags.update(t.strip().lower() for t in ts if isinstance(t, str))
 
     return {
-        'resumen': resumen,
-        'total_items': len(grupo),
-        'tags': sorted(tags),
+        "resumen": resumen,
+        "total_items": len(grupo),
+        "tags": sorted(tags),
     }
 
 
@@ -127,16 +130,16 @@ def generar_checkpoints(escalas, sin_fecha, dry_run=False):
         grupos = agrupar_por_proyecto(entries)
 
         # Definir compresión por escala
-        if escala_nombre == '24h':
+        if escala_nombre == "24h":
             max_items = None
             max_chars = 500
-        elif escala_nombre == '7d':
+        elif escala_nombre == "7d":
             max_items = 3
             max_chars = 300
-        elif escala_nombre == '30d':
+        elif escala_nombre == "30d":
             max_items = 2
             max_chars = 200
-        elif escala_nombre == '90d':
+        elif escala_nombre == "90d":
             max_items = 1
             max_chars = 150
         else:
@@ -151,63 +154,71 @@ def generar_checkpoints(escalas, sin_fecha, dry_run=False):
             if max_items is not None and len(grupo) > max_items:
                 r = generar_resumen(grupo, max_chars)
                 if r:
-                    resumenes.append({
-                        'proyecto': proyecto,
-                        **r,
-                        'comprimido': True,
-                        'original_count': len(grupo),
-                    })
+                    resumenes.append(
+                        {
+                            "proyecto": proyecto,
+                            **r,
+                            "comprimido": True,
+                            "original_count": len(grupo),
+                        }
+                    )
             else:
                 for row in grupo:
                     meta = json.loads(row[2])
-                    resumenes.append({
-                        'proyecto': proyecto,
-                        'resumen': row[1][:max_chars],
-                        'total_items': 1,
-                        'tags': meta.get('tags', []),
-                        'comprimido': False,
-                        'original_count': 1,
-                    })
+                    resumenes.append(
+                        {
+                            "proyecto": proyecto,
+                            "resumen": row[1][:max_chars],
+                            "total_items": 1,
+                            "tags": meta.get("tags", []),
+                            "comprimido": False,
+                            "original_count": 1,
+                        }
+                    )
 
-        reportes.append({
-            'escala': escala_nombre,
-            'total_items': total_items,
-            'total_grupos': total_grupos,
-            'items_comprimidos': sum(1 for r in resumenes if r['comprimido']),
-            'items_detalle': sum(1 for r in resumenes if not r['comprimido']),
-            'resumenes': resumenes,
-        })
+        reportes.append(
+            {
+                "escala": escala_nombre,
+                "total_items": total_items,
+                "total_grupos": total_grupos,
+                "items_comprimidos": sum(1 for r in resumenes if r["comprimido"]),
+                "items_detalle": sum(1 for r in resumenes if not r["comprimido"]),
+                "resumenes": resumenes,
+            }
+        )
 
     return reportes
 
 
 def formatear_reporte(reportes, sin_fecha, dry_run):
     lines = [
-        f"\n{'='*60}",
-        f"Checkpoint v1.0 — Decaimiento Logarítmico",
+        f"\n{'=' * 60}",
+        "Checkpoint v1.0 — Decaimiento Logarítmico",
         f"  Modo: {'DRY-RUN' if dry_run else 'ACTIVO'}",
-        f"{'='*60}",
+        f"{'=' * 60}",
     ]
 
     total_comprimidos = 0
     total_detalle = 0
 
     for r in reportes:
-        comp = r['items_comprimidos']
-        det = r['items_detalle']
+        comp = r["items_comprimidos"]
+        det = r["items_detalle"]
         total_comprimidos += comp
         total_detalle += det
 
-        lines.append(f"\n Escala: {r['escala']:5s} | {r['total_items']:4d} items | {r['total_grupos']:3d} grupos | {comp:3d} comprimidos | {det:3d} detalle")
+        lines.append(
+            f"\n Escala: {r['escala']:5s} | {r['total_items']:4d} items | {r['total_grupos']:3d} grupos | {comp:3d} comprimidos | {det:3d} detalle"
+        )
 
-        if r['escala'] == '24h' and r['resumenes']:
+        if r["escala"] == "24h" and r["resumenes"]:
             lines.append("  Recientes (<24h) — sin compresión:")
-            for s in r['resumenes'][:3]:
+            for s in r["resumenes"][:3]:
                 lines.append(f"    [{s['proyecto']}] {s['resumen'][:80]}")
 
-        if r['escala'] in ('7d', '30d', '90d', 'all'):
-            for s in sorted(r['resumenes'], key=lambda x: x['original_count'], reverse=True)[:5]:
-                if s['comprimido']:
+        if r["escala"] in ("7d", "30d", "90d", "all"):
+            for s in sorted(r["resumenes"], key=lambda x: x["original_count"], reverse=True)[:5]:
+                if s["comprimido"]:
                     lines.append(f"    [{s['proyecto']}] COMPRIMIDO: {s['original_count']} items → {s['resumen'][:80]}")
                 else:
                     lines.append(f"    [{s['proyecto']}] detalle: {s['resumen'][:80]}")
@@ -215,12 +226,12 @@ def formatear_reporte(reportes, sin_fecha, dry_run):
     if sin_fecha:
         lines.append(f"\n  Sin fecha: {len(sin_fecha)} items (no clasificables)")
 
-    lines.append(f"\n{'='*60}")
+    lines.append(f"\n{'=' * 60}")
     lines.append(f"Total: {sum(r['total_items'] for r in reportes)} items")
     lines.append(f"Comprimidos: {total_comprimidos} grupos | Detalle: {total_detalle} items")
-    lines.append(f"{'='*60}")
+    lines.append(f"{'=' * 60}")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def run_checkpoint(dry_run: bool = True):
@@ -235,22 +246,26 @@ def run_checkpoint(dry_run: bool = True):
 
     if not dry_run:
         for r in reportes:
-            comprimidos = [s for s in r['resumenes'] if s['comprimido']]
+            comprimidos = [s for s in r["resumenes"] if s["comprimido"]]
             for s in comprimidos:
-                resumen = s['resumen']
-                tags = s['tags']
+                resumen = s["resumen"]
+                tags = s["tags"]
                 try:
                     cur.execute(
                         "INSERT INTO memoria_vectorial (contenido, metadatos) VALUES (%s, %s)",
-                        (f"[CHECKPOINT {r['escala']}] {resumen}",
-                         json.dumps({
-                             'tipo': 'checkpoint',
-                             'escala': r['escala'],
-                             'fecha': datetime.now().isoformat(),
-                             'proyecto': s['proyecto'],
-                             'tags': tags + ['checkpoint'],
-                             'items_originales': s['original_count'],
-                         }))
+                        (
+                            f"[CHECKPOINT {r['escala']}] {resumen}",
+                            json.dumps(
+                                {
+                                    "tipo": "checkpoint",
+                                    "escala": r["escala"],
+                                    "fecha": datetime.now().isoformat(),
+                                    "proyecto": s["proyecto"],
+                                    "tags": tags + ["checkpoint"],
+                                    "items_originales": s["original_count"],
+                                }
+                            ),
+                        ),
                     )
                 except Exception as e:
                     print(f"  Error guardando checkpoint: {e}")
@@ -269,44 +284,13 @@ def run_checkpoint(dry_run: bool = True):
 
 
 def main():
-    dry_run = '--dry-run' in sys.argv
-    force = '--force' in sys.argv
-    run_checkpoint(dry_run=dry_run or not force)
+    import argparse
 
-    escalas, sin_fecha = obtener_edades(cur)
-    reportes = generar_checkpoints(escalas, sin_fecha, dry_run=dry_run)
-
-    output = formatear_reporte(reportes, sin_fecha, dry_run)
-
-    if not dry_run and force:
-        for r in reportes:
-            comprimidos = [s for s in r['resumenes'] if s['comprimido']]
-            for s in comprimidos:
-                resumen = s['resumen']
-                tags = s['tags']
-                try:
-                    cur.execute(
-                        "INSERT INTO memoria_vectorial (contenido, metadatos) VALUES (%s, %s)",
-                        (f"[CHECKPOINT {r['escala']}] {resumen}",
-                         json.dumps({
-                             'tipo': 'checkpoint',
-                             'escala': r['escala'],
-                             'fecha': datetime.now().isoformat(),
-                             'proyecto': s['proyecto'],
-                             'tags': tags + ['checkpoint'],
-                             'items_originales': s['original_count'],
-                         }))
-                    )
-                except Exception as e:
-                    print(f"  Error guardando checkpoint: {e}")
-        if comprimidos and force:
-            conn.commit()
-            print(f"  {len(comprimidos)} checkpoints guardados en memoria_vectorial")
-    elif not dry_run and not force:
-        output += "\n\nUsa --force para guardar los checkpoints en memoria_vectorial."
-
-    print(output)
-    cur.close(); conn.close()
+    parser = argparse.ArgumentParser(description="Checkpointing logarítmico — comprime memorias antiguas")
+    parser.add_argument("--dry-run", action="store_true", help="Solo mostrar qué se comprimiría (default)")
+    parser.add_argument("--force", action="store_true", help="Ejecutar compresión y guardar checkpoints")
+    args = parser.parse_args()
+    run_checkpoint(dry_run=not args.force or args.dry_run)
 
 
 if __name__ == "__main__":

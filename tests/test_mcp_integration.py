@@ -16,6 +16,7 @@ Run only schema tests (skips DB-dependent):
 Run only live tests:
     pytest tests/test_mcp_integration.py -m integration
 """
+
 import asyncio
 import os
 import sys
@@ -78,6 +79,7 @@ TOOLS_WITH_REQUIRED = {
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
 
+
 def _get_server_module():
     """Import and return the MCP server module."""
     orig_path = list(sys.path)
@@ -85,6 +87,7 @@ def _get_server_module():
     sys.path.insert(0, os.path.dirname(SERVER_DIR))
     try:
         import hipocampo_mcp_server as mod
+
         return mod
     finally:
         sys.path = orig_path
@@ -132,9 +135,7 @@ def test_session_id_parameter():
     for name in TOOLS_WITH_SESSION_ID:
         t = tools[name]
         props = t.parameters.get("properties", {})
-        assert "session_id" in props, (
-            f"{name} debería tener parámetro 'session_id', tiene: {list(props.keys())}"
-        )
+        assert "session_id" in props, f"{name} debería tener parámetro 'session_id', tiene: {list(props.keys())}"
 
 
 def test_required_parameters():
@@ -144,9 +145,7 @@ def test_required_parameters():
         t = tools[name]
         required = t.parameters.get("required", [])
         for param in expected_required:
-            assert param in required, (
-                f"{name} debería requerir '{param}', required={required}"
-            )
+            assert param in required, f"{name} debería requerir '{param}', required={required}"
 
 
 def test_resource_info():
@@ -179,6 +178,7 @@ skip_no_db = pytest.mark.skipif(
 def test_server_stdio_hipocampo_info():
     """Start the server via subprocess (stdio) and read the info resource."""
     import subprocess
+
     proc = subprocess.Popen(
         [sys.executable, os.path.join(SERVER_DIR, "hipocampo_mcp_server.py")],
         stdin=subprocess.PIPE,
@@ -186,12 +186,14 @@ def test_server_stdio_hipocampo_info():
         stderr=subprocess.PIPE,
         text=True,
     )
-    request = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "resources/list",
-        "params": {},
-    })
+    request = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "resources/list",
+            "params": {},
+        }
+    )
     out, err = proc.communicate(input=request + "\n", timeout=10)
     proc.terminate()
     assert "Hipocampo Protocol" in out
@@ -202,6 +204,7 @@ def test_server_stdio_hipocampo_info():
 def test_server_stdio_tools_list():
     """Start the server via subprocess (stdio) and list tools."""
     import subprocess
+
     proc = subprocess.Popen(
         [sys.executable, os.path.join(SERVER_DIR, "hipocampo_mcp_server.py")],
         stdin=subprocess.PIPE,
@@ -209,12 +212,14 @@ def test_server_stdio_tools_list():
         stderr=subprocess.PIPE,
         text=True,
     )
-    request = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "tools/list",
-        "params": {},
-    })
+    request = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {},
+        }
+    )
     out, err = proc.communicate(input=request + "\n", timeout=10)
     proc.terminate()
     data = json.loads(out)
@@ -222,8 +227,7 @@ def test_server_stdio_tools_list():
     assert "tools" in data["result"]
     tool_names = {t["name"] for t in data["result"]["tools"]}
     assert tool_names == EXPECTED_TOOLS, (
-        f"Mismatch: extra={tool_names - EXPECTED_TOOLS}, "
-        f"missing={EXPECTED_TOOLS - tool_names}"
+        f"Mismatch: extra={tool_names - EXPECTED_TOOLS}, missing={EXPECTED_TOOLS - tool_names}"
     )
 
 
@@ -232,6 +236,7 @@ def test_server_stdio_tools_list():
 def test_server_stdio_search():
     """Start the server and call search_hipocampo."""
     import subprocess
+
     proc = subprocess.Popen(
         [sys.executable, os.path.join(SERVER_DIR, "hipocampo_mcp_server.py")],
         stdin=subprocess.PIPE,
@@ -239,15 +244,17 @@ def test_server_stdio_search():
         stderr=subprocess.PIPE,
         text=True,
     )
-    request = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "tools/call",
-        "params": {
-            "name": "search_hipocampo",
-            "arguments": {"query": "test"},
-        },
-    })
+    request = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "search_hipocampo",
+                "arguments": {"query": "test"},
+            },
+        }
+    )
     out, err = proc.communicate(input=request + "\n", timeout=30)
     proc.terminate()
     data = json.loads(out)

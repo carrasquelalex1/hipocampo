@@ -10,7 +10,12 @@ Uso:
     python3 scripts/hipocampo_stats.py --analyze          # análisis + recomendaciones
     python3 scripts/hipocampo_stats.py --tune             # ajustar thresholds
 """
-import os, sys, json, time, subprocess, logging, statistics
+
+import os
+import sys
+import json
+import time
+import logging
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("hipocampo_stats")
@@ -18,7 +23,7 @@ logger = logging.getLogger("hipocampo_stats")
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SCRIPTS_DIR, "hipocampo_hybrid_config.json")
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, load_config
 
 DEFAULT_THRESHOLDS = {
@@ -59,6 +64,7 @@ def ensure_stats_table():
 def record_query(query_text, latency_ms, results_count, method, top_score, avg_score):
     """Registra una métrica de query en la tabla query_stats."""
     import hashlib
+
     query_hash = hashlib.sha256(query_text.encode()).hexdigest()[:12]
     conn = get_conn()
     cur = conn.cursor()
@@ -77,17 +83,19 @@ def get_stats(last_hours=24):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        f"""SELECT count(*), 
+        f"""SELECT count(*),
                   COALESCE(avg(latency_ms), 0) as avg_latency,
                   COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms), 0) as p50_latency,
                   COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) as p95_latency,
                   COALESCE(avg(results_count), 0) as avg_results,
                   COALESCE(avg(top_score), 0) as avg_top_score
-           FROM query_stats 
+           FROM query_stats
            WHERE created_at > NOW() - interval '{last_hours} hours'""",
     )
     row = cur.fetchone()
-    cur.execute(f"SELECT method, count(*) as cnt, avg(latency_ms) as avg_lat FROM query_stats WHERE created_at > NOW() - interval '{last_hours} hours' GROUP BY method ORDER BY cnt DESC")
+    cur.execute(
+        f"SELECT method, count(*) as cnt, avg(latency_ms) as avg_lat FROM query_stats WHERE created_at > NOW() - interval '{last_hours} hours' GROUP BY method ORDER BY cnt DESC"
+    )
     by_method = cur.fetchall()
     cur.close()
     conn.close()
@@ -120,12 +128,18 @@ def analyze():
 
     if stats["p95_latency_ms"] > 10000:
         issues.append(f"⚠️ Latencia P95 muy alta: {stats['p95_latency_ms']}ms (>10s)")
-        recommendations.append("Alta latencia detectada. Sugerir: reducir top-K en búsqueda vectorial, o verificar API NVIDIA.")
+        recommendations.append(
+            "Alta latencia detectada. Sugerir: reducir top-K en búsqueda vectorial, o verificar API NVIDIA."
+        )
     elif stats["p95_latency_ms"] > 5000:
-        recommendations.append(f"Latencia P95 de {stats['p95_latency_ms']}ms. Considerar reducir parámetro 'top_k' en SSC.")
+        recommendations.append(
+            f"Latencia P95 de {stats['p95_latency_ms']}ms. Considerar reducir parámetro 'top_k' en SSC."
+        )
 
     if stats["avg_top_score"] < 15:
-        recommendations.append("Score promedio bajo. Los resultados no son muy relevantes. Sugerir re-calibrar pesos híbridos con hipocampo_calibrate.py")
+        recommendations.append(
+            "Score promedio bajo. Los resultados no son muy relevantes. Sugerir re-calibrar pesos híbridos con hipocampo_calibrate.py"
+        )
 
     if stats["total_queries"] < 10:
         recommendations.append("Pocos datos registrados. Continuar usando el sistema para generar más métricas.")
@@ -152,11 +166,15 @@ def tune_thresholds():
 
     if stats["p95_latency_ms"] > 8000 and config.get("vectorial_confidence_min", 0.7) < 0.85:
         config["vectorial_confidence_min"] = min(0.85, config.get("vectorial_confidence_min", 0.7) + 0.05)
-        changes["vectorial_confidence_min"] = f"{old_config.get('vectorial_confidence_min', 0.7)} → {config['vectorial_confidence_min']}"
+        changes["vectorial_confidence_min"] = (
+            f"{old_config.get('vectorial_confidence_min', 0.7)} → {config['vectorial_confidence_min']}"
+        )
 
     if stats["p95_latency_ms"] < 2000 and config.get("vectorial_confidence_min", 0.7) > 0.5:
         config["vectorial_confidence_min"] = max(0.5, config.get("vectorial_confidence_min", 0.7) - 0.05)
-        changes["vectorial_confidence_min"] = f"{old_config.get('vectorial_confidence_min', 0.7)} → {config['vectorial_confidence_min']}"
+        changes["vectorial_confidence_min"] = (
+            f"{old_config.get('vectorial_confidence_min', 0.7)} → {config['vectorial_confidence_min']}"
+        )
 
     if stats["avg_top_score"] < 15 and stats["total_queries"] > 10:
         new_alpha = min(0.7, config.get("alpha", 0.6) + 0.05)
@@ -177,8 +195,12 @@ def format_result(data):
     if "stats" in data:
         s = data["stats"]
         lines.append(f"📊 {s.get('total_queries', 'N/A')} queries en 7 días")
-        lines.append(f"   Latencia: avg={s.get('avg_latency_ms', 'N/A')}ms  P50={s.get('p50_latency_ms', 'N/A')}ms  P95={s.get('p95_latency_ms', 'N/A')}ms")
-        lines.append(f"   Resultados promedio: {s.get('avg_results', 'N/A')}  Score avg: {s.get('avg_top_score', 'N/A')}")
+        lines.append(
+            f"   Latencia: avg={s.get('avg_latency_ms', 'N/A')}ms  P50={s.get('p50_latency_ms', 'N/A')}ms  P95={s.get('p95_latency_ms', 'N/A')}ms"
+        )
+        lines.append(
+            f"   Resultados promedio: {s.get('avg_results', 'N/A')}  Score avg: {s.get('avg_top_score', 'N/A')}"
+        )
         for m in s.get("by_method", []):
             lines.append(f"   Método '{m['method']}': {m['count']} queries, {m['avg_latency']}ms avg")
     if "recommendations" in data:
@@ -190,27 +212,46 @@ def format_result(data):
     if "changes" in data and data["changes"]:
         lines.append(f"   🔧 Ajustes aplicados: {data['changes']}")
     if "config" in data:
-        lines.append(f"   ⚙️ Config actual: α={data['config'].get('alpha', '?')} β={data['config'].get('beta', '?')} threshold_v={data['config'].get('vectorial_confidence_min', '?')}")
+        lines.append(
+            f"   ⚙️ Config actual: α={data['config'].get('alpha', '?')} β={data['config'].get('beta', '?')} threshold_v={data['config'].get('vectorial_confidence_min', '?')}"
+        )
     return "\n".join(lines)
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Estadísticas y ajuste dinámico del motor de búsqueda")
+    parser.add_argument("--analyze", action="store_true", help="Mostrar análisis de rendimiento")
+    parser.add_argument("--tune", action="store_true", help="Ajustar thresholds automáticamente")
+    parser.add_argument("--hours", type=int, default=168, help="Ventana de horas para estadísticas (default 168)")
+    parser.add_argument(
+        "--record",
+        nargs=6,
+        metavar=("QUERY", "LATENCY", "RESULTS", "METHOD", "TOP_SCORE", "AVG_SCORE"),
+        help="Registrar una query manualmente",
+    )
+    args = parser.parse_args()
+
     load_config()
     ensure_stats_table()
 
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--record" and len(sys.argv) >= 7:
-            record_query(sys.argv[2], float(sys.argv[3]), int(sys.argv[4]), sys.argv[5], float(sys.argv[6]), float(sys.argv[7]))
-            print("✅ Recorded")
-        elif sys.argv[1] == "--analyze":
-            result = analyze()
-            print(format_result(result))
-        elif sys.argv[1] == "--tune":
-            result = tune_thresholds()
-            print(format_result(result))
-        else:
-            stats = get_stats(168)
-            print(format_result({"stats": stats}))
+    if args.record:
+        record_query(
+            args.record[0],
+            float(args.record[1]),
+            int(args.record[2]),
+            args.record[3],
+            float(args.record[4]),
+            float(args.record[5]),
+        )
+        print("✅ Recorded")
+    elif args.analyze:
+        result = analyze()
+        print(format_result(result))
+    elif args.tune:
+        result = tune_thresholds()
+        print(format_result(result))
     else:
-        stats = get_stats(168)
+        stats = get_stats(args.hours)
         print(format_result({"stats": stats}))

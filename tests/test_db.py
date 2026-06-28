@@ -1,6 +1,5 @@
 """Tests for hipocampo/db.py — config validation and helpers."""
-import os
-import pytest
+
 from hipocampo.db import validate_config
 
 

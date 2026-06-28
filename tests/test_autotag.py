@@ -1,5 +1,5 @@
-import pytest
-import sys, os
+import sys
+import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
@@ -75,6 +75,7 @@ class TestAutoTag:
 
     def test_todas_las_reglas_tienen_pattern_valido(self):
         import re
+
         for pattern, _ in TAG_RULES:
             assert re.compile(pattern), f"Patrón inválido: {pattern}"
 
@@ -122,6 +123,7 @@ class TestAutoCategorize:
 
     def test_todas_las_reglas_tienen_pattern_valido(self):
         import re
+
         for pattern, _ in CATEGORY_RULES:
             assert re.compile(pattern), f"Patrón inválido: {pattern}"
 

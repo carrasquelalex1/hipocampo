@@ -47,7 +47,7 @@ URL: https://alexbell1-hipocampo-mcp.hf.space/mcp
 
 ---
 
-**Hipocampo** is an advanced dual-memory persistence architecture designed for autonomous AI agents. By maintaining both technical knowledge and user profiling data across sessions, Hipocampo provides a reliable, stateful context that enables agents to learn, adapt, and scale efficiently. 
+**Hipocampo** is an advanced dual-memory persistence architecture designed for autonomous AI agents. By maintaining both technical knowledge and user profiling data across sessions, Hipocampo provides a reliable, stateful context that enables agents to learn, adapt, and scale efficiently.
 
 Built on top of **PostgreSQL 17** with `pgvector`, it features **BIRE v3.7** — a hybrid retrieval engine combining semantic embeddings (1024d), lexical expansion, and GIN trigram search with dynamic score fusion. Also includes **Sparse Selective Caching (SSC)** as an experimental pipeline.
 
@@ -220,7 +220,7 @@ An **SSC (Sparse Selective Caching)** pipeline is also available as an experimen
 
 ## 🔌 MCP Server Integration
 
-Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to autonomously read and write memories. 
+Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to autonomously read and write memories.
 
 ### Available MCP Tools
 
@@ -644,4 +644,3 @@ Si este proyecto te es útil, considera apoyarlo:
 - **PayPal:** [paypal.me/carrasquealex](https://paypal.me/carrasquealex)
 - **USDT (TRC-20):** (próximamente)
 - Cada aporte ayuda a mantener vivo el proyecto 🧠✨
-

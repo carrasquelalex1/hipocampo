@@ -8,8 +8,12 @@ mismo modelo (nvidia/nv-embedqa-e5-v5) y dimensionalidad (1024d).
 Uso:
     python3 hipocampo_backfill_embeddings.py
 """
-import os, sys, time
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, get_embedding, load_config
 
 load_config()
@@ -26,9 +30,9 @@ def get_embedding_1024(text, retries=3):
                 return emb
         except Exception as e:
             err_str = str(e)
-            if '429' in err_str or 'RATE_LIMIT' in err_str:
+            if "429" in err_str or "RATE_LIMIT" in err_str:
                 wait = 10 * (attempt + 1)
-                print(f"  ⏳ Rate limit, esperando {wait}s (intento {attempt+1}/{retries})...")
+                print(f"  ⏳ Rate limit, esperando {wait}s (intento {attempt + 1}/{retries})...")
                 time.sleep(wait)
                 continue
             print(f"  Error: {e}")
@@ -54,7 +58,7 @@ def main():
     processed = 0
     errors = 0
     for i in range(0, total, BATCH_SIZE):
-        batch = rows[i:i + BATCH_SIZE]
+        batch = rows[i : i + BATCH_SIZE]
         batch_num = i // BATCH_SIZE + 1
         total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
         print(f"\n🔨 Lote {batch_num}/{total_batches} ({len(batch)} registros)")
@@ -65,10 +69,7 @@ def main():
                 errors += 1
                 print(f"  ❌ {item_id}: error (pendiente para próxima ejecución)")
                 continue
-            cur.execute(
-                "UPDATE memory_items SET embedding = %s::vector(1024) WHERE id = %s",
-                (emb, item_id)
-            )
+            cur.execute("UPDATE memory_items SET embedding = %s::vector(1024) WHERE id = %s", (emb, item_id))
             processed += 1
             print(f"  ✅ {item_id}: {summary[:60]}...")
 
@@ -82,14 +83,20 @@ def main():
     cur.execute("SELECT COUNT(*) FROM memory_items")
     total_items = cur.fetchone()[0]
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"✅ Embeddings unificados: {ok}/{total_items} registros con embedding 1024d")
     print(f"⚠️  Errores en esta ejecución: {errors}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
     cur.close()
     conn.close()
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Backfill: genera embeddings faltantes en memoria_vectorial y memory_items"
+    )
+    parser.parse_args()
     main()

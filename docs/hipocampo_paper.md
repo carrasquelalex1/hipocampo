@@ -1,6 +1,6 @@
 # Hipocampo: Un Sistema de Memoria Dual con Búsqueda Integrada por Relevancia Expansiva (BIRE)
 
-**Autor:** Alexander Carrasquel 
+**Autor:** Alexander Carrasquel
 **Versión del documento:** 3.6  
 **Fecha:** 24 de mayo de 2026  
 **Contacto:** Sistema Hipocampo — hipocampo_db (PostgreSQL 17 + pgvector)

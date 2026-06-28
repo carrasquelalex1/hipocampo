@@ -10,12 +10,15 @@ Uso:
     python3 scripts/hipocampo_dedup.py --merge                  # fusiona duplicados
     python3 scripts/hipocampo_dedup.py --threshold 0.95          # umbral de similitud
 """
-import os, sys, json, time, logging
+
+import os
+import sys
+import logging
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("hipocampo_dedup")
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, load_config
 
 SIMILARITY_THRESHOLD = 0.92
@@ -64,15 +67,17 @@ def find_semantic_duplicates(table, text_col, threshold=SIMILARITY_THRESHOLD):
     conn.close()
 
     import ast
+
     candidates = []
     for row in rows:
         try:
             emb = ast.literal_eval(row[2]) if isinstance(row[2], str) else row[2]
             candidates.append({"id": row[0], "text": row[1], "embedding": emb})
-        except:
+        except Exception:
             pass
 
     import math
+
     def cosine_sim(a, b):
         dot = sum(x * y for x, y in zip(a, b))
         na = math.sqrt(sum(x * x for x in a))
@@ -206,14 +211,23 @@ def full_dedup_merge(threshold=SIMILARITY_THRESHOLD):
 
 
 if __name__ == "__main__":
-    threshold = SIMILARITY_THRESHOLD
-    if "--threshold" in sys.argv:
-        idx = sys.argv.index("--threshold")
-        threshold = float(sys.argv[idx + 1])
+    import argparse
 
-    if "--merge" in sys.argv:
-        result = full_dedup_merge(threshold)
-        total_removed = sum(v.get("removed", 0) for v in result["exact"].values()) + sum(v.get("removed", 0) for v in result["semantic"].values())
+    parser = argparse.ArgumentParser(description="Deduplicación de memorias — detecta y fusiona duplicados")
+    parser.add_argument("--merge", action="store_true", help="Fusionar duplicados (por defecto solo analiza)")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=SIMILARITY_THRESHOLD,
+        help=f"Umbral de similitud coseno (default {SIMILARITY_THRESHOLD})",
+    )
+    args = parser.parse_args()
+
+    if args.merge:
+        result = full_dedup_merge(args.threshold)
+        total_removed = sum(v.get("removed", 0) for v in result["exact"].values()) + sum(
+            v.get("removed", 0) for v in result["semantic"].values()
+        )
         print(f"🔧 Dedup merge completado: {total_removed} registros eliminados")
         for k, v in result.items():
             for t, r in v.items():
@@ -221,15 +235,19 @@ if __name__ == "__main__":
                     print(f"   {t} ({k}): {r['merged_groups']} grupos fusionados, {r['removed']} eliminados")
         print("   ✅ Proceso completado")
     else:
-        result = full_dedup_analysis(threshold)
+        result = full_dedup_analysis(args.threshold)
         for table, info in result.items():
             emoji = "⚠️" if info["total_recoverable"] > 0 else "✅"
             print(f"{emoji} {table}:")
-            print(f"   Duplicados exactos: {info['exact_duplicates']} grupos ({info['exact_redundant_rows']} registros redundantes)")
-            print(f"   Duplicados semánticos: {info['semantic_groups']} grupos ({info['semantic_redundant_rows']} registros redundantes)")
+            print(
+                f"   Duplicados exactos: {info['exact_duplicates']} grupos ({info['exact_redundant_rows']} registros redundantes)"
+            )
+            print(
+                f"   Duplicados semánticos: {info['semantic_groups']} grupos ({info['semantic_redundant_rows']} registros redundantes)"
+            )
             print(f"   Espacio recuperable: {info['total_recoverable']} registros")
             if info["exact_duplicates"] > 0:
                 print(f"   Ejemplo exactos: {info['exact_details'][:2]}")
             if info["semantic_groups"] > 0:
                 print(f"   Ejemplo semánticos: {info['semantic_details'][:2]}")
-        print(f"\n💡 Ejecuta con --merge para fusionar y limpiar")
+        print("\n💡 Ejecuta con --merge para fusionar y limpiar")
