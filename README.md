@@ -307,7 +307,7 @@ The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode
 **Integration Tests:**
 - 6 schema tests verify tool registration, annotations, parameters, and async signature — no database required, run in CI
 - 3 live integration tests (marked `@pytest.mark.integration`) start the server in stdio mode and verify tools/list, resources/list, and a real search call
-- 84 total tests, all passing
+- 102 total tests, all passing
 
 ---
 
@@ -326,7 +326,7 @@ If this project helps you, consider supporting its development:
 
 ## 🧪 Testing
 
-Hipocampo includes **84+ unit tests** covering all core logic and MCP integration:
+Hipocampo includes **102+ unit tests** covering all core logic and MCP integration:
 
 | Test file | What it covers |
 |-----------|---------------|
@@ -335,6 +335,8 @@ Hipocampo includes **84+ unit tests** covering all core logic and MCP integratio
 | `tests/test_dedup.py` | Cosine similarity (including 1024-dim vectors), exact and semantic duplicate detection logic |
 | `tests/test_checkpoint.py` | Age scale classification, project grouping, summary generation |
 | `tests/test_mcp_integration.py` | 6 schema tests (tool registration, annotations, params, async signature) + 3 live integration tests (stdio server) |
+| `tests/test_rate_limit.py` | Sliding-window rate limiter: acquire/release, prune, stats, default limiters |
+| `tests/test_db.py` | Config validation: missing DB_HOST, NVIDIA_API_KEY, comprehensive coverage |
 
 ```bash
 # Run all tests
@@ -573,7 +575,7 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 **Tests de Integración:**
 - 6 tests de schema verifican registro de herramientas, anotaciones, parámetros y firma async — sin BD, corren en CI
 - 3 tests de integración en vivo (marcados `@pytest.mark.integration`) arrancan el servidor en modo stdio y verifican tools/list, resources/list y una búsqueda real
-- 84 tests totales, todos pasando
+- 102 tests totales, todos pasando
 
 *Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
 
@@ -581,7 +583,7 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 
 ## 🧪 Tests
 
-Hipocampo incluye **84+ tests unitarios** cubriendo toda la lógica central e integración MCP:
+Hipocampo incluye **102+ tests unitarios** cubriendo toda la lógica central e integración MCP:
 
 | Archivo | Qué cubre |
 |---------|-----------|
@@ -590,6 +592,8 @@ Hipocampo incluye **84+ tests unitarios** cubriendo toda la lógica central e in
 | `tests/test_dedup.py` | Similitud coseno (vectores de 1024 dim), lógica de detección de duplicados exactos y semánticos |
 | `tests/test_checkpoint.py` | Clasificación por escalas de edad, agrupación por proyecto, generación de resúmenes |
 | `tests/test_mcp_integration.py` | 6 tests de schema (registro de tools, anotaciones, parámetros, firma async) + 3 tests de integración en vivo (servidor stdio) |
+| `tests/test_rate_limit.py` | Rate limiter sliding-window: acquire/release, prune, stats, limiters por defecto |
+| `tests/test_db.py` | Validación de config: DB_HOST faltante, NVIDIA_API_KEY faltante, cobertura completa |
 
 ```bash
 # Ejecutar todos los tests

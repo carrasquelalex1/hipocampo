@@ -2,32 +2,26 @@
 
 Replaces the duplicated boilerplate previously found in 11+ scripts.
 Usage:
-    from hipocampo.db import get_conn, get_embedding, load_config
+    from hipocampo.db import get_conn, get_embedding, load_config, validate_config
 """
 import os
 import sys
+import logging
 import threading
 from dotenv import load_dotenv
 from openai import OpenAI
 
+logger = logging.getLogger(__name__)
 
 _pool = None
 _pool_lock = threading.Lock()
 
 
 def _project_root():
-    """Return absolute path to the project root (one level above scripts/)."""
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def load_config(env_path=None):
-    """Load .env and return a dict with standard config keys.
-
-    Resolution order:
-      1. Explicit *env_path* argument
-      2. ``ENV_PATH`` environment variable
-      3. ``<project_root>/.env``
-    """
     if env_path is None:
         env_path = os.getenv('ENV_PATH')
     if env_path is None or not os.path.exists(env_path):
@@ -46,17 +40,51 @@ def load_config(env_path=None):
     }
 
 
-def init_pool(minconn=1, maxconn=10):
-    """Initialize a ``ThreadedConnectionPool`` singleton.
+def validate_config(config=None):
+    """Validate critical config values and return a list of error messages.
 
-    Safe to call multiple times — only the first call creates the pool.
+    Returns an empty list if everything is fine.
     """
+    if config is None:
+        config = load_config()
+
+    errors = []
+    missing = []
+    for key, label in [('DB_HOST', 'DB_HOST'),
+                       ('DB_USER', 'DB_USER'),
+                       ('DB_PASSWORD', 'DB_PASSWORD'),
+                       ('DB_NAME', 'DB_NAME')]:
+        if not config.get(key):
+            missing.append(label)
+
+    if missing:
+        errors.append(
+            f"PostgreSQL connection incomplete: {', '.join(missing)} no están "
+            f"configurados en .env o variables de entorno."
+        )
+
+    if not config.get('NVIDIA_API_KEY'):
+        errors.append(
+            "NVIDIA_API_KEY no está configurada. Embeddings fallarán. "
+            "Configúrala en .env: NVIDIA_API_KEY=tu_key"
+        )
+
+    return errors
+
+
+def init_pool(minconn=1, maxconn=10):
     global _pool
     if _pool is None:
         with _pool_lock:
             if _pool is None:
                 import psycopg2.pool
                 config = load_config()
+                errs = validate_config(config)
+                if errs:
+                    raise RuntimeError(
+                        "No se puede inicializar el pool de conexiones:\n" +
+                        "\n".join(f"  - {e}" for e in errs)
+                    )
                 _pool = psycopg2.pool.ThreadedConnectionPool(
                     minconn, maxconn,
                     host=config['DB_HOST'],
@@ -67,7 +95,6 @@ def init_pool(minconn=1, maxconn=10):
 
 
 def close_pool():
-    """Close all connections in the pool and reset the singleton."""
     global _pool
     if _pool is not None:
         _pool.closeall()
@@ -75,12 +102,6 @@ def close_pool():
 
 
 class _PooledConnection:
-    """Thin proxy over ``psycopg2.extensions.connection``.
-
-    Delegates every attribute except ``close()`` to the raw connection.
-    ``close()`` returns the connection to the pool instead of closing it.
-    """
-
     def __init__(self, conn, pool):
         object.__setattr__(self, '_conn', conn)
         object.__setattr__(self, '_pool', pool)
@@ -101,14 +122,6 @@ class _PooledConnection:
 
 
 def get_conn(config=None):
-    """Return a ``psycopg2`` connection, optionally from the pool.
-
-    If :func:`init_pool` has been called the connection is drawn from the
-    pool and ``.close()`` returns it to the pool.  Otherwise a fresh
-    connection is created (existing callers are unaffected).
-
-    *config* defaults to :func:`load_config`.
-    """
     if config is None:
         config = load_config()
 
@@ -117,6 +130,12 @@ def get_conn(config=None):
         raw_conn = _pool.getconn()
     else:
         import psycopg2
+        errs = validate_config(config)
+        if errs:
+            raise RuntimeError(
+                "No se puede conectar a PostgreSQL:\n" +
+                "\n".join(f"  - {e}" for e in errs)
+            )
         raw_conn = psycopg2.connect(
             host=config['DB_HOST'],
             user=config['DB_USER'],
@@ -131,12 +150,11 @@ def get_conn(config=None):
 
 
 def get_embedding(text, dims=1024, api_key=None):
-    """Generate a 1024-dim embedding via NVIDIA API.
-
-    Returns ``None`` on failure (API error, network issue, …).
-    """
     if api_key is None:
         api_key = os.getenv("NVIDIA_API_KEY")
+    if not api_key:
+        logger.warning("NVIDIA_API_KEY no configurada — no se puede generar embedding")
+        return None
     try:
         client = OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",

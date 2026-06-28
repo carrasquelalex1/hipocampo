@@ -43,7 +43,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, os.path.dirname(BASE_DIR))  # project root for hipocampo package
 
-from hipocampo.db import get_conn, get_embedding, load_config, init_pool
+import psycopg2
+
+from hipocampo.db import get_conn, get_embedding, load_config, init_pool, validate_config
+from hipocampo.rate_limit import embedding_limiter, tool_limiter, watch_limiter
 
 import hipocampo_search as _search
 import hipocampo_health as _health
@@ -72,8 +75,10 @@ def _init_watches_table():
         conn.commit()
         cur.close()
         conn.close()
+    except psycopg2.Error as e:
+        logger.warning("DB error al inicializar tabla watches: %s", e)
     except Exception as e:
-        logger.warning("No se pudo inicializar tabla watches: %s", e)
+        logger.warning("Error inesperado al inicializar tabla watches: %s", e)
 
 def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
     try:
@@ -97,12 +102,16 @@ def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
                     cur.execute("UPDATE watches SET last_triggered_at = NOW() WHERE id = %s", (wid,))
                     conn.commit()
                     logger.info("Webhook %d disparado -> %s", wid, url)
+                except urllib.error.URLError as e:
+                    logger.warning("Webhook %d falló (red) (%s): %s", wid, url, e)
                 except Exception as e:
-                    logger.warning("Webhook %d falló (%s): %s", wid, url, e)
+                    logger.warning("Webhook %d falló (inesperado) (%s): %s", wid, url, e)
         cur.close()
         conn.close()
+    except psycopg2.Error as e:
+        logger.warning("DB error en webhooks: %s", e)
     except Exception as e:
-        logger.warning("Error en webhooks: %s", e)
+        logger.warning("Error inesperado en webhooks: %s", e)
 
 # ─── INICIALIZACIÓN MCP ─────────────────────────────────────────────────────
 mcp = FastMCP("hipocampo")
@@ -141,6 +150,11 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
     """
     import time
     t0 = time.time()
+
+    rate_err = _check_rate(tool_limiter, "search_hipocampo")
+    if rate_err:
+        return rate_err
+
     try:
         output = await asyncio.to_thread(_search.search, query, session_id)
 
@@ -175,9 +189,10 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
 
         return output
 
+    except (psycopg2.Error, ValueError, TypeError) as e:
+        return _tool_err("search_hipocampo", e)
     except Exception as e:
-        logger.error("Hipocampo search error: %s", e)
-        return f"❌ Error en búsqueda Hipocampo:\n{e}"
+        return _tool_err("search_hipocampo", e)
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -220,15 +235,65 @@ def hipocampo_info() -> str:
 
 # ─── EMBEDDING HELPER ────────────────────────────────────────────────────────
 
-def _generar_embedding(texto: str) -> list[float]:
+def _generar_embedding(texto: str, tool_name: str = "unknown") -> list[float]:
+    rate_err = _check_rate(embedding_limiter, tool_name)
+    if rate_err:
+        raise RuntimeError(rate_err)
     emb = get_embedding(texto)
     if emb is None:
-        raise RuntimeError("No se pudo generar embedding")
+        raise RuntimeError("No se pudo generar embedding (¿NVIDIA_API_KEY configurada?)")
     return emb
 
 
 def _conn():
     return get_conn()
+
+
+_RATE_LIMIT_TOOL_RESPONSE = (
+    "⏳ Demasiadas solicitudes. Límite: {max} por {window}s. "
+    "Espera {wait:.0f}s o reduce la frecuencia de llamadas."
+)
+
+
+def _check_rate(limiter, tool_name: str) -> str | None:
+    """Check a rate limiter and return an error message if exceeded."""
+    if not limiter.acquire():
+        wait = limiter.wait_time()
+        logger.warning("Rate limit excedido en %s: %s activas de %s, espera %.0fs",
+                       tool_name, limiter.stats["active"], limiter.max_calls, wait)
+        return _RATE_LIMIT_TOOL_RESPONSE.format(
+            max=limiter.max_calls, window=limiter.window_seconds, wait=wait,
+        )
+    return None
+
+
+_TOOL_ERR_PREFIX = {
+    "psycopg2.Error": "❌ Error de base de datos",
+    "ValueError": "❌ Error de validación",
+    "TypeError": "❌ Error de tipo",
+    "KeyError": "❌ Error de clave faltante",
+    "default": "❌ Error inesperado",
+}
+
+
+def _tool_err(tool_name: str, exc: Exception) -> str:
+    """Build a user-facing error message with differentiated logging.
+
+    Logs at ``exception`` level for unexpected errors (full traceback),
+    ``warning`` for expected domain errors, and returns a string
+    safe to return to the MCP client.
+    """
+    exc_type = type(exc).__name__
+    prefix = _TOOL_ERR_PREFIX.get(exc_type, _TOOL_ERR_PREFIX["default"])
+
+    if isinstance(exc, (psycopg2.Error,)):
+        logger.exception("DB error en %s", tool_name)
+    elif isinstance(exc, (ValueError, TypeError, KeyError)):
+        logger.warning("Domain error en %s [%s]: %s", tool_name, exc_type, exc)
+    else:
+        logger.exception("Error inesperado en %s [%s]: %s", tool_name, exc_type, exc)
+
+    return f"{prefix} en {tool_name}: {exc}"
 
 
 # ─── HERRAMIENTA: GUARDAR ────────────────────────────────────────────────────
@@ -264,9 +329,13 @@ async def save_hipocampo(
     Returns:
         Confirmación con el ID asignado.
     """
+    rate_err = _check_rate(tool_limiter, "save_hipocampo")
+    if rate_err:
+        return rate_err
+
     def _do():
         logger.info("🧠 Guardando en Hipocampo: content=%r...", content[:80])
-        embedding = _generar_embedding(content)
+        embedding = _generar_embedding(content, "save_hipocampo")
         metadatos = {
             "type": memory_type,
             "code": code or "",
@@ -296,8 +365,7 @@ async def save_hipocampo(
     try:
         return await asyncio.to_thread(_do)
     except Exception as e:
-        logger.error("❌ Error al guardar: %s", e)
-        return f"❌ Error al guardar en Hipocampo: {e}"
+        return _tool_err("save_hipocampo", e)
 
 
 @mcp.tool()
@@ -321,9 +389,13 @@ async def profile_hipocampo(
     Returns:
         Confirmación con el ID asignado.
     """
+    rate_err = _check_rate(tool_limiter, "profile_hipocampo")
+    if rate_err:
+        return rate_err
+
     def _do():
         logger.info("👤 Guardando perfil: %r...", summary[:80])
-        embedding = _generar_embedding(summary)
+        embedding = _generar_embedding(summary, "profile_hipocampo")
         conn = _conn()
         cur = conn.cursor()
         cat_list = categories or ["personal_info"]
@@ -353,8 +425,7 @@ async def profile_hipocampo(
     try:
         return await asyncio.to_thread(_do)
     except Exception as e:
-        logger.error("❌ Error al guardar perfil: %s", e)
-        return f"❌ Error al guardar perfil: {e}"
+        return _tool_err("profile_hipocampo", e)
 
 
 # ─── HERRAMIENTAS: CRUD (UPDATE / DELETE) ──────────────────────────────────────
@@ -387,6 +458,10 @@ async def update_hipocampo(
     Returns:
         Confirmación de la actualización.
     """
+    rate_err = _check_rate(tool_limiter, "update_hipocampo")
+    if rate_err:
+        return rate_err
+
     def _do():
         conn = _conn()
         cur = conn.cursor()
@@ -410,7 +485,7 @@ async def update_hipocampo(
             new_metadatos["categories"] = categories
 
         if content is not None:
-            embedding = _generar_embedding(content)
+            embedding = _generar_embedding(content, "update_hipocampo")
             cur.execute(
                 """UPDATE memoria_vectorial SET contenido=%s, metadatos=%s, embedding=%s::vector(1024)
                    WHERE id=%s""",
@@ -434,8 +509,7 @@ async def update_hipocampo(
     try:
         return await asyncio.to_thread(_do)
     except Exception as e:
-        logger.error("❌ Error al actualizar: %s", e)
-        return f"❌ Error al actualizar recuerdo: {e}"
+        return _tool_err("update_hipocampo", e)
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -454,6 +528,10 @@ async def delete_hipocampo(id: int) -> str:
     Returns:
         Confirmación de eliminación.
     """
+    rate_err = _check_rate(tool_limiter, "delete_hipocampo")
+    if rate_err:
+        return rate_err
+
     def _do():
         conn = _conn()
         cur = conn.cursor()
@@ -474,8 +552,7 @@ async def delete_hipocampo(id: int) -> str:
     try:
         return await asyncio.to_thread(_do)
     except Exception as e:
-        logger.error("❌ Error al eliminar: %s", e)
-        return f"❌ Error al eliminar recuerdo: {e}"
+        return _tool_err("delete_hipocampo", e)
 
 
 # ─── HERRAMIENTA: HEALTH CHECK ───────────────────────────────────────────────
@@ -508,8 +585,7 @@ async def hipocampo_health() -> str:
                 lines.append(f"      {checks}")
         return "\n".join(lines)
     except Exception as e:
-        logger.error("Health check error: %s", e)
-        return f"❌ Error en health check: {e}"
+        return _tool_err("hipocampo_health", e)
 
 
 @mcp.tool()
@@ -536,8 +612,7 @@ async def hipocampo_auto_repair() -> str:
             lines.append(f"   ⏭️  Omitidos: {', '.join(report['skipped'])}")
         return "\n".join(lines) or "🔧 Auto-repair completado (sin novedades)"
     except Exception as e:
-        logger.error("Auto-repair error: %s", e)
-        return f"❌ Error en auto-repair: {e}"
+        return _tool_err("hipocampo_auto_repair", e)
 
 
 # ─── HERRAMIENTAS: STATS Y AJUSTE DINÁMICO ────────────────────────────────────
@@ -560,8 +635,7 @@ async def hipocampo_stats() -> str:
         data = await asyncio.to_thread(_stats.analyze)
         return _stats.format_result(data)
     except Exception as e:
-        logger.error("Stats error: %s", e)
-        return f"❌ Error en stats: {e}"
+        return _tool_err("hipocampo_stats", e)
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -592,8 +666,7 @@ async def hipocampo_tune() -> str:
         data = await asyncio.to_thread(_stats.tune_thresholds)
         return _stats.format_result(data)
     except Exception as e:
-        logger.error("Tune error: %s", e)
-        return f"❌ Error en tune: {e}"
+        return _tool_err("hipocampo_tune", e)
 
 
 # ─── HERRAMIENTAS: MANTENIMIENTO (FASE 3) ─────────────────────────────────────
@@ -651,8 +724,7 @@ async def hipocampo_dedup(merge: bool = False) -> str:
             lines.append("\n💡 Ejecuta con merge=True para fusionar y limpiar")
             return "\n".join(lines)
     except Exception as e:
-        logger.error("Dedup error: %s", e)
-        return f"❌ Error en dedup: {e}"
+        return _tool_err("hipocampo_dedup", e)
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -686,8 +758,7 @@ async def hipocampo_checkpoint(dry_run: bool = True) -> str:
     try:
         return await asyncio.to_thread(_checkpoint.run_checkpoint, dry_run=dry_run)
     except Exception as e:
-        logger.error("Checkpoint error: %s", e)
-        return f"❌ Error en checkpoint: {e}"
+        return _tool_err("hipocampo_checkpoint", e)
 
 
 @mcp.tool()
@@ -734,8 +805,7 @@ async def hipocampo_maintenance() -> str:
     try:
         return await asyncio.to_thread(_do_maintenance)
     except Exception as e:
-        logger.error("Maintenance error: %s", e)
-        return f"❌ Error en mantenimiento: {e}"
+        return _tool_err("hipocampo_maintenance", e)
 
 
 # ─── HERRAMIENTAS: WEBHOOKS (WATCH) ──────────────────────────────────────────
@@ -754,6 +824,10 @@ async def watch_hipocampo(pattern: str, webhook_url: str) -> str:
     Returns:
         Confirmación con ID del watch creado.
     """
+    rate_err = _check_rate(tool_limiter, "watch_hipocampo")
+    if rate_err:
+        return rate_err
+
     def _do():
         conn = _conn()
         cur = conn.cursor()
@@ -771,8 +845,7 @@ async def watch_hipocampo(pattern: str, webhook_url: str) -> str:
     try:
         return await asyncio.to_thread(_do)
     except Exception as e:
-        logger.error("❌ Error al registrar watch: %s", e)
-        return f"❌ Error al registrar watch: {e}"
+        return _tool_err("watch_hipocampo", e)
 
 
 @mcp.tool()
@@ -786,6 +859,10 @@ async def unwatch_hipocampo(id: int) -> str:
     Returns:
         Confirmación de eliminación.
     """
+    rate_err = _check_rate(tool_limiter, "unwatch_hipocampo")
+    if rate_err:
+        return rate_err
+
     def _do():
         conn = _conn()
         cur = conn.cursor()
@@ -803,8 +880,7 @@ async def unwatch_hipocampo(id: int) -> str:
     try:
         return await asyncio.to_thread(_do)
     except Exception as e:
-        logger.error("❌ Error al eliminar watch: %s", e)
-        return f"❌ Error al eliminar watch: {e}"
+        return _tool_err("unwatch_hipocampo", e)
 
 
 @mcp.tool(annotations=ToolAnnotations(
@@ -839,11 +915,14 @@ async def list_watches() -> str:
     try:
         return await asyncio.to_thread(_do)
     except Exception as e:
-        logger.error("❌ Error al listar watches: %s", e)
-        return f"❌ Error al listar watches: {e}"
+        return _tool_err("list_watches", e)
 
 
 if __name__ == "__main__":
+    cfg_errors = validate_config()
+    if cfg_errors:
+        for err in cfg_errors:
+            logger.warning("⚠️  Config: %s", err)
     _init_watches_table()
     init_pool()
     if len(sys.argv) > 1 and sys.argv[1] in ("--http", "--streamable-http"):
