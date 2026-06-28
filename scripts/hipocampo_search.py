@@ -65,7 +65,7 @@ def generar_patrones_ILIKE(terms):
 # get_embedding is imported from hipocampo.db
 
 
-def buscar_vectorial(cur, query, limit=50):
+def buscar_vectorial(cur, query, limit=30):
     query_embed = get_embedding(query, dims=1024)
     if query_embed is None:
         return []
@@ -96,7 +96,7 @@ def buscar_vectorial(cur, query, limit=50):
     return results
 
 
-def buscar_vectorial_memory_items(cur, query, limit=50):
+def buscar_vectorial_memory_items(cur, query, limit=30):
     """Búsqueda vectorial (1024d) en memory_items usando cosine similarity."""
     query_embed = get_embedding(query, dims=1024)
     if query_embed is None:
