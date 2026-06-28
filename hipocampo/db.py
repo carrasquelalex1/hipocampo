@@ -6,8 +6,13 @@ Usage:
 """
 import os
 import sys
+import threading
 from dotenv import load_dotenv
 from openai import OpenAI
+
+
+_pool = None
+_pool_lock = threading.Lock()
 
 
 def _project_root():
@@ -41,21 +46,88 @@ def load_config(env_path=None):
     }
 
 
-def get_conn(config=None):
-    """Return a psycopg2 connection.
+def init_pool(minconn=1, maxconn=10):
+    """Initialize a ``ThreadedConnectionPool`` singleton.
 
-    If *config* is ``None`` it is loaded from the environment via
-    :func:`load_config`.
+    Safe to call multiple times — only the first call creates the pool.
     """
-    import psycopg2
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                import psycopg2.pool
+                config = load_config()
+                _pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn, maxconn,
+                    host=config['DB_HOST'],
+                    user=config['DB_USER'],
+                    dbname=config['DB_NAME'],
+                    password=config['DB_PASSWORD'],
+                )
+
+
+def close_pool():
+    """Close all connections in the pool and reset the singleton."""
+    global _pool
+    if _pool is not None:
+        _pool.closeall()
+        _pool = None
+
+
+class _PooledConnection:
+    """Thin proxy over ``psycopg2.extensions.connection``.
+
+    Delegates every attribute except ``close()`` to the raw connection.
+    ``close()`` returns the connection to the pool instead of closing it.
+    """
+
+    def __init__(self, conn, pool):
+        object.__setattr__(self, '_conn', conn)
+        object.__setattr__(self, '_pool', pool)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._conn, name, value)
+
+    def close(self):
+        pool = object.__getattribute__(self, '_pool')
+        conn = object.__getattribute__(self, '_conn')
+        if pool is not None:
+            pool.putconn(conn)
+        else:
+            conn.close()
+
+
+def get_conn(config=None):
+    """Return a ``psycopg2`` connection, optionally from the pool.
+
+    If :func:`init_pool` has been called the connection is drawn from the
+    pool and ``.close()`` returns it to the pool.  Otherwise a fresh
+    connection is created (existing callers are unaffected).
+
+    *config* defaults to :func:`load_config`.
+    """
     if config is None:
         config = load_config()
-    return psycopg2.connect(
-        host=config['DB_HOST'],
-        user=config['DB_USER'],
-        dbname=config['DB_NAME'],
-        password=config['DB_PASSWORD'],
-    )
+
+    global _pool
+    if _pool is not None:
+        raw_conn = _pool.getconn()
+    else:
+        import psycopg2
+        raw_conn = psycopg2.connect(
+            host=config['DB_HOST'],
+            user=config['DB_USER'],
+            dbname=config['DB_NAME'],
+            password=config['DB_PASSWORD'],
+        )
+
+    from pgvector.psycopg2 import register_vector
+    register_vector(raw_conn)
+
+    return _PooledConnection(raw_conn, _pool)
 
 
 def get_embedding(text, dims=1024, api_key=None):

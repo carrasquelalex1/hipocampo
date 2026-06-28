@@ -288,6 +288,27 @@ All scripts in `scripts/` import from `hipocampo.db` instead of duplicating the 
 
 For individual searches the difference is marginal (~200ms), but for `hipocampo_maintenance()` it previously ran **4 serial subprocess forks** — now it's one direct call per phase, saving ~1–2 seconds.
 
+### Async & Connection Pool (v3.8)
+
+The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode, and uses a **PostgreSQL connection pool** instead of creating a new connection per call:
+
+**Before:**
+- Each MCP tool opened a new TCP + SSL connection to PostgreSQL → `connect()` latency on every call
+- Sync tools blocked uvicorn's event loop → one slow `search` froze the server for all concurrent clients
+- In HTTP mode with concurrent requests: risk of `too many connections` on the database
+
+**After:**
+- `init_pool(minconn=1, maxconn=10)` creates a `ThreadedConnectionPool` at server startup — connections are reused across calls, handshake happens once
+- All 16 tools are `async def` — blocking I/O (DB queries, NVIDIA API) runs in `asyncio.to_thread()`, freeing the event loop for other requests
+- A thin `_PooledConnection` proxy transparently returns connections to the pool when `.close()` is called — zero caller-side changes
+
+**Impact:** Concurrent requests no longer block each other; PostgreSQL connection overhead drops from ~10–50ms per call to near zero.
+
+**Integration Tests:**
+- 6 schema tests verify tool registration, annotations, parameters, and async signature — no database required, run in CI
+- 3 live integration tests (marked `@pytest.mark.integration`) start the server in stdio mode and verify tools/list, resources/list, and a real search call
+- 84 total tests, all passing
+
 ---
 
 ## ☕ Support / Donaciones
@@ -305,7 +326,7 @@ If this project helps you, consider supporting its development:
 
 ## 🧪 Testing
 
-Hipocampo includes **78+ unit tests** covering all core logic:
+Hipocampo includes **84+ unit tests** covering all core logic and MCP integration:
 
 | Test file | What it covers |
 |-----------|---------------|
@@ -313,6 +334,7 @@ Hipocampo includes **78+ unit tests** covering all core logic:
 | `tests/test_autotag.py` | All 17 tag rules, 16 category rules, memory_type auto-detection |
 | `tests/test_dedup.py` | Cosine similarity (including 1024-dim vectors), exact and semantic duplicate detection logic |
 | `tests/test_checkpoint.py` | Age scale classification, project grouping, summary generation |
+| `tests/test_mcp_integration.py` | 6 schema tests (tool registration, annotations, params, async signature) + 3 live integration tests (stdio server) |
 
 ```bash
 # Run all tests
@@ -532,13 +554,34 @@ Todos los scripts en `scripts/` importan de `hipocampo.db` en lugar de duplicar 
 
 Para búsquedas individuales la diferencia es marginal (~200ms), pero para `hipocampo_maintenance()` antes ejecutaba **4 forks subprocess en serie** — ahora es una llamada directa por fase, ahorrando ~1–2 segundos.
 
+### Async & Connection Pool (v3.8)
+
+El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en modo HTTP, y usa un **pool de conexiones PostgreSQL** en lugar de crear una conexión nueva por cada llamada:
+
+**Antes:**
+- Cada herramienta abría una conexión TCP + SSL nueva a PostgreSQL → latencia de `connect()` en cada llamada
+- Tools sincrónicas bloqueaban el event loop de uvicorn → una `search` lenta congelaba el servidor para todos los clientes concurrentes
+- En modo HTTP con requests concurrentes: riesgo de `too many connections` en la BD
+
+**Ahora:**
+- `init_pool(minconn=1, maxconn=10)` crea un `ThreadedConnectionPool` al arrancar — las conexiones se reúsan, el handshake ocurre una sola vez
+- Las 16 herramientas son `async def` — I/O bloqueante (queries BD, API NVIDIA) corre en `asyncio.to_thread()`, liberando el event loop para otras requests
+- Un proxy `_PooledConnection` devuelve las conexiones al pool automáticamente al llamar `.close()` — sin cambios en el caller
+
+**Impacto:** Requests concurrentes ya no se bloquean entre sí; el overhead de conexión PostgreSQL baja de ~10–50ms por llamada a casi cero.
+
+**Tests de Integración:**
+- 6 tests de schema verifican registro de herramientas, anotaciones, parámetros y firma async — sin BD, corren en CI
+- 3 tests de integración en vivo (marcados `@pytest.mark.integration`) arrancan el servidor en modo stdio y verifican tools/list, resources/list y una búsqueda real
+- 84 tests totales, todos pasando
+
 *Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
 
 ---
 
 ## 🧪 Tests
 
-Hipocampo incluye **78+ tests unitarios** cubriendo toda la lógica central:
+Hipocampo incluye **84+ tests unitarios** cubriendo toda la lógica central e integración MCP:
 
 | Archivo | Qué cubre |
 |---------|-----------|
@@ -546,6 +589,7 @@ Hipocampo incluye **78+ tests unitarios** cubriendo toda la lógica central:
 | `tests/test_autotag.py` | Las 17 reglas de tags, 16 reglas de categoría, detección automática de memory_type |
 | `tests/test_dedup.py` | Similitud coseno (vectores de 1024 dim), lógica de detección de duplicados exactos y semánticos |
 | `tests/test_checkpoint.py` | Clasificación por escalas de edad, agrupación por proyecto, generación de resúmenes |
+| `tests/test_mcp_integration.py` | 6 tests de schema (registro de tools, anotaciones, parámetros, firma async) + 3 tests de integración en vivo (servidor stdio) |
 
 ```bash
 # Ejecutar todos los tests
