@@ -309,6 +309,20 @@ The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode
 - 3 live integration tests (marked `@pytest.mark.integration`) start the server in stdio mode and verify tools/list, resources/list, and a real search call
 - 102 total tests, all passing
 
+### Config Validation, Rate Limiting & Granular Errors (v3.8)
+
+**Before:**
+- Missing `NVIDIA_API_KEY` or `DB_HOST` → server started without errors, failed with cryptic `fe_sendauth` / `401` on the first query
+- Any client could hammer the NVIDIA API (`$` per embedding) and the free-tier PostgreSQL — no limits at all
+- Every error caught with `except Exception: logger.error("msg: %s", e)` — no traceback, impossible to tell if it was a DB, network, or validation failure
+
+**After:**
+- `validate_config()` runs at startup and logs clear warnings for each missing variable. `init_pool()` and `get_conn()` reject early with messages like *"PostgreSQL connection incomplete: DB_HOST, DB_USER not configured in .env"*
+- Three sliding-window rate limiters protect the system: `embedding_limiter` (30/min — shields NVIDIA API cost), `tool_limiter` (60/min — shields PostgreSQL), `watch_limiter` (20/min). Clients get *"⏳ Too many requests. Limit: 30 per 60s. Wait 12s."*
+- `_tool_err()` helper differentiates by exception type: `psycopg2.Error` → `logger.exception()` with full traceback, `ValueError` / `TypeError` → `logger.warning()` (client error), others → `logger.exception()`. `_fire_webhooks` catches `urllib.error.URLError` separately
+
+**Impact:** Failures are caught before they reach the database, costs are capped, and logs are actionable — you know instantly if it's a misconfiguration, a network blip, or a code bug.
+
 ---
 
 ## ☕ Support / Donaciones
@@ -576,6 +590,20 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 - 6 tests de schema verifican registro de herramientas, anotaciones, parámetros y firma async — sin BD, corren en CI
 - 3 tests de integración en vivo (marcados `@pytest.mark.integration`) arrancan el servidor en modo stdio y verifican tools/list, resources/list y una búsqueda real
 - 102 tests totales, todos pasando
+
+### Validación de Config, Rate Limiting y Errores Granulares (v3.8)
+
+**Antes:**
+- `NVIDIA_API_KEY` o `DB_HOST` faltantes → el server arrancaba sin errores y fallaba con un críptico `fe_sendauth` / `401` recién en el primer query
+- Cualquier cliente podía saturar la API de NVIDIA (`$` por embedding) y el PostgreSQL gratuito — sin ningún límite
+- Todos los errores se capturaban con `except Exception: logger.error("msg: %s", e)` — sin traceback, imposible saber si era error de BD, red o validación
+
+**Ahora:**
+- `validate_config()` se ejecuta al arranque y logea warnings claros para cada variable faltante. `init_pool()` y `get_conn()` rechazan temprano con mensajes como *"PostgreSQL connection incomplete: DB_HOST, DB_USER no configurados en .env"*
+- Tres rate limiters sliding-window protegen el sistema: `embedding_limiter` (30/min — protege el costo de la API NVIDIA), `tool_limiter` (60/min — protege PostgreSQL), `watch_limiter` (20/min). Los clientes reciben *"⏳ Demasiadas solicitudes. Límite: 30 por 60s. Espera 12s."*
+- `_tool_err()` diferencia por tipo de excepción: `psycopg2.Error` → `logger.exception()` con traceback completo, `ValueError` / `TypeError` → `logger.warning()` (error del cliente), otros → `logger.exception()`. `_fire_webhooks` captura `urllib.error.URLError` por separado
+
+**Impacto:** Los errores se detectan antes de llegar a la BD, los costos están limitados, y los logs son accionables — sabés al instante si es una mala configuración, un problema de red o un bug de código.
 
 *Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
 
