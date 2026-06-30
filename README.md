@@ -18,7 +18,7 @@ pinned: false
   Persistent memory for autonomous AI agents · PostgreSQL 17 + pgvector · Hybrid Search · MCP Server
 </p>
 
-[![Version](https://img.shields.io/badge/version-3.8-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
+[![Version](https://img.shields.io/badge/version-4.0-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-active-green)](https://registry.modelcontextprotocol.io/v0.1/servers?search=carrasquelalex1/hipocampo)
@@ -82,7 +82,16 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 * **Automated Tagging Engine**: A robust, Regex-based rule engine that autonomously categorizes and tags records upon persistence.
 * **Cross-System Vector Search**: Unified semantic search across over 1,100 records for deep cross-referencing.
 * **Hybrid Prompt Compression** (v4.0): Two-phase compression pipeline — extractive (sentence-level) for generic text and LLM summarization (via NVIDIA NIM) for technical/code content. Reduces prompt tokens by 20-50% while preserving critical information. Available as `compress_hipocampo` MCP tool.
-* **Model Context Protocol (MCP)**: Native integration via a FastMCP server, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
+* **Memory Graph** (v4.0): Directed graph of semantic relationships between memories. Link related records, navigate with BFS tree, find shortest paths. Available as `link_hipocampo`, `graph_hipocampo`, `path_hipocampo` MCP tools.
+* **Memory Hierarchy** (v4.0): Three-level memory (episodic → semantic → automatic) inspired by human mnemonic consolidation. Episodic = raw detail; semantic = compressed knowledge; automatic = permanent reflexes. Checkpoint respects levels — automatic memories are never compressed.
+* **Code RAG** (v4.0): Index project source code (PHP, JS, TS, Python, SQL) as semantic embeddings. Search with `search_code(query, language)` — returns real code snippets with file paths and line numbers, not just summaries.
+* **Exponential Time Decay** (v4.0): `final_score = relevance × exp(-λ × days)` with λ=0.05 configurable and 20% floor. Recent knowledge naturally outranks old memories.
+* **Session Memory & Auto-Summarization**: Session-isolated save/search. After 20+ saves, Hipocampo auto-generates a consolidated session summary in the background.
+* **Proactive Context Preloading**: `preload_context(project_path)` extracts meaningful keywords from the project path, searches relevant memories, and returns a compressed summary — ideal for session start.
+* **Context Budget Awareness**: `compress_hipocampo` auto-estimates token budget and adjusts k dynamically. `budget_ratio` parameter gives fine-grained control over output size.
+* **Auto-Linking**: `save_hipocampo(..., auto_link=True)` auto-discovers semantically similar memories (>0.75 cosine) and creates `similar` edges in the memory graph.
+* **HNSW Auto-Recovery**: `hipocampo_health()` checks the HNSW index on startup and auto-creates it if missing — no more manual `CREATE INDEX` commands.
+* **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 22+ tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
 
 ---
 
@@ -261,22 +270,35 @@ An **SSC (Sparse Selective Caching)** pipeline is also available as an experimen
 
 Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to autonomously read and write memories.
 
-### Available MCP Tools
+### Available MCP Tools (22+ tools)
 
 **Memory Operations:**
 * `search_hipocampo(query, session_id?)`: Unified semantic and lexical search (auto-records metrics). Optionally filter by session.
 * `quick_hipocampo_search(query)`: Shorthand alias for rapid queries.
-* `compress_hipocampo(query, k=5, method="hybrid", include_metadata=False)`: Search + hybrid compression. Reduces retrieved memories by 20-50% using extractive (sentence-level) and LLM (via NVIDIA NIM) compression. Three methods: `"hybrid"` (recommended), `"extractive"` (fastest, no API cost), `"llm"` (highest quality). Ideal for reducing prompt size before LLM calls.
-* `save_hipocampo(content, memory_type, code, categories, session_id?)`: Persist data into the technical memory store (`memoria_vectorial`). Supports optional session isolation.
+* `preload_context(project_path, k=8)`: Extract keywords from project path, search relevant memories, return compressed summary. Ideal for session initialization.
+* `compress_hipocampo(query, k=5, method="hybrid", budget_ratio=1.0, include_metadata=False)`: Search + hybrid compression with context budget awareness. Auto-estimates tokens and adjusts k dynamically. Three methods: `"hybrid"` (recommended), `"extractive"` (fastest, no API cost), `"llm"` (highest quality).
+* `save_hipocampo(content, memory_type, code, categories, session_id?, force?, auto_link=False, nivel="episodica")`: Persist data into `memoria_vectorial`. Supports session isolation, auto-dedup, auto-linking, and hierarchical memory levels.
 * `profile_hipocampo(summary, extra, categories)`: Store personal or event-driven user data (`memory_items`).
+
+**Memory Graph (v4.0):**
+* `link_hipocampo(source_id, target_id, relation_type, weight)`: Create a directed edge between two memories. Relation types: `related`, `follow_up`, `part_of`, `references`, `similar`, `chain`.
+* `unlink_hipocampo(id / source+target+type)`: Remove edge(s) from the memory graph.
+* `graph_hipocampo(node_id, depth=2)`: BFS tree traversal from a root node. Use `node_id=0` for an overview of all connected nodes and edge counts.
+* `path_hipocampo(from_id, to_id, max_depth=5)`: Find the shortest BFS path between two memories.
+
+**Code RAG (v4.0):**
+* `index_project(project_path, force=False)`: Scan and index source code files as semantic embeddings. Incremental — only re-indexes changed files (by mtime). Supports PHP, JS, TS, Python, SQL, HTML, CSS, JSON, YAML.
+* `search_code(query, k=5, language="")`: Vector search specifically in indexed code snippets. Returns real code with file paths, language, and line numbers.
 
 **CRUD Operations:**
 * `update_hipocampo(id, content?, memory_type?, code?, categories?)`: Update an existing memory. Regenerates embedding if content changes.
 * `delete_hipocampo(id)`: Permanently delete a memory by ID.
+* `set_nivel_hipocampo(id, nivel)`: Promote/demote a memory between hierarchical levels (`episodica`, `semantica`, `automatica`).
+* `consolidate_hipocampo(min_age_days=7, dry_run=True)`: Migrate old episodic memories to semantic level with optional content compression.
 
-**Self-Diagnosis & Auto-Repair (Fase 1):**
-* `hipocampo_health()`: Full system health check (PostgreSQL, NVIDIA API, disk, extensions).
-* `hipocampo_auto_repair()`: Automatically repairs detected issues (restart PostgreSQL, create missing tables).
+**Self-Diagnosis & Auto-Repair:**
+* `hipocampo_health()`: Full system health check (PostgreSQL, NVIDIA API, disk, extensions, HNSW index).
+* `hipocampo_auto_repair()`: Automatically repairs detected issues (restart PostgreSQL, create missing tables, create HNSW index).
 
 **Performance Optimization (Fase 2):**
 * `hipocampo_stats()`: Query performance metrics, latency analysis, and optimization recommendations.
@@ -510,8 +532,16 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 * **Checkpointing Logarítmico**: Compresión inteligente basada en el decaimiento del tiempo, consolidando detalles granulares en un solo registro tras 90 días.
 * **Auto-MeJORA MCP**: Autodiagnóstico (health check + auto-repair), optimización dinámica (stats + tune), y mantenimiento de memoria (dedup + checkpoint) — todo desde herramientas MCP.
 * **Compresión Híbrida de Prompts** (v4.0): Pipeline de dos fases — compresión extractiva (nivel de oraciones) para texto genérico y resumen LLM (vía NVIDIA NIM) para contenido técnico/código. Reduce tokens del prompt entre 20-50% preservando información crítica. Disponible como herramienta MCP `compress_hipocampo`.
-* **Motor de Auto-Etiquetado**: Reglas basadas en expresiones regulares que categorizan la información de manera autónoma al momento de la persistencia.
-* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante un servidor FastMCP con 12 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
+* **Grafo de Memoria** (v4.0): Grafo dirigido de relaciones semánticas entre recuerdos. Enlaza registros relacionados, navega con árbol BFS, encuentra caminos más cortos. Tools: `link_hipocampo`, `graph_hipocampo`, `path_hipocampo`.
+* **Jerarquía de Memoria** (v4.0): Tres niveles (episódica → semántica → automática) inspirado en consolidación mnémica humana. Episódica = detalle crudo; semántica = conocimiento comprimido; automática = reflejos permanentes. El checkpoint respeta niveles — lo automático nunca se comprime.
+* **RAG de Código** (v4.0): Indexa código fuente de proyectos (PHP, JS, TS, Python, SQL) como embeddings semánticos. Busca con `search_code(consulta, lenguaje)` — devuelve código real con ruta de archivo y números de línea.
+* **Decaimiento Temporal Exponencial** (v4.0): `score_final = relevancia × exp(-λ × días)` con λ=0.05 configurable y piso 20%. El conocimiento reciente pesa naturalmente más.
+* **Memoria por Sesión y Auto-resumen**: Búsqueda/guardado aislado por sesión. Cada 20 guardados, Hipocampo genera un resumen consolidado de fondo.
+* **Precarga Proactiva de Contexto**: `preload_context(ruta_proyecto)` extrae keywords del proyecto, busca memorias relevantes y devuelve resumen comprimido. Ideal al inicio de sesión.
+* **Presupuesto de Contexto Inteligente**: `compress_hipocampo` auto-estima tokens y ajusta k dinámicamente. `budget_ratio` da control fino sobre el tamaño de salida.
+* **Auto-Enlace**: `save_hipocampo(..., auto_link=True)` descubre recuerdos semánticamente similares (>0.75 cosine) y crea aristas `similar` en el grafo.
+* **Recuperación Automática de HNSW**: `hipocampo_health()` verifica el índice HNSW al arrancar y lo crea si falta — sin comandos `CREATE INDEX` manuales.
+* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante servidor FastMCP con 22+ herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
 
 ---
 
@@ -633,22 +663,35 @@ python3 scripts/hipocampo_mcp_server.py --http 8001   # Streamable HTTP (recomen
 python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 ```
 
-### Herramientas MCP Disponibles
+### Herramientas MCP Disponibles (22+ herramientas)
 
 **Operaciones de Memoria:**
 * `search_hipocampo(consulta, session_id?)`: Búsqueda semántica + léxica híbrida (auto-registra métricas). Filtro opcional por sesión.
 * `quick_hipocampo_search(consulta)`: Alias rápido para búsquedas.
-* `compress_hipocampo(consulta, k=5, method="hybrid", include_metadata=False)`: Búsqueda + compresión híbrida. Reduce memorias recuperadas entre 20-50% usando compresión extractiva (nivel de oraciones) y LLM (vía NVIDIA NIM). Tres métodos: `"hybrid"` (recomendado), `"extractive"` (más rápido, sin costo API), `"llm"` (máxima calidad). Ideal para reducir el tamaño del prompt antes de llamadas al LLM.
-* `save_hipocampo(contenido, tipo, codigo, categorias, session_id?)`: Guarda datos técnicos en `memoria_vectorial`. Soporta aislamiento por sesión.
+* `preload_context(ruta_proyecto, k=8)`: Extrae keywords del proyecto, busca memorias relevantes y devuelve resumen comprimido. Ideal para inicio de sesión.
+* `compress_hipocampo(consulta, k=5, method="hybrid", budget_ratio=1.0, include_metadata=False)`: Búsqueda + compresión híbrida con presupuesto de contexto. Auto-estima tokens y ajusta k dinámicamente. Tres métodos: `"hybrid"` (recomendado), `"extractive"` (más rápido, sin costo API), `"llm"` (máxima calidad).
+* `save_hipocampo(contenido, tipo, codigo, categorias, session_id?, force?, auto_link=False, nivel="episodica")`: Guarda datos técnicos en `memoria_vectorial`. Soporta auto-dedup, auto-enlace y niveles jerárquicos.
 * `profile_hipocampo(resumen, extra, categorias)`: Guarda datos de perfil en `memory_items`.
+
+**Grafo de Memoria (v4.0):**
+* `link_hipocampo(origen, destino, tipo_relacion, peso)`: Crea enlace dirigido entre recuerdos. Tipos: `related`, `follow_up`, `part_of`, `references`, `similar`, `chain`.
+* `unlink_hipocampo(id / origen+destino+tipo)`: Elimina enlaces del grafo.
+* `graph_hipocampo(nodo_id, profundidad=2)`: Árbol BFS desde un nodo raíz. `nodo_id=0` muestra vista general.
+* `path_hipocampo(origen, destino, max_depth=5)`: Camino más corto BFS entre dos recuerdos.
+
+**RAG de Código (v4.0):**
+* `index_project(ruta_proyecto, force=False)`: Indexa archivos de código como embeddings semánticos. Incremental — solo re-indexa archivos modificados. Soporta PHP, JS, TS, Python, SQL, HTML, CSS, JSON, YAML.
+* `search_code(consulta, k=5, lenguaje="")`: Búsqueda vectorial en código indexado. Devuelve código real con ruta, lenguaje y líneas.
 
 **Operaciones CRUD:**
 * `update_hipocampo(id, contenido?, tipo?, codigo?, categorias?)`: Actualiza un recuerdo existente. Regenera embedding si cambia el contenido.
 * `delete_hipocampo(id)`: Elimina un recuerdo permanentemente por ID.
+* `set_nivel_hipocampo(id, nivel)`: Promueve/degrada un recuerdo entre niveles jerárquicos (`episodica`, `semantica`, `automatica`).
+* `consolidate_hipocampo(dias_min=7, seco=True)`: Migra recuerdos episódicos antiguos a nivel semántico con compresión opcional.
 
-**Autodiagnóstico y Reparación (Fase 1):**
-* `hipocampo_health()`: Health check completo (PostgreSQL, NVIDIA API, disco, extensiones).
-* `hipocampo_auto_repair()`: Repara problemas automáticamente (reinicia PostgreSQL, crea tablas faltantes).
+**Autodiagnóstico y Reparación:**
+* `hipocampo_health()`: Health check completo (PostgreSQL, API NVIDIA, disco, extensiones, índice HNSW).
+* `hipocampo_auto_repair()`: Repara problemas automáticamente (crea tablas, índice HNSW, reinicia PostgreSQL).
 
 **Optimización de Rendimiento (Fase 2):**
 * `hipocampo_stats()`: Métricas de rendimiento, latencia, y recomendaciones de optimización.
