@@ -53,6 +53,7 @@ import hipocampo_health as _health
 import hipocampo_stats as _stats
 import hipocampo_dedup as _dedup
 import hipocampo_checkpoint as _checkpoint
+import hipocampo_compress as _compress
 
 WATCHES_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS watches (
@@ -230,15 +231,89 @@ async def quick_hipocampo_search(query: str, session_id: str = "") -> str:
     return await search_hipocampo(query, session_id)
 
 
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+    )
+)
+async def compress_hipocampo(
+    query: str,
+    k: int = 5,
+    method: str = "hybrid",
+    target_token: int = -1,
+    include_metadata: bool = False,
+) -> str:
+    """
+    Compress retrieved memories using a hybrid approach (extractive + LLM).
+
+    First searches Hipocampo (SSC v1.0), then compresses the top-k results:
+    - method="extractive": sentence-level keyword relevance (fast, no API cost)
+    - method="llm": summarization via NVIDIA NIM (highest quality, API cost)
+    - method="hybrid" (default): uses LLM for technical/code content, extractive for generic text
+
+    Use this tool BEFORE sending context to another LLM to reduce prompt size
+    while preserving critical information.
+
+    Args:
+        query: Natural language search query.
+        k: Number of memories to retrieve (default 5, max 20).
+        method: Compression method: "hybrid" (default), "extractive", or "llm".
+        target_token: Target token count (-1 = auto, based on content).
+        include_metadata: Include per-memory details in output.
+
+    Returns:
+        Compressed context as plain text with compression statistics.
+        Includes: compressed text, original/compressed char counts, ratio, latency.
+    """
+    rate_err = _check_rate(tool_limiter, "compress_hipocampo")
+    if rate_err:
+        return rate_err
+
+    try:
+        result = await asyncio.to_thread(
+            _compress.compress_hipocampo,
+            query=query,
+            k=min(k, 20),
+            method=method,
+            target_token=target_token,
+            include_metadata=include_metadata,
+        )
+
+        if "error" in result:
+            return f"❌ {result['error']}"
+
+        lines = [
+            f"📦 Compress result ({result['method']}):",
+            f"   Original: {result['original_len']} chars → Compressed: {result['compressed_len']} chars",
+            f"   Ratio: {result['ratio']*100:.1f}% reduction",
+            f"   Latency: {result['total_latency_ms']}ms",
+            "",
+            result["compressed"],
+        ]
+
+        if include_metadata and "memories" in result:
+            lines.append("\n📋 Per-memory details:")
+            for i, m in enumerate(result["memories"], 1):
+                lines.append(f"  [{i}] method={m['method']} score={m['score']} technical={m['is_technical']}")
+
+        return "\n".join(lines)
+
+    except (ValueError, TypeError) as e:
+        return _tool_err("compress_hipocampo", e)
+    except Exception as e:
+        return _tool_err("compress_hipocampo", e)
+
+
 @mcp.resource("hipocampo://info")
 def hipocampo_info() -> str:
     """Información general sobre el sistema Hipocampo."""
     return (
-        "🧠 Hipocampo Protocol v3.6\n"
+        "🧠 Hipocampo Protocol v4.0\n"
         "Sistema de memoria dual con SSC (Sparse-Semantic Clusters)\n"
         "· Búsqueda vectorial 1024d (nvidia/nv-embedqa-e5-v5)\n"
         "· Búsqueda léxica expansiva (pg_trgm + GIN)\n"
         "· Re-ranking híbrido BIRE con auto-tagging\n"
+        "· Compresión híbrida de prompts (extractiva + LLM)\n"
         "· Tablas: memoria_vectorial, memory_items\n"
     )
 

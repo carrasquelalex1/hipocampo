@@ -51,14 +51,9 @@ def validate_config(config=None):
 
     errors = []
     missing = []
-    for key, label in [
-        ("DB_HOST", "DB_HOST"),
-        ("DB_USER", "DB_USER"),
-        ("DB_PASSWORD", "DB_PASSWORD"),
-        ("DB_NAME", "DB_NAME"),
-    ]:
+    for key in ["DB_HOST", "DB_USER", "DB_NAME"]:
         if not config.get(key):
-            missing.append(label)
+            missing.append(key)
 
     if missing:
         errors.append(
