@@ -43,6 +43,28 @@ def check_postgresql():
             if not exists:
                 results["status"] = "degraded"
 
+        for table in ["memoria_vectorial", "memory_items"]:
+            col = "embedding"
+            for idx_type in ["hnsw", "ivfflat"]:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_indexes i
+                        JOIN pg_class c ON i.indexname = c.relname
+                        JOIN pg_index idx ON c.oid = idx.indexrelid
+                        JOIN pg_am am ON idx.indam = am.oid
+                        WHERE i.tablename = %s
+                          AND am.amname = %s
+                          AND i.indexdef LIKE %s
+                    )
+                """,
+                    (table, idx_type, f"%{col}%"),
+                )
+                has_idx = cur.fetchone()[0]
+                results["checks"][f"index_{idx_type}_{table}"] = "ok" if has_idx else "missing"
+                if not has_idx and idx_type == "hnsw":
+                    results["status"] = "degraded"
+
         cur.execute("SELECT count(*) FROM memoria_vectorial")
         results["checks"]["memoria_vectorial_count"] = cur.fetchone()[0]
         cur.execute("SELECT count(*) FROM memory_items")
@@ -192,6 +214,24 @@ def auto_repair():
                     report["failed"].append(f"table_{table}: {e}")
             else:
                 report["failed"].append(f"schema_not_found_{schema_path}")
+
+    # Auto-create missing HNSW indexes
+    for table in ["memoria_vectorial", "memory_items"]:
+        idx_check = pg.get("checks", {}).get(f"index_hnsw_{table}", "missing")
+        if idx_check == "missing":
+            try:
+                conn = get_conn()
+                cur = conn.cursor()
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{table}_embedding_hnsw "
+                    f"ON {table} USING hnsw (embedding vector_cosine_ops)"
+                )
+                conn.commit()
+                cur.close()
+                conn.close()
+                report["repaired"].append(f"index_hnsw_{table}")
+            except Exception as e:
+                report["failed"].append(f"index_hnsw_{table}: {e}")
 
     nv = check_nvidia_api()
     if nv["status"] == "error":

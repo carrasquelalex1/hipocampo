@@ -25,18 +25,58 @@ logger = logging.getLogger(__name__)
 # ─── HEURISTICS ──────────────────────────────────────────────────────────────
 
 CODE_KEYWORDS = [
-    "def ", "class ", "import ", "from ", "return ", "if __name__",
-    "```", "SELECT ", "INSERT ", "CREATE ", "DELETE ", "UPDATE ",
-    "function", "const ", "let ", "var ", "=>", "::", "->",
-    "#include", "package ", "impl ", "trait ", "fn ",
-    "public ", "private ", "static ", "void ", "int ", "str ",
+    "def ",
+    "class ",
+    "import ",
+    "from ",
+    "return ",
+    "if __name__",
+    "```",
+    "SELECT ",
+    "INSERT ",
+    "CREATE ",
+    "DELETE ",
+    "UPDATE ",
+    "function",
+    "const ",
+    "let ",
+    "var ",
+    "=>",
+    "::",
+    "->",
+    "#include",
+    "package ",
+    "impl ",
+    "trait ",
+    "fn ",
+    "public ",
+    "private ",
+    "static ",
+    "void ",
+    "int ",
+    "str ",
 ]
 
 TECHNICAL_KEYWORDS = [
-    "proyecto", "codigo", "código", "api", "servidor", "docker",
-    "python", "javascript", "typescript", "base de datos", "sql",
-    "algoritmo", "implementacion", "implementación", "config",
-    "despliegue", "deploy", "migracion", "migración",
+    "proyecto",
+    "codigo",
+    "código",
+    "api",
+    "servidor",
+    "docker",
+    "python",
+    "javascript",
+    "typescript",
+    "base de datos",
+    "sql",
+    "algoritmo",
+    "implementacion",
+    "implementación",
+    "config",
+    "despliegue",
+    "deploy",
+    "migracion",
+    "migración",
 ]
 
 
@@ -138,6 +178,7 @@ def compress_hipocampo(
     method: str = "hybrid",
     target_token: int = -1,
     include_metadata: bool = False,
+    budget_ratio: float = 1.0,
 ) -> dict:
     """Run SSC search + hybrid compression.
 
@@ -178,6 +219,26 @@ def compress_hipocampo(
             "method": "none",
         }
 
+    # Auto-adjust k and target_token based on budget
+    original_lens = [len(r.get("contenido", "")) for r in results]
+    total_chars = sum(original_lens)
+    est_tokens = total_chars / 4  # rough: ~4 chars per token
+
+    if target_token <= 0:
+        # Auto-estimate: 30% of total content, min 200, max 2000
+        target_token = max(200, min(2000, int(est_tokens * 0.3 * budget_ratio)))
+
+    # Shrink k if content would exceed budget
+    max_chars_for_budget = target_token * 4
+    running = 0
+    adjusted_k = 0
+    for length in original_lens:
+        if running + length > max_chars_for_budget and adjusted_k >= 3:
+            break
+        running += length
+        adjusted_k += 1
+    k = min(k, max(adjusted_k, 1))
+
     # Take top-k
     results = results[:k]
 
@@ -211,12 +272,14 @@ def compress_hipocampo(
             used_method = "extractive"
 
         compressed_total += len(compressed)
-        compressed_memories.append({
-            "text": compressed,
-            "method": used_method,
-            "score": score,
-            "is_technical": tech,
-        })
+        compressed_memories.append(
+            {
+                "text": compressed,
+                "method": used_method,
+                "score": score,
+                "is_technical": tech,
+            }
+        )
 
     # Build final compressed context
     parts = []
@@ -252,11 +315,11 @@ def _print_result(r: dict):
 
     print(f"{'=' * 60}")
     print("Hipocampo Compress v1.0 — Hybrid Prompt Compression")
-    print(f"  Query: \"{query}\"")
+    print(f'  Query: "{query}"')
     print(f"  Method: {r['method']}")
     print(f"  Original: {r['original_len']} chars")
     print(f"  Compressed: {r['compressed_len']} chars")
-    print(f"  Compression ratio: {r['ratio']*100:.1f}%")
+    print(f"  Compression ratio: {r['ratio'] * 100:.1f}%")
     print(f"  Latency: {r['total_latency_ms']}ms")
     print(f"{'=' * 60}")
     print()

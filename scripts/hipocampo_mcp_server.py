@@ -125,6 +125,80 @@ def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
 # ─── INICIALIZACIÓN MCP ─────────────────────────────────────────────────────
 
 
+_SESSION_CHECK_INTERVAL = 20  # summarize every N saves per session
+
+
+def _auto_summarize_session(session_id: str):
+    """Auto-consolidate session records into a high-level summary.
+
+    Triggered every SESSION_CHECK_INTERVAL saves for a given session.
+    Runs in background thread.
+    """
+    if not session_id:
+        return
+
+    def _do():
+        try:
+            conn = _conn()
+            cur = conn.cursor()
+            cur.execute(
+                """SELECT count(*) FROM memoria_vectorial
+                   WHERE metadatos->>'session_id' = %s""",
+                (session_id,),
+            )
+            count = cur.fetchone()[0]
+            if count < _SESSION_CHECK_INTERVAL or count % _SESSION_CHECK_INTERVAL != 0:
+                cur.close()
+                conn.close()
+                return
+
+            cur.execute(
+                """SELECT id, contenido, metadatos FROM memoria_vectorial
+                   WHERE metadatos->>'session_id' = %s
+                   ORDER BY id DESC LIMIT %s""",
+                (session_id, _SESSION_CHECK_INTERVAL),
+            )
+            rows = cur.fetchall()
+            if not rows:
+                cur.close()
+                conn.close()
+                return
+
+            texts = "\n---\n".join(f"[{r[0]}] {r[1][:200]}" for r in rows)
+            summary_text = (
+                f"[SESSION SUMMARY] Sesión {session_id}: {count} registros consolidados. Últimos {len(rows)}:\n{texts}"
+            )
+
+            import hipocampo_compress as _cp
+
+            compressed = _cp._extractive_compress(summary_text, session_id, ratio=0.3)
+            metadatos = json.dumps(
+                {
+                    "type": "session_summary",
+                    "session_id": session_id,
+                    "consolidated_count": count,
+                    "date": str(date.today()),
+                    "source": "auto_summarize",
+                }
+            )
+            emb = get_embedding(compressed)
+            cur.execute(
+                """INSERT INTO memoria_vectorial (contenido, metadatos, embedding)
+                   VALUES (%s, %s, %s::vector(1024)) RETURNING id""",
+                (compressed, metadatos, emb),
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+            logger.info("📋 Session summary created for %s (%d records)", session_id, count)
+        except Exception as e:
+            logger.warning("Auto-summarize failed: %s", e)
+
+    import threading
+
+    threading.Thread(target=_do, daemon=True).start()
+
+
 def _auto_checkpoint():
     """Auto-trigger checkpoint if memory count > 150 or oldest > 30 days."""
     try:
@@ -261,6 +335,7 @@ async def compress_hipocampo(
     method: str = "hybrid",
     target_token: int = -1,
     include_metadata: bool = False,
+    budget_ratio: float = 1.0,
 ) -> str:
     """
     Compress retrieved memories using a hybrid approach (extractive + LLM).
@@ -279,6 +354,7 @@ async def compress_hipocampo(
         method: Compression method: "hybrid" (default), "extractive", or "llm".
         target_token: Target token count (-1 = auto, based on content).
         include_metadata: Include per-memory details in output.
+        budget_ratio: Scale factor for auto-estimated tokens (default 1.0).
 
     Returns:
         Compressed context as plain text with compression statistics.
@@ -296,6 +372,7 @@ async def compress_hipocampo(
             method=method,
             target_token=target_token,
             include_metadata=include_metadata,
+            budget_ratio=budget_ratio,
         )
 
         if "error" in result:
@@ -518,6 +595,7 @@ async def save_hipocampo(
         conn.close()
 
         _fire_webhooks("save", row_id, content, metadatos)
+        _auto_summarize_session(session_id)
 
         logger.info("✅ Guardado id=%s", row_id)
         return f"✅ Guardado en Hipocampo (id={row_id})"
@@ -1068,6 +1146,67 @@ async def list_watches() -> str:
         return await asyncio.to_thread(_do)
     except Exception as e:
         return _tool_err("list_watches", e)
+
+
+@mcp.tool()
+async def preload_context(project_path: str = "", k: int = 8) -> str:
+    """
+    Pre-load context for a project or workspace. Extracts relevant memories
+    from the project path and returns them as a compressed summary.
+
+    Use this when starting work on a known project to restore working context.
+
+    Args:
+        project_path: Absolute path to the project or workspace.
+                      If empty, uses current working directory.
+        k: Number of relevant memories to retrieve (default 8, max 20).
+
+    Returns:
+        Compressed context summary with project-relevant memories.
+    """
+    if not project_path:
+        project_path = os.getcwd()
+
+    dirname = os.path.basename(os.path.normpath(project_path))
+    segments = [s for s in os.path.normpath(project_path).split(os.sep) if s and len(s) > 2]
+    keywords = list(dict.fromkeys(segments[-3:]))  # last 3 dir levels, deduped
+
+    query = f"proyecto {dirname} " + " ".join(keywords)
+
+    try:
+        output, stats = await asyncio.to_thread(_search.search_with_stats, query, session_id="")
+    except Exception as e:
+        return f"Search failed for project context: {e}"
+
+    if not output.strip():
+        return f"No se encontraron memorias relevantes para {dirname}."
+
+    result = await asyncio.to_thread(
+        _compress.compress_hipocampo,
+        query=query,
+        k=min(k, 20),
+        method="hybrid",
+        include_metadata=False,
+    )
+
+    lines = [
+        f"📂 Contexto precargado: {project_path}",
+        f"   Palabras clave: {' · '.join(keywords)}",
+        f"   Memorias recuperadas: {stats.get('results_count', 0)}",
+    ]
+
+    if "compressed" in result and result["compressed"]:
+        lines.extend(["", "📝 Resumen:", result["compressed"]])
+
+    lines.extend(
+        [
+            "",
+            f"📊 Compresión: {result.get('original_len', 0)} → {result.get('compressed_len', 0)} chars "
+            f"({result.get('ratio', 0) * 100:.0f}%)",
+        ]
+    )
+
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
