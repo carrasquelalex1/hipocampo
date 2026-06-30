@@ -7,7 +7,16 @@ sdk: docker
 pinned: false
 ---
 
-# Hipocampo: Dual-Memory System with Sparse Selective Caching
+<p align="center">
+  <img src="assets/logo.png" alt="Hipocampo" width="180"/>
+</p>
+
+<h1 align="center">Hipocampo</h1>
+<h3 align="center">Dual-Memory System with Sparse Selective Caching</h3>
+
+<p align="center">
+  Persistent memory for autonomous AI agents · PostgreSQL 17 + pgvector · Hybrid Search · MCP Server
+</p>
 
 [![Version](https://img.shields.io/badge/version-3.8-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -401,7 +410,16 @@ This project is licensed under the **MIT License**.
 
 ## 🇪🇸 Versión en Español
 
-# Hipocampo: Sistema de Memoria Dual con Caché Selectivo (CS)
+<p align="center">
+  <img src="assets/logo.png" alt="Hipocampo" width="160"/>
+</p>
+
+<h1 align="center">Hipocampo</h1>
+<h3 align="center">Sistema de Memoria Dual con Caché Selectivo (CS)</h3>
+
+<p align="center">
+  Memoria persistente para agentes de IA autónomos · PostgreSQL 17 + pgvector · Búsqueda Híbrida · Servidor MCP
+</p>
 
 [![Glama](https://img.shields.io/badge/Glama-Rating%20A-brightgreen)](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo)
 [![hipocampo MCP server](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo/badges/score.svg)](https://glama.ai/mcp/servers/carrasquelalex1/hipocampo)
