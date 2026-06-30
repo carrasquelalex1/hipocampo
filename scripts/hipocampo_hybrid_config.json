@@ -1,9 +1,9 @@
 {
-  "alpha": 0.6,
-  "beta": 0.4,
-  "vectorial_confidence_min": 0.75,
-  "description": "Ponderaci\u00f3n h\u00edbrida calibrada: 60% vectorial + 40% l\u00e9xico",
+  "alpha": 0.7,
+  "beta": 0.30000000000000004,
+  "vectorial_confidence_min": 0.85,
+  "description": "Ponderación híbrida calibrada: 60% vectorial + 40% léxico",
   "calibrated_at": "2026-06-12",
   "dataset_size": 12,
-  "last_tuned": "2026-06-12T20:48:50"
+  "last_tuned": "2026-06-28T01:54:26"
 }

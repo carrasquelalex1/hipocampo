@@ -36,7 +36,7 @@ class TestValidateConfig:
         }
         errors = validate_config(config)
         assert len(errors) == 1
-        assert "DB_HOST, DB_USER, DB_PASSWORD, DB_NAME" in errors[0]
+        assert "DB_HOST, DB_USER, DB_NAME" in errors[0]
 
     def test_missing_nvidia_key(self):
         config = {

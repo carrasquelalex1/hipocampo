@@ -53,6 +53,10 @@ import hipocampo_health as _health
 import hipocampo_stats as _stats
 import hipocampo_dedup as _dedup
 import hipocampo_checkpoint as _checkpoint
+import hipocampo_compress as _compress
+
+# Ensure query_stats table exists at module load time
+_stats.ensure_stats_table()
 
 WATCHES_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS watches (
@@ -228,6 +232,54 @@ async def quick_hipocampo_search(query: str, session_id: str = "") -> str:
         con scores de relevancia y metadatos.
     """
     return await search_hipocampo(query, session_id)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+    )
+)
+async def compress_hipocampo(
+    query: str,
+    k: int = 5,
+    method: str = "hybrid",
+    target_token: int = -1,
+    include_metadata: bool = False,
+) -> str:
+    """
+    Compress retrieved memories using a hybrid approach (extractive + LLM).
+
+    First searches Hipocampo (SSC v1.0), then compresses the top-k results:
+    - method=\"extractive\": sentence-level keyword relevance (fast, no API cost)
+    - method=\"llm\": summarization via NVIDIA NIM (highest quality, API cost)
+    - method=\"hybrid\" (default): uses LLM for technical/code content, extractive for generic text
+
+    Use this tool BEFORE sending context to another LLM to reduce prompt size
+    while preserving critical information.
+
+    Args:
+        query: Natural language search query.
+        k: Number of memories to retrieve (default 5, max 20).
+        method: Compression method: \"hybrid\" (default), \"extractive\", or \"llm\".
+        target_token: Target token count (-1 = auto, based on content).
+        include_metadata: Include per-memory details in output.
+
+    Returns:
+        Compressed context as plain text with compression statistics.
+        Includes: compressed text, original/compressed char counts, ratio, latency.
+    """
+    import time
+
+    t0 = time.time()
+    try:
+        output = await asyncio.to_thread(_compress.compress_memories, query, k, method, target_token)
+        latency = time.time() - t0
+        if include_metadata:
+            metadata = f"\n---\nLatencia: {latency:.2f}s | Query: {query} | k={k} | method={method}"
+            return output + metadata
+        return output
+    except Exception as e:
+        return _tool_err("compress_hipocampo", e)
 
 
 @mcp.resource("hipocampo://info")

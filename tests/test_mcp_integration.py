@@ -20,7 +20,6 @@ Run only live tests:
 import asyncio
 import os
 import sys
-import json
 import logging
 
 # Suppress server-side logging during schema tests
@@ -32,6 +31,7 @@ SERVER_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 EXPECTED_TOOLS = {
     "search_hipocampo",
     "quick_hipocampo_search",
+    "compress_hipocampo",
     "save_hipocampo",
     "profile_hipocampo",
     "update_hipocampo",
@@ -53,6 +53,7 @@ TOOLS_WITH_SESSION_ID = {"search_hipocampo", "quick_hipocampo_search", "save_hip
 TOOLS_READ_ONLY = {
     "search_hipocampo",
     "quick_hipocampo_search",
+    "compress_hipocampo",
     "hipocampo_health",
     "hipocampo_stats",
     "list_watches",
@@ -68,6 +69,7 @@ TOOLS_DESTRUCTIVE = {
 
 TOOLS_WITH_REQUIRED = {
     "search_hipocampo": ["query"],
+    "compress_hipocampo": ["query"],
     "save_hipocampo": ["content"],
     "delete_hipocampo": ["id"],
     "update_hipocampo": ["id"],
@@ -112,7 +114,7 @@ def test_all_tools_registered():
     extra = tool_names - EXPECTED_TOOLS
     assert not missing, f"Faltan herramientas: {missing}"
     assert not extra, f"Herramientas extra no esperadas: {extra}"
-    assert len(tools) == 16
+    assert len(tools) == 17
 
 
 def test_tool_annotations():
@@ -175,90 +177,55 @@ skip_no_db = pytest.mark.skipif(
 
 @skip_no_db
 @pytest.mark.integration
-def test_server_stdio_hipocampo_info():
-    """Start the server via subprocess (stdio) and read the info resource."""
-    import subprocess
+@pytest.mark.asyncio
+async def test_server_stdio_hipocampo_info():
+    """Start the server via stdio_client and read the info resource."""
+    from mcp.client.stdio import stdio_client, StdioServerParameters
 
-    proc = subprocess.Popen(
-        [sys.executable, os.path.join(SERVER_DIR, "hipocampo_mcp_server.py")],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    request = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "resources/list",
-            "params": {},
-        }
-    )
-    out, err = proc.communicate(input=request + "\n", timeout=10)
-    proc.terminate()
-    assert "Hipocampo Protocol" in out
+    params = StdioServerParameters(command=sys.executable, args=[os.path.join(SERVER_DIR, "hipocampo_mcp_server.py")])
+    async with stdio_client(params) as (read, write):
+        from mcp import ClientSession
+
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            resources = await session.list_resources()
+            uris = [str(r.uri) for r in resources.resources]
+            assert "hipocampo://info" in uris
 
 
 @skip_no_db
 @pytest.mark.integration
-def test_server_stdio_tools_list():
-    """Start the server via subprocess (stdio) and list tools."""
-    import subprocess
+@pytest.mark.asyncio
+async def test_server_stdio_tools_list():
+    """Start the server via stdio_client and list tools."""
+    from mcp.client.stdio import stdio_client, StdioServerParameters
 
-    proc = subprocess.Popen(
-        [sys.executable, os.path.join(SERVER_DIR, "hipocampo_mcp_server.py")],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    request = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {},
-        }
-    )
-    out, err = proc.communicate(input=request + "\n", timeout=10)
-    proc.terminate()
-    data = json.loads(out)
-    assert "result" in data
-    assert "tools" in data["result"]
-    tool_names = {t["name"] for t in data["result"]["tools"]}
-    assert tool_names == EXPECTED_TOOLS, (
-        f"Mismatch: extra={tool_names - EXPECTED_TOOLS}, missing={EXPECTED_TOOLS - tool_names}"
-    )
+    params = StdioServerParameters(command=sys.executable, args=[os.path.join(SERVER_DIR, "hipocampo_mcp_server.py")])
+    async with stdio_client(params) as (read, write):
+        from mcp import ClientSession
+
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            tool_names = {t.name for t in tools.tools}
+            assert tool_names == EXPECTED_TOOLS, (
+                f"Mismatch: extra={tool_names - EXPECTED_TOOLS}, missing={EXPECTED_TOOLS - tool_names}"
+            )
 
 
 @skip_no_db
 @pytest.mark.integration
-def test_server_stdio_search():
+@pytest.mark.asyncio
+async def test_server_stdio_search():
     """Start the server and call search_hipocampo."""
-    import subprocess
+    from mcp.client.stdio import stdio_client, StdioServerParameters
 
-    proc = subprocess.Popen(
-        [sys.executable, os.path.join(SERVER_DIR, "hipocampo_mcp_server.py")],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    request = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "search_hipocampo",
-                "arguments": {"query": "test"},
-            },
-        }
-    )
-    out, err = proc.communicate(input=request + "\n", timeout=30)
-    proc.terminate()
-    data = json.loads(out)
-    assert "result" in data, f"search failed: {data.get('error', 'unknown')}"
-    content = data["result"]["content"]
-    text = "".join(c["text"] for c in content if c.get("type") == "text")
-    assert "❌" not in text, f"search returned error: {text}"
+    params = StdioServerParameters(command=sys.executable, args=[os.path.join(SERVER_DIR, "hipocampo_mcp_server.py")])
+    async with stdio_client(params) as (read, write):
+        from mcp import ClientSession
+
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool("search_hipocampo", {"query": "test"})
+            text = "".join(c.text for c in result.content if hasattr(c, "text"))
+            assert "❌" not in text, f"search returned error: {text}"

@@ -22,7 +22,6 @@ from hipocampo_search import (
     buscar_lexico_memoria_vectorial,
     buscar_lexico_memory_items,
 )
-from pgvector.psycopg2 import register_vector
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, load_config
@@ -213,7 +212,6 @@ def fusionar_hibrido(vectorial, lexico_mv, lexico_mi, alpha=0.5):
 def run_calibration():
     """Ejecuta validación cruzada para encontrar el alpha óptimo."""
     conn = get_conn()
-    register_vector(conn)
     cur = conn.cursor()
 
     alpha_values = [i / 10.0 for i in range(0, 11)]  # 0.0, 0.1, ..., 1.0

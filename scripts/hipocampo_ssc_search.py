@@ -20,7 +20,6 @@ import json
 import sys
 import re
 import time
-from pgvector.psycopg2 import register_vector
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, get_embedding, load_config
@@ -273,7 +272,6 @@ def ssc_ilike(cur, query, router):
 
 def ssc_search(query, umbral_minimo=10.0):
     conn = get_conn()
-    register_vector(conn)
     cur = conn.cursor()
     start = time.time()
 

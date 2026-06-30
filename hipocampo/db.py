@@ -18,17 +18,32 @@ _pool = None
 _pool_lock = threading.Lock()
 
 
-def _project_root():
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def _find_env():
+    """Return the first existing .env path.
+
+    Resolution order:
+      1. ENV_PATH environment variable
+      2. ~/.hipocampo/.env  (explicit user-level config)
+      3. project_root/.env  (fallback for Docker/Fly deployments)
+    """
+    env_path = os.getenv("ENV_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+
+    user_env = os.path.expanduser("~/.hipocampo/.env")
+    if os.path.exists(user_env):
+        return user_env
+
+    project_env = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if os.path.exists(project_env):
+        return project_env
+
+    return ""
 
 
 def load_config(env_path=None):
     if env_path is None:
-        env_path = os.getenv("ENV_PATH")
-    if env_path is None or not os.path.exists(env_path):
-        candidate = os.path.join(_project_root(), ".env")
-        if os.path.exists(candidate):
-            env_path = candidate
+        env_path = _find_env()
     if env_path:
         load_dotenv(env_path)
 
@@ -51,14 +66,9 @@ def validate_config(config=None):
 
     errors = []
     missing = []
-    for key, label in [
-        ("DB_HOST", "DB_HOST"),
-        ("DB_USER", "DB_USER"),
-        ("DB_PASSWORD", "DB_PASSWORD"),
-        ("DB_NAME", "DB_NAME"),
-    ]:
+    for key in ["DB_HOST", "DB_USER", "DB_NAME"]:
         if not config.get(key):
-            missing.append(label)
+            missing.append(key)
 
     if missing:
         errors.append(

@@ -16,7 +16,6 @@ import os
 import time
 import json
 import fcntl
-from pgvector.psycopg2 import register_vector
 from lxml import etree as ET
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -41,7 +40,6 @@ def save_to_vector_db(content, metadata, code_snippet=None):
     """Inserta el nuevo nodo en el Hipocampo Digital (PostgreSQL) con soporte para codigo"""
     try:
         conn = get_conn()
-        register_vector(conn)
         cur = conn.cursor()
 
         vector = get_node_embedding(content)

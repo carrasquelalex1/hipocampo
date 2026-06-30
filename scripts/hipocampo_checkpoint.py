@@ -23,7 +23,6 @@ import os
 import json
 import sys
 from datetime import datetime, timedelta
-from pgvector.psycopg2 import register_vector
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, load_config
@@ -237,7 +236,6 @@ def formatear_reporte(reportes, sin_fecha, dry_run):
 def run_checkpoint(dry_run: bool = True):
     """Ejecuta el checkpoint y retorna el texto formateado."""
     conn = get_conn()
-    register_vector(conn)
     cur = conn.cursor()
 
     escalas, sin_fecha = obtener_edades(cur)

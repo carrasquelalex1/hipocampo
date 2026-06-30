@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/hipocampo/scripts/hipocampo_mcp_server.py --http 8001
-WorkingDirectory=/opt/hipocampo
+ExecStart=/home/alex/.gemini/mcp_venv/bin/python3 /home/alex/.hipocampo/scripts/hipocampo_mcp_server.py --http 8001
+WorkingDirectory=/home/alex
 Restart=on-failure
 RestartSec=5
 

@@ -323,6 +323,44 @@ The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode
 
 **Impact:** Failures are caught before they reach the database, costs are capped, and logs are actionable — you know instantly if it's a misconfiguration, a network blip, or a code bug.
 
+### Retry with Backoff, Consistent CLI & Pre-commit Hooks (v3.8)
+
+**Before:**
+- `get_embedding()` failed on the first NVIDIA API timeout or rate limit — no retry at all
+- All 12 scripts used manual `sys.argv` parsing — no `--help`, no type validation, inconsistent interfaces
+- No pre-commit hooks — easy to push code with lint errors or broken tests
+
+**After:**
+- `get_embedding()` uses `tenacity` with `wait_exponential(mult=1, min=1, max=30)`, 5 attempts, retrying only on `RateLimitError`/`APITimeoutError`/`APIConnectionError`/`InternalServerError`. No retry on `AuthenticationError` or `BadRequestError`. Each retry is logged at `warning` level
+- All 12 scripts have `argparse` with `--help`, typed arguments, and consistent names: `hipocampo_mcp_server.py --http 8001`
+- `.pre-commit-config.yaml` with ruff lint+format (pre-commit) and pytest (pre-push). `pyproject.toml` configures ruff with line-length 120
+
+**Impact:** The server tolerates transient API failures without the client seeing errors. CLI is self-documenting. Every commit is verified before reaching GitHub — no more broken tests on `main`.
+
+---
+
+### Local Fixes, `compress_hipocampo` Tool, and symlink-based Structure (v3.9)
+
+**Before:**
+- Scripts in `scripts/` were independent copies of the repo — each `git pull` required manual sync, and new files like `hipocampo_compress.py` were missing
+- Local scripts (user-owned) lived in the same `scripts/` directory — no separation from repo files
+- The `hipocampo/` Python package was also a copy: `load_config()` looked for `.env` in `project_root/.env` instead of `~/.hipocampo/.env`, loading incorrect credentials (alex/hipocampo123)
+- If NVIDIA NIM API returned transient HTTP errors (403, 429, timeout), `compress` operations failed with a generic exception
+- The `query_stats` table existed in `esquema.sql` but was never auto-created — `hipocampo_health` reported `DEGRADED`
+- 4 scripts called `register_vector(conn)` on the `_PooledConnection` from `get_conn()` — psycopg2 rejected it with `TypeError`, breaking all vector operations
+- Integration tests sent raw JSON-RPC to FastMCP v1.27+ — missing the `initialize` handshake, failing with `Invalid request parameters`
+
+**Now:**
+- `~/.hipocampo/` is the canonical home: `repo/` (git clone), `~/.hipocampo/scripts/` → `repo/scripts/` (symlink), `~/.hipocampo/hipocampo/` → `repo/hipocampo/` (symlink). Local user scripts moved to `~/.hipocampo/local_scripts/`. `git pull` on `repo/` auto-updates everything
+- `_find_env()` in `db.py` loads `.env` in deterministic order: `ENV_PATH` env var → `~/.hipocampo/.env` (explicit user config) → `project_root/.env` (Docker/Fly). No more wrong credentials
+- `ensure_stats_table()` runs at module import time in the MCP server — `query_stats` table auto-created on start
+- `hipocampo_compress.py` with explicit exception handling: `RateLimitError`, `APITimeoutError`, `APIConnectionError`, `APIStatusError` → immediate fallback to extractive compression. All other errors → fallback with distinct warning level
+- `register_vector(conn)` removed from `hipocampo_search.py`, `hipocampo_checkpoint.py`, `hipocampo_calibrate.py`, `mm_brain_tool.py` — `get_conn()` already registers the vector adapter on the real connection
+- Integration tests rewritten with `mcp[client]` SDK (`stdio_client` + `ClientSession` + `initialize()`) — proper MCP 2025-03-26 handshake
+- 105 tests total, all passing
+
+**Impact:** Zero-touch maintenance after `git pull`. Transient NVIDIA API errors degrade gracefully. Config loading is deterministic and secure. Vector operations work reliably. Tests follow the official MCP protocol.
+
 ---
 
 ## ☕ Support / Donaciones
@@ -340,7 +378,7 @@ If this project helps you, consider supporting its development:
 
 ## 🧪 Testing
 
-Hipocampo includes **102+ unit tests** covering all core logic and MCP integration:
+Hipocampo includes **105+ unit tests** covering all core logic and MCP integration:
 
 | Test file | What it covers |
 |-----------|---------------|
@@ -348,7 +386,7 @@ Hipocampo includes **102+ unit tests** covering all core logic and MCP integrati
 | `tests/test_autotag.py` | All 17 tag rules, 16 category rules, memory_type auto-detection |
 | `tests/test_dedup.py` | Cosine similarity (including 1024-dim vectors), exact and semantic duplicate detection logic |
 | `tests/test_checkpoint.py` | Age scale classification, project grouping, summary generation |
-| `tests/test_mcp_integration.py` | 6 schema tests (tool registration, annotations, params, async signature) + 3 live integration tests (stdio server) |
+| `tests/test_mcp_integration.py` | 6 schema tests (tool registration, annotations, params, async signature) + 3 live integration tests (stdio server, mcp[client] SDK) |
 | `tests/test_rate_limit.py` | Sliding-window rate limiter: acquire/release, prune, stats, default limiters |
 | `tests/test_db.py` | Config validation: missing DB_HOST, NVIDIA_API_KEY, comprehensive coverage |
 
@@ -589,7 +627,7 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 **Tests de Integración:**
 - 6 tests de schema verifican registro de herramientas, anotaciones, parámetros y firma async — sin BD, corren en CI
 - 3 tests de integración en vivo (marcados `@pytest.mark.integration`) arrancan el servidor en modo stdio y verifican tools/list, resources/list y una búsqueda real
-- 102 tests totales, todos pasando
+- 105 tests totales, todos pasando
 
 ### Validación de Config, Rate Limiting y Errores Granulares (v3.8)
 
@@ -607,11 +645,49 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 
 *Consulte los manuales en la carpeta `docs/` para información arquitectónica y configuraciones avanzadas.*
 
+### Retry con Backoff, CLI Consistente y Pre-commit Hooks (v3.8)
+
+**Antes:**
+- `get_embedding()` fallaba al primer timeout o rate limit de la API de NVIDIA — sin reintentos
+- Los 12 scripts usaban `sys.argv` manual — sin `--help`, sin validación de tipos, interfaces inconsistentes
+- No había hooks de pre-commit — fácil pushear código con lint sucio o tests rotos
+
+**Ahora:**
+- `get_embedding()` usa `tenacity` con `wait_exponential(mult=1, min=1, max=30)`, 5 intentos, reintenta solo en `RateLimitError`/`APITimeoutError`/`APIConnectionError`/`InternalServerError`. No reintenta en `AuthenticationError` o `BadRequestError`. Cada reintento se loguea en nivel `warning`
+- Los 12 scripts tienen `argparse` con `--help`, argumentos tipados y nombres consistentes: `hipocampo_mcp_server.py --http 8001`
+- `.pre-commit-config.yaml` con ruff lint+format (pre-commit) y pytest (pre-push). `pyproject.toml` configura ruff con line-length 120
+
+**Impacto:** El server tolera fallos transitorios de la API sin que el cliente vea errores. El CLI es autodocumentado. Cada commit se verifica antes de llegar a GitHub — no más tests rotos en `main`.
+
+---
+
+### Correcciones Locales, Tool `compress_hipocampo` y Estructura basada en Symlinks (v3.9)
+
+**Antes:**
+- Los scripts en `scripts/` eran copias independientes del repo — cada `git pull` requería sincronización manual, y archivos nuevos como `hipocampo_compress.py` no se propagaban
+- Scripts locales (del usuario) convivían en el mismo `scripts/` — sin separación de archivos del repo
+- El paquete `hipocampo/` era también copia: `load_config()` buscaba `.env` en `project_root/.env` en vez de `~/.hipocampo/.env`, cargando credenciales incorrectas (alex/hipocampo123)
+- Si la API de NVIDIA NIM devolvía errores HTTP transitorios (403, 429, timeout), la compresión fallaba con excepción genérica
+- La tabla `query_stats` existía en `esquema.sql` pero nunca se creaba automáticamente — `hipocampo_health` reportaba `DEGRADED`
+- 4 scripts llamaban `register_vector(conn)` sobre el `_PooledConnection` devuelto por `get_conn()` — psycopg2 lo rechazaba con `TypeError`, rompiendo todas las operaciones vectoriales
+- Los tests de integración enviaban JSON-RPC raw a FastMCP v1.27+ — sin el handshake `initialize`, fallaban con `Invalid request parameters`
+
+**Ahora:**
+- `~/.hipocampo/` es el directorio canónico: `repo/` (clon git), `~/.hipocampo/scripts/` → `repo/scripts/` (symlink), `~/.hipocampo/hipocampo/` → `repo/hipocampo/` (symlink). Scripts locales del usuario movidos a `~/.hipocampo/local_scripts/`. `git pull` en `repo/` actualiza todo automáticamente
+- `_find_env()` en `db.py` carga `.env` en orden determinista: `ENV_PATH` → `~/.hipocampo/.env` (config explícita del usuario) → `project_root/.env` (Docker/Fly). Sin más credenciales incorrectas
+- `ensure_stats_table()` se ejecuta al importar el módulo del MCP server — la tabla `query_stats` se crea automáticamente al iniciar
+- `hipocampo_compress.py` con manejo explícito de excepciones: `RateLimitError`, `APITimeoutError`, `APIConnectionError`, `APIStatusError` → fallback inmediato a compresión extractiva. Otros errores → fallback con log de advertencia diferenciado
+- `register_vector(conn)` eliminado de `hipocampo_search.py`, `hipocampo_checkpoint.py`, `hipocampo_calibrate.py`, `mm_brain_tool.py` — `get_conn()` ya registra el adaptador vectorial sobre la conexión real
+- Tests de integración reescritos con el SDK `mcp[client]` (`stdio_client` + `ClientSession` + `initialize()`) — handshake MCP 2025-03-26 correcto
+- 105 tests totales, todos pasando
+
+**Impacto:** Mantenimiento cero tras `git pull`. Errores transitorios de NVIDIA API degradan gracefulmente. Carga de configuración determinista y segura. Operaciones vectoriales confiables. Tests siguen el protocolo MCP oficial.
+
 ---
 
 ## 🧪 Tests
 
-Hipocampo incluye **102+ tests unitarios** cubriendo toda la lógica central e integración MCP:
+Hipocampo incluye **105+ tests unitarios** cubriendo toda la lógica central e integración MCP:
 
 | Archivo | Qué cubre |
 |---------|-----------|
@@ -619,7 +695,7 @@ Hipocampo incluye **102+ tests unitarios** cubriendo toda la lógica central e i
 | `tests/test_autotag.py` | Las 17 reglas de tags, 16 reglas de categoría, detección automática de memory_type |
 | `tests/test_dedup.py` | Similitud coseno (vectores de 1024 dim), lógica de detección de duplicados exactos y semánticos |
 | `tests/test_checkpoint.py` | Clasificación por escalas de edad, agrupación por proyecto, generación de resúmenes |
-| `tests/test_mcp_integration.py` | 6 tests de schema (registro de tools, anotaciones, parámetros, firma async) + 3 tests de integración en vivo (servidor stdio) |
+| `tests/test_mcp_integration.py` | 6 tests de schema (registro de tools, anotaciones, parámetros, firma async) + 3 tests de integración en vivo (servidor stdio, mcp[client] SDK) |
 | `tests/test_rate_limit.py` | Rate limiter sliding-window: acquire/release, prune, stats, limiters por defecto |
 | `tests/test_db.py` | Validación de config: DB_HOST faltante, NVIDIA_API_KEY faltante, cobertura completa |
 
