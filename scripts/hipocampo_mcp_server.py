@@ -55,6 +55,9 @@ import hipocampo_dedup as _dedup
 import hipocampo_checkpoint as _checkpoint
 import hipocampo_compress as _compress
 
+# Ensure query_stats table exists at module load time
+_stats.ensure_stats_table()
+
 WATCHES_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS watches (
     id SERIAL PRIMARY KEY,
@@ -273,7 +276,7 @@ async def compress_hipocampo(
         lines = [
             f"📦 Compress result ({result['method']}):",
             f"   Original: {result['original_len']} chars → Compressed: {result['compressed_len']} chars",
-            f"   Ratio: {result['ratio']*100:.1f}% reduction",
+            f"   Ratio: {result['ratio'] * 100:.1f}% reduction",
             f"   Latency: {result['total_latency_ms']}ms",
             "",
             result["compressed"],
