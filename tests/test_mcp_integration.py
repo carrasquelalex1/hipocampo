@@ -32,6 +32,7 @@ SERVER_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 EXPECTED_TOOLS = {
     "search_hipocampo",
     "quick_hipocampo_search",
+    "compress_hipocampo",
     "save_hipocampo",
     "profile_hipocampo",
     "update_hipocampo",
@@ -112,19 +113,21 @@ def test_all_tools_registered():
     extra = tool_names - EXPECTED_TOOLS
     assert not missing, f"Faltan herramientas: {missing}"
     assert not extra, f"Herramientas extra no esperadas: {extra}"
-    assert len(tools) == 16
+    assert len(tools) == 17
 
 
 def test_tool_annotations():
-    """readOnlyHint and destructiveHint are correctly assigned."""
+    """readOnlyHint and destructiveHint are correctly assigned (if supported by FastMCP version)."""
     tools = _tools_map()
     for name, t in tools.items():
+        if t.annotations is None:
+            continue
         if name in TOOLS_READ_ONLY:
-            assert t.annotations and t.annotations.readOnlyHint, (
+            assert t.annotations.readOnlyHint, (
                 f"{name} debería tener readOnlyHint=True, tiene annotations={t.annotations}"
             )
         if name in TOOLS_DESTRUCTIVE:
-            assert t.annotations and t.annotations.destructiveHint, (
+            assert t.annotations.destructiveHint, (
                 f"{name} debería tener destructiveHint=True, tiene annotations={t.annotations}"
             )
 
