@@ -34,7 +34,7 @@ import uuid
 import psycopg2
 import urllib.request
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.server import ToolAnnotations
+
 
 # ─── CONFIGURACIÓN ─────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -54,9 +54,6 @@ import hipocampo_stats as _stats
 import hipocampo_dedup as _dedup
 import hipocampo_checkpoint as _checkpoint
 import hipocampo_compress as _compress
-
-# Ensure query_stats table exists at module load time
-_stats.ensure_stats_table()
 
 WATCHES_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS watches (
@@ -126,11 +123,7 @@ def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
 mcp = FastMCP("hipocampo")
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-    )
-)
+@mcp.tool()
 async def search_hipocampo(query: str, session_id: str = "") -> str:
     """
     Busca en el Hipocampo (memoria dual con SSC / BIRE v3.6).
@@ -207,11 +200,7 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
         return _tool_err("search_hipocampo", e)
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-    )
-)
+@mcp.tool()
 async def quick_hipocampo_search(query: str, session_id: str = "") -> str:
     """
     Búsqueda rápida en el Hipocampo (alias corto de search_hipocampo).
@@ -234,11 +223,7 @@ async def quick_hipocampo_search(query: str, session_id: str = "") -> str:
     return await search_hipocampo(query, session_id)
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-    )
-)
+@mcp.tool()
 async def compress_hipocampo(
     query: str,
     k: int = 5,
@@ -250,9 +235,9 @@ async def compress_hipocampo(
     Compress retrieved memories using a hybrid approach (extractive + LLM).
 
     First searches Hipocampo (SSC v1.0), then compresses the top-k results:
-    - method=\"extractive\": sentence-level keyword relevance (fast, no API cost)
-    - method=\"llm\": summarization via NVIDIA NIM (highest quality, API cost)
-    - method=\"hybrid\" (default): uses LLM for technical/code content, extractive for generic text
+    - method="extractive": sentence-level keyword relevance (fast, no API cost)
+    - method="llm": summarization via NVIDIA NIM (highest quality, API cost)
+    - method="hybrid" (default): uses LLM for technical/code content, extractive for generic text
 
     Use this tool BEFORE sending context to another LLM to reduce prompt size
     while preserving critical information.
@@ -260,7 +245,7 @@ async def compress_hipocampo(
     Args:
         query: Natural language search query.
         k: Number of memories to retrieve (default 5, max 20).
-        method: Compression method: \"hybrid\" (default), \"extractive\", or \"llm\".
+        method: Compression method: "hybrid" (default), "extractive", or "llm".
         target_token: Target token count (-1 = auto, based on content).
         include_metadata: Include per-memory details in output.
 
@@ -268,16 +253,41 @@ async def compress_hipocampo(
         Compressed context as plain text with compression statistics.
         Includes: compressed text, original/compressed char counts, ratio, latency.
     """
-    import time
+    rate_err = _check_rate(tool_limiter, "compress_hipocampo")
+    if rate_err:
+        return rate_err
 
-    t0 = time.time()
     try:
-        output = await asyncio.to_thread(_compress.compress_memories, query, k, method, target_token)
-        latency = time.time() - t0
-        if include_metadata:
-            metadata = f"\n---\nLatencia: {latency:.2f}s | Query: {query} | k={k} | method={method}"
-            return output + metadata
-        return output
+        result = await asyncio.to_thread(
+            _compress.compress_hipocampo,
+            query=query,
+            k=min(k, 20),
+            method=method,
+            target_token=target_token,
+            include_metadata=include_metadata,
+        )
+
+        if "error" in result:
+            return f"❌ {result['error']}"
+
+        lines = [
+            f"📦 Compress result ({result['method']}):",
+            f"   Original: {result['original_len']} chars → Compressed: {result['compressed_len']} chars",
+            f"   Ratio: {result['ratio']*100:.1f}% reduction",
+            f"   Latency: {result['total_latency_ms']}ms",
+            "",
+            result["compressed"],
+        ]
+
+        if include_metadata and "memories" in result:
+            lines.append("\n📋 Per-memory details:")
+            for i, m in enumerate(result["memories"], 1):
+                lines.append(f"  [{i}] method={m['method']} score={m['score']} technical={m['is_technical']}")
+
+        return "\n".join(lines)
+
+    except (ValueError, TypeError) as e:
+        return _tool_err("compress_hipocampo", e)
     except Exception as e:
         return _tool_err("compress_hipocampo", e)
 
@@ -286,11 +296,12 @@ async def compress_hipocampo(
 def hipocampo_info() -> str:
     """Información general sobre el sistema Hipocampo."""
     return (
-        "🧠 Hipocampo Protocol v3.6\n"
+        "🧠 Hipocampo Protocol v4.0\n"
         "Sistema de memoria dual con SSC (Sparse-Semantic Clusters)\n"
         "· Búsqueda vectorial 1024d (nvidia/nv-embedqa-e5-v5)\n"
         "· Búsqueda léxica expansiva (pg_trgm + GIN)\n"
         "· Re-ranking híbrido BIRE con auto-tagging\n"
+        "· Compresión híbrida de prompts (extractiva + LLM)\n"
         "· Tablas: memoria_vectorial, memory_items\n"
     )
 
@@ -505,12 +516,7 @@ async def profile_hipocampo(
 # ─── HERRAMIENTAS: CRUD (UPDATE / DELETE) ──────────────────────────────────────
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        destructiveHint=True,
-        idempotentHint=True,
-    )
-)
+@mcp.tool()
 async def update_hipocampo(
     id: int,
     content: str | None = None,
@@ -588,11 +594,7 @@ async def update_hipocampo(
         return _tool_err("update_hipocampo", e)
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        destructiveHint=True,
-    )
-)
+@mcp.tool()
 async def delete_hipocampo(id: int) -> str:
     """
     Elimina un recuerdo del Hipocampo (memoria_vectorial) por su ID.
@@ -636,11 +638,7 @@ async def delete_hipocampo(id: int) -> str:
 # ─── HERRAMIENTA: HEALTH CHECK ───────────────────────────────────────────────
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-    )
-)
+@mcp.tool()
 async def hipocampo_health() -> str:
     """
     Ejecuta un health check completo del sistema Hipocampo.
@@ -698,11 +696,7 @@ async def hipocampo_auto_repair() -> str:
 # ─── HERRAMIENTAS: STATS Y AJUSTE DINÁMICO ────────────────────────────────────
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-    )
-)
+@mcp.tool()
 async def hipocampo_stats() -> str:
     """
     Muestra estadísticas de rendimiento del sistema Hipocampo.
@@ -720,12 +714,7 @@ async def hipocampo_stats() -> str:
         return _tool_err("hipocampo_stats", e)
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        destructiveHint=True,
-        idempotentHint=True,
-    )
-)
+@mcp.tool()
 async def hipocampo_tune() -> str:
     """
     Ajusta automáticamente los thresholds y pesos del SSC
@@ -756,13 +745,7 @@ async def hipocampo_tune() -> str:
 # ─── HERRAMIENTAS: MANTENIMIENTO (FASE 3) ─────────────────────────────────────
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-    )
-)
+@mcp.tool()
 async def hipocampo_dedup(merge: bool = False) -> str:
     """
     Detecta y opcionalmente fusiona duplicados en las tablas de memoria.
@@ -819,12 +802,7 @@ async def hipocampo_dedup(merge: bool = False) -> str:
         return _tool_err("hipocampo_dedup", e)
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        destructiveHint=True,
-        idempotentHint=True,
-    )
-)
+@mcp.tool()
 async def hipocampo_checkpoint(dry_run: bool = True) -> str:
     """
     Comprime memorias antiguas usando checkpointing logarítmico.
@@ -978,11 +956,7 @@ async def unwatch_hipocampo(id: int) -> str:
         return _tool_err("unwatch_hipocampo", e)
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-    )
-)
+@mcp.tool()
 async def list_watches() -> str:
     """
     Lista todos los webhooks registrados.
@@ -1055,120 +1029,10 @@ if __name__ == "__main__":
     if http_port:
         port = http_port
         host = args.host
-        import uvicorn
-        from starlette.routing import Route
-        from starlette.responses import JSONResponse
-
         logger.info("🔌 Iniciando Hipocampo MCP Server (Streamable HTTP) en %s:%d", host, port)
         mcp.settings.port = port
         mcp.settings.host = host
-        mcp.settings.transport_security.enable_dns_rebinding_protection = False
-
-        async def api_search(request):
-            q = request.query_params.get("q", "")
-            if not q:
-                return JSONResponse({"ok": False, "error": "query param 'q' required"})
-            try:
-                import time
-
-                t0 = time.time()
-                output = await asyncio.to_thread(_search.search, q)
-                return JSONResponse({"ok": True, "results": output, "latency_ms": int((time.time() - t0) * 1000)})
-            except Exception as e:
-                return JSONResponse({"ok": False, "error": str(e)})
-
-        async def api_save(request):
-            try:
-                body = await request.json()
-                content = body.get("content", "")
-                if not content:
-                    return JSONResponse({"ok": False, "error": "content required"})
-
-                def _do_save():
-                    import json as j
-                    from datetime import date as d
-
-                    embedding = _generar_embedding(content)
-                    metadatos = {
-                        "type": body.get("type", "event"),
-                        "code": body.get("code", ""),
-                        "categories": body.get("categories", []),
-                        "date": str(d.today()),
-                        "source": "web_demo",
-                    }
-                    sid = body.get("session_id", "")
-                    if sid:
-                        metadatos["session_id"] = sid
-                    conn = _conn()
-                    cur = conn.cursor()
-                    cur.execute(
-                        "INSERT INTO memoria_vectorial (contenido, metadatos, embedding) VALUES (%s, %s, %s::vector(1024)) RETURNING id",
-                        (content, j.dumps(metadatos), embedding),
-                    )
-                    row_id = cur.fetchone()[0]
-                    conn.commit()
-                    cur.close()
-                    conn.close()
-                    return {"ok": True, "id": row_id}
-
-                result = await asyncio.to_thread(_do_save)
-                return JSONResponse(result)
-            except Exception as e:
-                return JSONResponse({"ok": False, "error": str(e)})
-
-        async def api_health(request):
-            try:
-                r = await asyncio.to_thread(_health.full_health_check)
-                return JSONResponse({"ok": True, "output": r})
-            except Exception as e:
-                return JSONResponse({"ok": False, "error": str(e)})
-
-        from starlette.applications import Starlette as StarletteApp
-
-        mcp_app = mcp.streamable_http_app()
-        api_app = StarletteApp(
-            routes=[
-                Route("/api/search", endpoint=api_search, methods=["GET"]),
-                Route("/api/save", endpoint=api_save, methods=["POST"]),
-                Route("/api/health", endpoint=api_health, methods=["GET"]),
-            ]
-        )
-        playground_html = open(os.path.join(BASE_DIR, "..", "playground.html"), encoding="utf-8").read()
-
-        async def app(scope, receive, send):
-            if scope["type"] == "http":
-                path = scope["path"]
-                method = scope["method"]
-                if path == "/" and method == "GET":
-                    qs = scope.get("query_string", b"").decode()
-                    if "logs=container" in qs:
-                        body = b'{"status":"ok","server":"hipocampo","endpoint":"/mcp"}'
-                        await send(
-                            {
-                                "type": "http.response.start",
-                                "status": 200,
-                                "headers": [(b"content-type", b"application/json")],
-                            }
-                        )
-                        await send({"type": "http.response.body", "body": body})
-                    else:
-                        body = playground_html.encode("utf-8")
-                        await send(
-                            {
-                                "type": "http.response.start",
-                                "status": 200,
-                                "headers": [(b"content-type", b"text/html; charset=utf-8")],
-                            }
-                        )
-                        await send({"type": "http.response.body", "body": body})
-                    return
-                if path.startswith("/mcp") or path.startswith("/sse"):
-                    await mcp_app(scope, receive, send)
-                    return
-                await api_app(scope, receive, send)
-
-        config = uvicorn.Config(app, host=host, port=port, log_level=mcp.settings.log_level.lower())
-        uvicorn.Server(config).run()
+        mcp.run(transport="streamable-http")
     elif sse_port:
         logger.warning("⚠️  --sse está deprecado desde spec MCP 2025-03-26. Usa --http en su lugar.")
         logger.info("🔌 Iniciando Hipocampo MCP Server (SSE) en puerto %d", sse_port)

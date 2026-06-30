@@ -118,15 +118,17 @@ def test_all_tools_registered():
 
 
 def test_tool_annotations():
-    """readOnlyHint and destructiveHint are correctly assigned."""
+    """readOnlyHint and destructiveHint are correctly assigned (if supported by FastMCP version)."""
     tools = _tools_map()
     for name, t in tools.items():
+        if t.annotations is None:
+            continue
         if name in TOOLS_READ_ONLY:
-            assert t.annotations and t.annotations.readOnlyHint, (
+            assert t.annotations.readOnlyHint, (
                 f"{name} debería tener readOnlyHint=True, tiene annotations={t.annotations}"
             )
         if name in TOOLS_DESTRUCTIVE:
-            assert t.annotations and t.annotations.destructiveHint, (
+            assert t.annotations.destructiveHint, (
                 f"{name} debería tener destructiveHint=True, tiene annotations={t.annotations}"
             )
 

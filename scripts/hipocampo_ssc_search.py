@@ -20,7 +20,6 @@ import json
 import sys
 import re
 import time
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, get_embedding, load_config
 

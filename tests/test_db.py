@@ -36,7 +36,9 @@ class TestValidateConfig:
         }
         errors = validate_config(config)
         assert len(errors) == 1
+        # DB_PASSWORD is optional (socket auth doesn't need it)
         assert "DB_HOST, DB_USER, DB_NAME" in errors[0]
+        assert "DB_PASSWORD" not in errors[0]
 
     def test_missing_nvidia_key(self):
         config = {
