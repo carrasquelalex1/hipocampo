@@ -39,7 +39,13 @@ ESCALAS = [
 
 
 def obtener_edades(cur):
-    """Clasifica entradas por escala temporal según metadatos->'fecha'."""
+    """Clasifica entradas por escala temporal según metadatos->'fecha'.
+
+    Respeta niveles jerárquicos:
+      - automatica: se omite (nunca se comprime)
+      - semantica: se marca como no comprimible
+      - episodica o sin nivel: comprimible normalmente
+    """
     ahora = datetime.now()
 
     cur.execute("""
@@ -54,48 +60,63 @@ def obtener_edades(cur):
 
     for row in rows:
         meta = json.loads(row[2])
+        nivel = meta.get("nivel", "episodica")
+
+        # automatica = regla permanente, nunca se toca
+        if nivel == "automatica":
+            continue
+
+        # semantica = protegida, solo se indexa como no comprimible
+        es_semantica = nivel == "semantica"
+
         fecha_str = meta.get("fecha")
         if fecha_str:
             try:
                 fecha = datetime.fromisoformat(fecha_str)
                 edad = ahora - fecha
+                key = (escalas["24h"], [])
                 if edad < timedelta(hours=24):
-                    escalas["24h"].append(row)
+                    key = escalas["24h"]
                 elif edad < timedelta(days=7):
-                    escalas["7d"].append(row)
+                    key = escalas["7d"]
                 elif edad < timedelta(days=30):
-                    escalas["30d"].append(row)
+                    key = escalas["30d"]
                 elif edad < timedelta(days=90):
-                    escalas["90d"].append(row)
+                    key = escalas["90d"]
                 else:
-                    escalas["all"].append(row)
+                    key = escalas["all"]
+                key.append((row, es_semantica))
             except (ValueError, TypeError):
-                sin_fecha.append(row)
+                sin_fecha.append((row, es_semantica))
         else:
-            sin_fecha.append(row)
+            sin_fecha.append((row, es_semantica))
 
     return escalas, sin_fecha
 
 
 def agrupar_por_proyecto(entries):
-    """Agrupa entradas por proyecto según metadatos."""
+    """Agrupa entradas por proyecto según metadatos.
+    entries: list of (row, es_semantica) tuples.
+    """
     grupos = {}
-    for row in entries:
+    for row, es_semantica in entries:
         meta = json.loads(row[2])
         proyecto = meta.get("proyecto", meta.get("path", "general"))
         if proyecto not in grupos:
             grupos[proyecto] = []
-        grupos[proyecto].append(row)
+        grupos[proyecto].append((row, es_semantica))
     return grupos
 
 
 def generar_resumen(grupo, max_chars=300):
-    """Genera un resumen comprimido de un grupo de entradas."""
+    """Genera un resumen comprimido de un grupo de entradas.
+    grupo: list of (row, es_semantica) tuples.
+    """
     if not grupo:
         return None
 
     titulos = []
-    for row in grupo[:5]:
+    for row, es_semantica in grupo:
         contenido = row[1][:150].strip()
         titulos.append(contenido)
 
@@ -104,7 +125,7 @@ def generar_resumen(grupo, max_chars=300):
         resumen = resumen[: max_chars - 3] + "..."
 
     tags = set()
-    for row in grupo:
+    for row, es_semantica in grupo:
         meta = json.loads(row[2])
         ts = meta.get("tags", [])
         if isinstance(ts, list):
@@ -118,7 +139,10 @@ def generar_resumen(grupo, max_chars=300):
 
 
 def generar_checkpoints(escalas, sin_fecha, dry_run=False):
-    """Genera checkpoints por escala temporal."""
+    """Genera checkpoints por escala temporal.
+    entries ahora son listas de (row, es_semantica) tuples.
+    Las semánticas se mantienen sin comprimir.
+    """
     reportes = []
 
     for escala_nombre, _ in ESCALAS:
@@ -128,7 +152,6 @@ def generar_checkpoints(escalas, sin_fecha, dry_run=False):
 
         grupos = agrupar_por_proyecto(entries)
 
-        # Definir compresión por escala
         if escala_nombre == "24h":
             max_items = None
             max_chars = 500
@@ -150,19 +173,38 @@ def generar_checkpoints(escalas, sin_fecha, dry_run=False):
 
         resumenes = []
         for proyecto, grupo in grupos.items():
-            if max_items is not None and len(grupo) > max_items:
-                r = generar_resumen(grupo, max_chars)
+            semanticas = [g for g in grupo if g[1]]
+            episodicas = [g for g in grupo if not g[1]]
+
+            # Las semánticas siempre se mantienen en detalle
+            for row, es_sem in semanticas:
+                meta = json.loads(row[2])
+                resumenes.append(
+                    {
+                        "proyecto": proyecto,
+                        "resumen": row[1][:max_chars],
+                        "total_items": 1,
+                        "tags": meta.get("tags", []),
+                        "comprimido": False,
+                        "original_count": 1,
+                        "nivel": "semantica",
+                    }
+                )
+
+            # Episódicas se comprimen según la escala
+            if max_items is not None and len(episodicas) > max_items:
+                r = generar_resumen(episodicas, max_chars)
                 if r:
                     resumenes.append(
                         {
                             "proyecto": proyecto,
                             **r,
                             "comprimido": True,
-                            "original_count": len(grupo),
+                            "original_count": len(episodicas),
                         }
                     )
             else:
-                for row in grupo:
+                for row, es_sem in episodicas:
                     meta = json.loads(row[2])
                     resumenes.append(
                         {

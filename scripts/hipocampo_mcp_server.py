@@ -54,6 +54,7 @@ import hipocampo_stats as _stats
 import hipocampo_dedup as _dedup
 import hipocampo_checkpoint as _checkpoint
 import hipocampo_compress as _compress
+import hipocampo_index_project as _indexer
 
 # Ensure query_stats table exists at module load time
 _stats.ensure_stats_table()
@@ -566,6 +567,7 @@ async def save_hipocampo(
     session_id: str = "",
     force: bool = False,
     auto_link: bool = False,
+    nivel: str = "episodica",
 ) -> str:
     """
     Guarda un recuerdo en el Hipocampo (memoria_vectorial).
@@ -591,6 +593,10 @@ async def save_hipocampo(
         force: Si True, guarda incluso si existe un recuerdo muy similar.
         auto_link: Si True, busca recuerdos semánticamente similares (>0.75)
                    y crea enlaces "similar" automáticamente.
+        nivel: Nivel de memoria jerárquica:
+               "episodica" (default) — detalle completo, comprimible,
+               "semantica" — conocimiento consolidado, protegido,
+               "automatica" — regla permanente, nunca se comprime.
 
     Returns:
         Confirmación con el ID asignado.
@@ -601,6 +607,12 @@ async def save_hipocampo(
 
     def _do():
         logger.info("🧠 Guardando en Hipocampo: content=%r...", content[:80])
+
+        if not content or not content.strip():
+            return "❌ El contenido no puede estar vacío."
+
+        if nivel not in ("episodica", "semantica", "automatica"):
+            return f"❌ Nivel inválido: {nivel}. Usa: episodica, semantica, automatica."
 
         if not force:
             dedup_warning = _check_dedup(content)
@@ -615,6 +627,7 @@ async def save_hipocampo(
             "categories": categories or [],
             "date": str(date.today()),
             "source": "mcp",
+            "nivel": nivel,
         }
         if session_id:
             metadatos["session_id"] = session_id
@@ -825,6 +838,126 @@ async def update_hipocampo(
         return await asyncio.to_thread(_do)
     except Exception as e:
         return _tool_err("update_hipocampo", e)
+
+
+@mcp.tool()
+async def set_nivel_hipocampo(id: int, nivel: str) -> str:
+    """
+    Cambia el nivel jerárquico de un recuerdo.
+
+    Niveles:
+      - "episodica" — detalle completo, comprimible por checkpoint
+      - "semantica" — conocimiento consolidado, protegido de compresión
+      - "automatica" — regla permanente, nunca se comprime/checkpointea
+
+    Args:
+        id: ID del recuerdo.
+        nivel: Nuevo nivel: "episodica", "semantica", o "automatica".
+
+    Returns:
+        Confirmación del cambio.
+    """
+    if nivel not in ("episodica", "semantica", "automatica"):
+        return f"❌ Nivel inválido: {nivel}. Usa: episodica, semantica, automatica."
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute("SELECT metadatos FROM memoria_vectorial WHERE id = %s", (id,))
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            conn.close()
+            return f"❌ No existe recuerdo con id={id}."
+
+        meta = (row[0] or {}).copy()
+        meta["nivel"] = nivel
+        cur.execute("UPDATE memoria_vectorial SET metadatos = %s WHERE id = %s", (json.dumps(meta), id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return f"✅ Recuerdo #{id} promovido a nivel '{nivel}'."
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("set_nivel_hipocampo", e)
+
+
+@mcp.tool()
+async def consolidate_hipocampo(min_age_days: int = 7, dry_run: bool = True) -> str:
+    """
+    Consolidación jerárquica: migra memorias episódicas antiguas a semánticas.
+
+    Busca recuerdos con nivel 'episodica' más antiguos que min_age_days
+    y los promueve a 'semantica', opcionalmente comprimiendo su contenido.
+
+    Args:
+        min_age_days: Edad mínima en días para consolidar (default 7).
+        dry_run: Si True, solo muestra qué se consolidaría.
+
+    Returns:
+        Reporte de la consolidación.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, contenido, metadatos::text FROM memoria_vectorial
+               WHERE metadatos->>'nivel' = 'episodica'
+                  OR metadatos->>'nivel' IS NULL
+               ORDER BY id"""
+        )
+        rows = cur.fetchall()
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        candidates = []
+        for row in rows:
+            meta = json.loads(row[2])
+            fecha_str = meta.get("date") or meta.get("fecha")
+            if not fecha_str:
+                continue
+            try:
+                fecha = datetime.fromisoformat(fecha_str)
+                if fecha.tzinfo is None:
+                    fecha = fecha.replace(tzinfo=timezone.utc)
+                edad = (now - fecha).days
+                if edad >= min_age_days:
+                    candidates.append(row)
+            except (ValueError, TypeError):
+                continue
+        if not candidates:
+            cur.close()
+            conn.close()
+            return "✅ No hay recuerdos episódicos antiguos para consolidar."
+        if dry_run:
+            lines = [f"📋 Consolidación (dry-run): {len(candidates)} candidatos a promover a semántica:"]
+            for c in candidates[:20]:
+                meta = json.loads(c[2])
+                lines.append(f"  [{c[0]}] {c[1][:60]}... (nivel: {meta.get('nivel', 'episodica')})")
+            if len(candidates) > 20:
+                lines.append(f"  ... y {len(candidates) - 20} más")
+            cur.close()
+            conn.close()
+            return "\n".join(lines)
+        promoted = 0
+        for c in candidates:
+            meta = json.loads(c[2])
+            meta["nivel"] = "semantica"
+            meta["consolidated_at"] = str(date.today())
+            cur.execute("UPDATE memoria_vectorial SET metadatos = %s WHERE id = %s", (json.dumps(meta), c[0]))
+            promoted += 1
+        conn.commit()
+        cur.close()
+        conn.close()
+        return f"✅ {promoted} recuerdos promovidos de episódica → semántica."
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("consolidate_hipocampo", e)
 
 
 @mcp.tool()
@@ -1594,6 +1727,117 @@ async def path_hipocampo(from_id: int, to_id: int, max_depth: int = 5) -> str:
         return "\n".join(lines)
     except Exception as e:
         return _tool_err("path_hipocampo", e)
+
+
+# ─── RAG DE CÓDIGO — Tools ────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def index_project(project_path: str = "", force: bool = False) -> str:
+    """
+    Indexa archivos de código fuente de un proyecto en Hipocampo (RAG).
+
+    Escanea archivos PHP, JS, TS, Python, SQL, HTML, CSS, JSON, YAML,
+    los divide en chunks significativos y los guarda como recuerdos con
+    embedding para búsqueda semántica.
+
+    La segunda corrida solo indexa archivos modificados (por mtime).
+
+    Args:
+        project_path: Ruta absoluta del proyecto a indexar.
+                      Si está vacía, usa el directorio actual.
+        force: Si True, re-indexa todo aunque no haya cambios.
+
+    Returns:
+        Estadísticas de la indexación.
+    """
+    if not project_path:
+        project_path = os.getcwd()
+
+    try:
+        stats = await asyncio.to_thread(_indexer.index_project, project_path, force)
+        return _indexer.format_stats(stats, project_path)
+    except Exception as e:
+        return f"❌ Error indexando proyecto: {e}"
+
+
+@mcp.tool()
+async def search_code(query: str, k: int = 5, language: str = "") -> str:
+    """
+    Busca código fuente indexado en Hipocampo (RAG).
+
+    Similar a search_hipocampo pero filtra solo recuerdos de tipo
+    code_snippet y devuelve fragmentos de código real con
+    ubicación de archivo.
+
+    Args:
+        query: Consulta en lenguaje natural.
+        k: Número de resultados (default 5, max 20).
+        language: Filtrar por lenguaje (php, javascript, python, sql, etc.).
+                  Vacío = todos los lenguajes.
+
+    Returns:
+        Fragmentos de código relevantes con metadatos de archivo.
+    """
+    k = min(k, 20)
+
+    def _do():
+        import time
+
+        t0 = time.time()
+        emb = get_embedding(query)
+        if not emb:
+            return "❌ No se pudo generar embedding para la consulta."
+
+        conn = get_conn()
+        cur = conn.cursor()
+        lang_filter = "AND metadatos->>'language' = %s" if language else ""
+        params = [emb, emb]
+        if language:
+            params.append(language)
+
+        cur.execute(
+            f"""SELECT id, contenido, metadatos::text,
+                       (embedding <=> %s::vector(1024)) AS dist
+                FROM memoria_vectorial
+                WHERE metadatos->>'source' = 'code_index'
+                  AND metadatos->>'status' IS DISTINCT FROM 'obsolete'
+                  {lang_filter}
+                ORDER BY (embedding <=> %s::vector(1024))
+                LIMIT %s""",
+            params + [k],
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not rows:
+            return f"No se encontró código relevante para: {query}"
+
+        latency = int((time.time() - t0) * 1000)
+        lines = [f"🔍 Resultados de código para: {query!r}  ({latency}ms)"]
+        for i, row in enumerate(rows, 1):
+            rid, content, meta_str, dist = row
+            score = round((1 - dist) * 100, 1)
+            meta = json.loads(meta_str)
+            rel_path = meta.get("rel_path", "?")
+            lang = meta.get("language", "?")
+            lines.extend(
+                [
+                    "",
+                    f"── [{i}] {rel_path}  (score={score:.1f})  {lang}",
+                    f"    Líneas {meta.get('line_start', '?')}-{meta.get('line_end', '?')}",
+                    f"```{lang}",
+                    content[:600],
+                    "```" if len(content) > 600 else "",
+                ]
+            )
+        return "\n".join(lines)
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("search_code", e)
 
 
 if __name__ == "__main__":
