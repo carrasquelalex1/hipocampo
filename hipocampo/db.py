@@ -8,6 +8,7 @@ Usage:
 import os
 import logging
 import threading
+import hashlib
 import openai
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -163,6 +164,25 @@ def get_conn(config=None):
 
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+_EMBEDDING_CACHE: dict[str, list[float]] = {}
+_EMBEDDING_CACHE_MAX = 512
+
+
+def _embedding_cache_key(text: str, dims: int) -> str:
+    return f"{hashlib.sha256(text.encode()).hexdigest()}:{dims}"
+
+
+def _cached_embedding_lookup(text: str, dims: int = 1024) -> list[float] | None:
+    key = _embedding_cache_key(text, dims)
+    return _EMBEDDING_CACHE.get(key)
+
+
+def _cached_embedding_store(text: str, dims: int, embedding: list[float]):
+    key = _embedding_cache_key(text, dims)
+    if len(_EMBEDDING_CACHE) >= _EMBEDDING_CACHE_MAX:
+        _EMBEDDING_CACHE.clear()
+    _EMBEDDING_CACHE[key] = embedding
+
 
 def _is_retryable_openai_error(exc):
     """Return True for transient OpenAI errors that should be retried."""
@@ -180,12 +200,18 @@ def _is_retryable_openai_error(exc):
     ) and not isinstance(exc, (openai.AuthenticationError, openai.BadRequestError))
 
 
-def get_embedding(text, dims=1024, api_key=None):
+def get_embedding(text, dims=1024, api_key=None, use_cache=True):
     if api_key is None:
         api_key = os.getenv("NVIDIA_API_KEY")
     if not api_key:
         logger.warning("NVIDIA_API_KEY no configurada — no se puede generar embedding")
         return None
+
+    if use_cache:
+        cached = _cached_embedding_lookup(text, dims)
+        if cached is not None:
+            logger.debug("Embedding cache hit: %r...", text[:40])
+            return cached
 
     @retry(
         stop=stop_after_attempt(5),
@@ -222,7 +248,10 @@ def get_embedding(text, dims=1024, api_key=None):
         return resp.data[0].embedding
 
     try:
-        return _do()
+        result = _do()
+        if result is not None and use_cache:
+            _cached_embedding_store(text, dims, result)
+        return result
     except openai.AuthenticationError:
         logger.warning("NVIDIA_API_KEY inválida o expirada — embedding falló")
         return None

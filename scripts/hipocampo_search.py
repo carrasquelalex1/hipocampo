@@ -11,6 +11,7 @@ import os
 import json
 import sys
 import re
+import math
 from datetime import date
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -463,8 +464,25 @@ def cargar_config_hibrida():
         return 0.6
 
 
+def _cargar_time_decay_lambda():
+    try:
+        with open(HYBRID_CONFIG_PATH) as f:
+            return json.load(f).get("time_decay_lambda", 0.05)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 0.05
+
+
+def _time_decay(dias, lmbda=None):
+    if lmbda is None:
+        lmbda = _cargar_time_decay_lambda()
+    if dias <= 7:
+        return 1.0
+    return max(0.2, math.exp(-lmbda * dias))
+
+
 def _aplicar_decaimiento_temporal(resultados):
     hoy = date.today()
+    lmbda = _cargar_time_decay_lambda()
     for r in resultados:
         fecha_str = r.get("metadatos", {}).get("date", "")
         if fecha_str:
@@ -472,10 +490,10 @@ def _aplicar_decaimiento_temporal(resultados):
                 partes = fecha_str.split("-")
                 fecha = date(int(partes[0]), int(partes[1]), int(partes[2]))
                 dias = (hoy - fecha).days
-                if dias > 7:
-                    decay = max(0.3, 1.0 - 0.05 * (dias / 7))
+                decay = _time_decay(dias, lmbda)
+                if decay < 1.0:
                     r["score"] = round(r["score"] * decay, 1)
-                    r["score_raw"] = r["score"]
+                    r["time_decay"] = decay
             except (ValueError, IndexError):
                 pass
     return resultados
@@ -625,6 +643,26 @@ def search(query: str, session_id: str = "") -> str:
     """
     resultados = bire_search(query, session_id=session_id)
     return formatear_resultados(resultados, query)
+
+
+def search_with_stats(query: str, session_id: str = "") -> tuple[str, dict]:
+    """Run BIRE search and return (formatted_text, stats_dict).
+
+    Stats dict contains structured metrics for logging/recording:
+    - results_count: total resultados
+    - top_score: mejor score
+    - avg_score: score promedio
+    - method: siempre 'bire'
+    """
+    resultados = bire_search(query, session_id=session_id)
+    text = formatear_resultados(resultados, query)
+    stats = {
+        "results_count": len(resultados),
+        "top_score": round(resultados[0]["score"], 1) if resultados else 0.0,
+        "avg_score": round(sum(r["score"] for r in resultados) / len(resultados), 1) if resultados else 0.0,
+        "method": "bire",
+    }
+    return text, stats
 
 
 def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):

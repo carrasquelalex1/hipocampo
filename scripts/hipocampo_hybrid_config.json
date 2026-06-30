@@ -1,8 +1,9 @@
 {
   "alpha": 0.7,
-  "beta": 0.30000000000000004,
+  "beta": 0.3,
   "vectorial_confidence_min": 0.85,
-  "description": "Ponderación híbrida calibrada: 60% vectorial + 40% léxico",
+  "time_decay_lambda": 0.05,
+  "description": "BIRE: 70% vectorial + 30% léxico. Decaimiento exponencial λ=0.05.",
   "calibrated_at": "2026-06-12",
   "dataset_size": 12,
   "last_tuned": "2026-06-28T01:54:26"

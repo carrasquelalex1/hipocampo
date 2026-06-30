@@ -208,7 +208,7 @@ class TestDecaimientoTemporal:
         ]
         result = _aplicar_decaimiento_temporal(items)
         assert result[0]["score"] < 80.0  # debe decaer
-        assert result[0]["score"] >= 24.0  # floor 30% de 80
+        assert result[0]["score"] >= 16.0  # floor 20% de 80 (exponencial)
 
     def test_sin_fecha_sin_decaimiento(self):
         items = [

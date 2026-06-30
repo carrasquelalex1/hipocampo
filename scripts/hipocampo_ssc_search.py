@@ -19,11 +19,16 @@ import os
 import json
 import sys
 import re
+import math
 import time
+from datetime import date
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, get_embedding, load_config
 
 config = load_config()
+
+HYBRID_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hipocampo_hybrid_config.json")
 
 CONFIANZA_ALTA = 70.0
 CONFIANZA_MEDIA = 40.0
@@ -266,6 +271,41 @@ def ssc_ilike(cur, query, router):
     return todos, max_score
 
 
+def _cargar_lambda():
+    try:
+        with open(HYBRID_CONFIG_PATH) as f:
+            return json.load(f).get("time_decay_lambda", 0.05)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 0.05
+
+
+def _time_decay(dias, lmbda=None):
+    if lmbda is None:
+        lmbda = _cargar_lambda()
+    if dias <= 7:
+        return 1.0
+    return max(0.2, math.exp(-lmbda * dias))
+
+
+def _aplicar_decaimiento_ssc(resultados):
+    hoy = date.today()
+    lmbda = _cargar_lambda()
+    for r in resultados:
+        fecha_str = r.get("metadatos", {}).get("date", "")
+        if fecha_str:
+            try:
+                partes = fecha_str.split("-")
+                fecha = date(int(partes[0]), int(partes[1]), int(partes[2]))
+                dias = (hoy - fecha).days
+                decay = _time_decay(dias, lmbda)
+                if decay < 1.0:
+                    r["score"] = round(r["score"] * decay, 1)
+                    r["time_decay"] = decay
+            except (ValueError, IndexError):
+                pass
+    return resultados
+
+
 # ─── FUSIÓN SSC ───────────────────────────────────────────────────────────────
 
 
@@ -305,6 +345,8 @@ def ssc_search(query, umbral_minimo=10.0):
                 todos[r["id"]] = r
 
     fusionados = sorted(todos.values(), key=lambda x: x["score"], reverse=True)
+    fusionados = _aplicar_decaimiento_ssc(fusionados)
+    fusionados.sort(key=lambda x: x["score"], reverse=True)
     filtrados = [r for r in fusionados if r["score"] >= umbral_minimo]
 
     elapsed = time.time() - start

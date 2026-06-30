@@ -123,6 +123,40 @@ def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
 
 
 # ─── INICIALIZACIÓN MCP ─────────────────────────────────────────────────────
+
+
+def _auto_checkpoint():
+    """Auto-trigger checkpoint if memory count > 150 or oldest > 30 days."""
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute("SELECT count(*) FROM memoria_vectorial")
+        count = cur.fetchone()[0]
+        cur.execute("SELECT min((metadatos->>'date')::date) FROM memoria_vectorial WHERE metadatos ? 'date'")
+        oldest = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+
+        reason = None
+        if count > 150:
+            reason = f"count ({count}) > 150"
+        elif oldest:
+            from datetime import date as dt_date
+
+            days_old = (dt_date.today() - oldest).days
+            if days_old > 30:
+                reason = f"oldest memory {days_old}d > 30d"
+
+        if reason:
+            logger.info("📦 Auto-checkpoint triggered: %s", reason)
+            import hipocampo_checkpoint as _cp
+
+            result = _cp.run_checkpoint(dry_run=False)
+            logger.info("📦 Auto-checkpoint result: %s", result[:200] if result else "OK")
+    except Exception as e:
+        logger.warning("Auto-checkpoint skipped: %s", e)
+
+
 mcp = FastMCP("hipocampo")
 
 
@@ -164,34 +198,28 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
         return rate_err
 
     try:
-        output = await asyncio.to_thread(_search.search, query, session_id)
+        output, stats = await asyncio.to_thread(_search.search_with_stats, query, session_id)
 
         latency_ms = int((time.time() - t0) * 1000)
-        logger.info("Hipocampo search OK query=%r latency=%dms", query, latency_ms)
-
-        results_count = 0
-        top_score = 0.0
-        avg_score = 0.0
-        for line in output.split("\n"):
-            if "📍" in line:
-                results_count += 1
-            if "Score promedio:" in line:
-                parts = line.split(":")
-                if len(parts) >= 2:
-                    try:
-                        avg_score = float(parts[1].strip())
-                    except Exception:
-                        pass
-            if "🏆 Mejor score:" in line:
-                parts = line.split(":")
-                if len(parts) >= 2:
-                    try:
-                        top_score = float(parts[1].strip())
-                    except Exception:
-                        pass
+        logger.info(
+            "Hipocampo search OK query=%r latency=%dms results=%d top=%.1f avg=%.1f",
+            query,
+            latency_ms,
+            stats["results_count"],
+            stats["top_score"],
+            stats["avg_score"],
+        )
 
         try:
-            await asyncio.to_thread(_stats.record_query, query, latency_ms, results_count, "ssc", top_score, avg_score)
+            await asyncio.to_thread(
+                _stats.record_query,
+                query,
+                latency_ms,
+                stats["results_count"],
+                stats["method"],
+                stats["top_score"],
+                stats["avg_score"],
+            )
         except Exception as e:
             logger.warning("Stats record falló: %s", e)
 
@@ -312,6 +340,43 @@ def hipocampo_info() -> str:
 # ─── EMBEDDING HELPER ────────────────────────────────────────────────────────
 
 
+def _check_dedup(content: str, threshold: float = 0.9) -> str | None:
+    """Check if content already exists in memoria_vectorial.
+
+    Returns a warning string if duplicate found, None otherwise.
+    """
+    try:
+        emb = get_embedding(content)
+        if emb is None:
+            return None
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, contenido,
+                      (embedding <=> %s::vector(1024)) AS dist
+               FROM memoria_vectorial
+               WHERE (embedding <=> %s::vector(1024)) < %s
+               ORDER BY dist
+               LIMIT 1""",
+            (emb, emb, 1 - threshold),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            sim = round((1 - row[2]) * 100, 1)
+            return (
+                f"⚠️ Ya existe un recuerdo muy similar (id={row[0]}, similitud={sim}%). "
+                f"Contenido existente: {row[1][:120]}... "
+                f"Usa update_hipocampo(id={row[0]}) para actualizarlo, "
+                f"o pasa force=True para guardar de todas formas."
+            )
+        return None
+    except Exception as e:
+        logger.warning("Dedup check falló: %s", e)
+        return None
+
+
 def _generar_embedding(texto: str, tool_name: str = "unknown") -> list[float]:
     rate_err = _check_rate(embedding_limiter, tool_name)
     if rate_err:
@@ -389,12 +454,16 @@ async def save_hipocampo(
     code: str = "",
     categories: list[str] | None = None,
     session_id: str = "",
+    force: bool = False,
 ) -> str:
     """
     Guarda un recuerdo en el Hipocampo (memoria_vectorial).
 
     Genera embedding automáticamente y persiste el contenido para que sea
     encontrable por búsqueda semántica futura.
+
+    Si ya existe un recuerdo con similitud semántica >0.9, se advierte
+    y se omite el guardado a menos que force=True.
 
     Args:
         content: Texto del recuerdo a guardar.
@@ -408,6 +477,7 @@ async def save_hipocampo(
         categories: Lista de categorías (opcional).
                     Ej: ["python", "mcp", "infraestructura"].
         session_id: Opcional. Identificador de sesión para aislar memorias.
+        force: Si True, guarda incluso si existe un recuerdo muy similar.
 
     Returns:
         Confirmación con el ID asignado.
@@ -418,6 +488,13 @@ async def save_hipocampo(
 
     def _do():
         logger.info("🧠 Guardando en Hipocampo: content=%r...", content[:80])
+
+        if not force:
+            dedup_warning = _check_dedup(content)
+            if dedup_warning:
+                logger.info("Dedup bloqueó guardado (similar existente)")
+                return dedup_warning
+
         embedding = _generar_embedding(content, "save_hipocampo")
         metadatos = {
             "type": memory_type,
@@ -1020,6 +1097,7 @@ if __name__ == "__main__":
             logger.warning("⚠️  Config: %s", err)
     _init_watches_table()
     init_pool()
+    _auto_checkpoint()
 
     http_port = args.http_port
     if not http_port and args.transport == "http":
