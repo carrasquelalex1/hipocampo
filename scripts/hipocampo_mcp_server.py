@@ -69,6 +69,22 @@ CREATE TABLE IF NOT EXISTS watches (
 CREATE INDEX IF NOT EXISTS idx_watches_pattern ON watches(pattern);
 """
 
+MEMORY_LINKS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS memory_links (
+    id SERIAL PRIMARY KEY,
+    source_id INTEGER NOT NULL,
+    target_id INTEGER NOT NULL,
+    relation_type TEXT NOT NULL DEFAULT 'related',
+    weight REAL NOT NULL DEFAULT 1.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata JSONB DEFAULT '{}',
+    UNIQUE(source_id, target_id, relation_type)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_links_source ON memory_links(source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_id);
+CREATE INDEX IF NOT EXISTS idx_memory_links_type ON memory_links(relation_type);
+"""
+
 
 def _init_watches_table():
     try:
@@ -84,6 +100,23 @@ def _init_watches_table():
         logger.warning("DB error al inicializar tabla watches: %s", e)
     except Exception as e:
         logger.warning("Error inesperado al inicializar tabla watches: %s", e)
+
+
+def _init_memory_links_table():
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        for stmt in MEMORY_LINKS_TABLE_SQL.split(";"):
+            if stmt.strip():
+                cur.execute(stmt)
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("✅ memory_links table initialized")
+    except psycopg2.Error as e:
+        logger.warning("DB error al inicializar memory_links: %s", e)
+    except Exception as e:
+        logger.warning("Error inesperado al inicializar memory_links: %s", e)
 
 
 def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
@@ -532,6 +565,7 @@ async def save_hipocampo(
     categories: list[str] | None = None,
     session_id: str = "",
     force: bool = False,
+    auto_link: bool = False,
 ) -> str:
     """
     Guarda un recuerdo en el Hipocampo (memoria_vectorial).
@@ -555,6 +589,8 @@ async def save_hipocampo(
                     Ej: ["python", "mcp", "infraestructura"].
         session_id: Opcional. Identificador de sesión para aislar memorias.
         force: Si True, guarda incluso si existe un recuerdo muy similar.
+        auto_link: Si True, busca recuerdos semánticamente similares (>0.75)
+                   y crea enlaces "similar" automáticamente.
 
     Returns:
         Confirmación con el ID asignado.
@@ -597,8 +633,47 @@ async def save_hipocampo(
         _fire_webhooks("save", row_id, content, metadatos)
         _auto_summarize_session(session_id)
 
+        links_created = 0
+        if auto_link:
+            try:
+                emb = get_embedding(content)
+                if emb:
+                    cur = conn.cursor()
+                    cur.execute(
+                        """SELECT id, contenido, (embedding <=> %s::vector(1024)) AS dist
+                           FROM memoria_vectorial
+                           WHERE id != %s AND (embedding <=> %s::vector(1024)) < 0.25
+                           ORDER BY dist
+                           LIMIT 3""",
+                        (emb, row_id, emb),
+                    )
+                    similar = cur.fetchall()
+                    cur.close()
+                    for sim_id, sim_content, dist in similar:
+                        sim = round((1 - dist) * 100, 1)
+                        if sim > 75:
+                            try:
+                                c2 = _conn()
+                                c2_cur = c2.cursor()
+                                c2_cur.execute(
+                                    """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
+                                       VALUES (%s, %s, 'similar', %s) ON CONFLICT DO NOTHING""",
+                                    (row_id, sim_id, sim / 100),
+                                )
+                                c2.commit()
+                                c2_cur.close()
+                                c2.close()
+                                links_created += 1
+                            except Exception:
+                                pass
+            except Exception:
+                logger.warning("Auto-link falló para id=%s", row_id)
+
         logger.info("✅ Guardado id=%s", row_id)
-        return f"✅ Guardado en Hipocampo (id={row_id})"
+        msg = f"✅ Guardado en Hipocampo (id={row_id})"
+        if links_created:
+            msg += f" 🔗 {links_created} auto-enlace(s) creado(s)"
+        return msg
 
     try:
         return await asyncio.to_thread(_do)
@@ -1209,6 +1284,318 @@ async def preload_context(project_path: str = "", k: int = 8) -> str:
     return "\n".join(lines)
 
 
+# ─── MEMORY GRAPH — Tools ────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def link_hipocampo(source_id: int, target_id: int, relation_type: str = "related", weight: float = 1.0) -> str:
+    """
+    Crea un enlace entre dos recuerdos en el grafo de memoria.
+
+    Args:
+        source_id: ID del recuerdo origen.
+        target_id: ID del recuerdo destino.
+        relation_type: Tipo de relación. Valores comunes:
+                       "related" (default), "follow_up", "part_of",
+                       "references", "similar", "chain".
+        weight: Peso de la relación (0.0 a 1.0, default 1.0).
+
+    Returns:
+        Confirmación del enlace creado.
+    """
+    if source_id == target_id:
+        return "❌ No se puede enlazar un recuerdo consigo mismo."
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            for rid in (source_id, target_id):
+                cur.execute(
+                    "SELECT id FROM memoria_vectorial WHERE id = %s UNION SELECT id FROM memory_items WHERE id = %s",
+                    (rid, rid),
+                )
+                if not cur.fetchone():
+                    return f"❌ No existe recuerdo con id={rid}."
+
+            cur.execute(
+                """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
+                   VALUES (%s, %s, %s, %s) RETURNING id""",
+                (source_id, target_id, relation_type, weight),
+            )
+            link_id = cur.fetchone()[0]
+            conn.commit()
+            return f"✅ Enlace #{link_id} creado: [{source_id}] --{relation_type}--> [{target_id}] (peso={weight})"
+        except psycopg2.Error as e:
+            if "unique" in str(e).lower():
+                return f"⚠️ Ya existe un enlace {relation_type} entre {source_id} y {target_id}."
+            return f"❌ Error de BD: {e}"
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("link_hipocampo", e)
+
+
+@mcp.tool()
+async def unlink_hipocampo(id: int = 0, source_id: int = 0, target_id: int = 0, relation_type: str = "") -> str:
+    """
+    Elimina un enlace del grafo de memoria.
+
+    Args:
+        id: ID del enlace a eliminar (si se conoce).
+        source_id: Si no se provee id, elimina por source+target+type.
+        target_id: ID destino (requerido si no hay id).
+        relation_type: Tipo de relación (opcional si no hay id).
+
+    Returns:
+        Confirmación de eliminación.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            if id:
+                cur.execute("DELETE FROM memory_links WHERE id = %s RETURNING id", (id,))
+                if cur.fetchone():
+                    conn.commit()
+                    return f"✅ Enlace #{id} eliminado."
+                return f"❌ No existe enlace con id={id}."
+            elif source_id and target_id:
+                if relation_type:
+                    cur.execute(
+                        "DELETE FROM memory_links WHERE source_id=%s AND target_id=%s AND relation_type=%s RETURNING id",
+                        (source_id, target_id, relation_type),
+                    )
+                else:
+                    cur.execute(
+                        "DELETE FROM memory_links WHERE source_id=%s AND target_id=%s RETURNING id",
+                        (source_id, target_id),
+                    )
+                deleted = cur.fetchall()
+                conn.commit()
+                if deleted:
+                    ids = [r[0] for r in deleted]
+                    return f"✅ {len(ids)} enlace(s) eliminado(s): {ids}."
+                return f"❌ No se encontró enlace entre {source_id} y {target_id}."
+            else:
+                return "❌ Debes proveer id, o source_id + target_id."
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("unlink_hipocampo", e)
+
+
+@mcp.tool()
+async def graph_hipocampo(node_id: int = 0, depth: int = 2, max_nodes: int = 50) -> str:
+    """
+    Explora el grafo de memoria desde un nodo raíz.
+
+    Args:
+        node_id: ID del recuerdo raíz. Si es 0, lista todos los nodos
+                 con enlaces (vista general).
+        depth: Profundidad de exploración (default 2, max 5).
+        max_nodes: Máximo de nodos a mostrar (default 50).
+
+    Returns:
+        Árbol ASCII del grafo de memoria.
+    """
+    depth = min(depth, 5)
+
+    def _fetch_content(rid: int) -> str:
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT contenido FROM memoria_vectorial WHERE id=%s "
+                "UNION SELECT summary FROM memory_items WHERE id=%s",
+                (rid, rid),
+            )
+            row = cur.fetchone()
+            if row:
+                text = row[0][:80].replace("\n", " ")
+                return f"[{rid}] {text}"
+            return f"[{rid}] (desconocido)"
+        finally:
+            cur.close()
+            conn.close()
+
+    def _fetch_edges(rid: int) -> list[tuple]:
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """SELECT target_id, relation_type, weight, id FROM memory_links
+                   WHERE source_id=%s ORDER BY weight DESC, id""",
+                (rid,),
+            )
+            return cur.fetchall()
+        finally:
+            cur.close()
+            conn.close()
+
+    def _build_tree(rid: int, current_depth: int, visited: set) -> list[str]:
+        if len(visited) >= max_nodes or current_depth > depth:
+            return ["..."]
+
+        if rid in visited:
+            return [f"↩ [{rid}] (ya visitado)"]
+        visited.add(rid)
+
+        label = _fetch_content(rid)
+        lines = [label]
+
+        if current_depth < depth:
+            edges = _fetch_edges(rid)
+            for target_id, rel_type, weight, link_id in edges:
+                indent = "  " * (current_depth + 1)
+                prefix = f"{indent}└── ({rel_type}, w={weight}) "
+                child_lines = _build_tree(target_id, current_depth + 1, visited)
+                if child_lines:
+                    lines.append(prefix + child_lines[0])
+                    for cl in child_lines[1:]:
+                        lines.append(indent + "   " + cl)
+
+        return lines
+
+    def _list_all():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """SELECT COUNT(DISTINCT source_id) as nodes,
+                          COUNT(*) as edges,
+                          COUNT(DISTINCT relation_type) as types
+                   FROM memory_links"""
+            )
+            stats = cur.fetchone()
+            cur.execute("""
+                SELECT source_id, COUNT(*) as link_count
+                FROM memory_links GROUP BY source_id
+                ORDER BY link_count DESC LIMIT 20
+            """)
+            top = cur.fetchall()
+            lines = [
+                "📊 GRAFO DE MEMORIA — Vista General",
+                f"   Nodos con enlaces: {stats[0]}",
+                f"   Total enlaces: {stats[1]}",
+                f"   Tipos de relación: {stats[2]}",
+                "",
+                "🏆 Nodos más conectados:",
+            ]
+            for src, cnt in top:
+                content = _fetch_content(src)
+                lines.append(f"   · {content} ({cnt} enlaces)")
+            return "\n".join(lines)
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        if node_id == 0:
+            return await asyncio.to_thread(_list_all)
+
+        tree = await asyncio.to_thread(_build_tree, node_id, 0, set())
+        return f"🌳 Grafo desde [{node_id}] (depth={depth}):\n" + "\n".join(tree)
+    except Exception as e:
+        return _tool_err("graph_hipocampo", e)
+
+
+@mcp.tool()
+async def path_hipocampo(from_id: int, to_id: int, max_depth: int = 5) -> str:
+    """
+    Encuentra el camino más corto entre dos recuerdos en el grafo de memoria.
+
+    Args:
+        from_id: ID del recuerdo origen.
+        to_id: ID del recuerdo destino.
+        max_depth: Profundidad máxima de búsqueda (default 5, max 10).
+
+    Returns:
+        Camino encontrado como secuencia de nodos.
+    """
+    max_depth = min(max_depth, 10)
+
+    def _fetch_content(rid: int) -> str:
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT contenido FROM memoria_vectorial WHERE id=%s "
+                "UNION SELECT summary FROM memory_items WHERE id=%s",
+                (rid, rid),
+            )
+            row = cur.fetchone()
+            if row:
+                return row[0][:60].replace("\n", " ")
+            return f"[{rid}]"
+        finally:
+            cur.close()
+            conn.close()
+
+    def _fetch_neighbors(rid: int) -> list[int]:
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT target_id FROM memory_links WHERE source_id=%s "
+                "UNION SELECT source_id FROM memory_links WHERE target_id=%s",
+                (rid, rid),
+            )
+            return [r[0] for r in cur.fetchall()]
+        finally:
+            cur.close()
+            conn.close()
+
+    def _bfs():
+        from collections import deque
+
+        visited = {from_id: None}
+        q = deque([from_id])
+        while q:
+            current = q.popleft()
+            if current == to_id:
+                path = []
+                while current is not None:
+                    path.append(current)
+                    current = visited[current]
+                path.reverse()
+                return path
+            for nb in _fetch_neighbors(current):
+                if nb not in visited:
+                    visited[nb] = current
+                    q.append(nb)
+            if len(visited) > 1000:
+                break
+        return None
+
+    try:
+        if from_id == to_id:
+            label = await asyncio.to_thread(_fetch_content, from_id)
+            return f"📍 Origen = destino: {label}"
+
+        path = await asyncio.to_thread(_bfs)
+        if not path or len(path) > max_depth + 1:
+            return f"❌ No se encontró camino entre [{from_id}] y [{to_id}] (hasta depth={max_depth})."
+
+        lines = [f"🔗 Camino encontrado ({len(path) - 1} saltos):"]
+        for i, nid in enumerate(path):
+            label = await asyncio.to_thread(_fetch_content, nid)
+            arrow = " → " if i < len(path) - 1 else ""
+            lines.append(f"  {i}.[{nid}] {label}{arrow}")
+        return "\n".join(lines)
+    except Exception as e:
+        return _tool_err("path_hipocampo", e)
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -1235,6 +1622,7 @@ if __name__ == "__main__":
         for err in cfg_errors:
             logger.warning("⚠️  Config: %s", err)
     _init_watches_table()
+    _init_memory_links_table()
     init_pool()
     _auto_checkpoint()
 
