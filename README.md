@@ -77,6 +77,22 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 
 ---
 
+## ⚡ Why PostgreSQL + pgvector (Not SQLite)? / ¿Por qué PostgreSQL + pgvector (y no SQLite)?
+
+You might wonder why Hipocampo uses PostgreSQL 17 with pgvector instead of a lighter stack like SQLite. The answer: **hybrid search requires more than vector similarity alone.**
+
+Hipocampo's retrieval pipeline combines **pgvector (HNSW)** for semantic search, **pg_trgm (GIN)** for lexical expansion, and **ILIKE** for fallback — fused into a single weighted score. SQLite extensions like `sqlite-vec` offer vector search, but lack:
+- **GIN trigram indexes** for fuzzy/partial matching
+- **Full-text + vector hybrid fusion** in a single query
+- **Production-grade HNSW indexing** with concurrent writes
+- **pg_trgm-based query expansion** when embeddings alone are insufficient
+
+With ~1,100+ records across two memory tables and growing, Hipocampo needs a database that scales without sacrificing retrieval quality. PostgreSQL + pgvector isn't "heavy" for the sake of it — it's the minimum viable stack to deliver the hybrid accuracy that BIRE and SSC require.
+
+**En español:** Tal vez te preguntes por qué Hipocampo usa PostgreSQL 17 con pgvector en lugar de algo más ligero como SQLite. La respuesta es que **la búsqueda híbrida necesita más que solo similitud vectorial.** El pipeline de recuperación combina **pgvector (HNSW)** para búsqueda semántica, **pg_trgm (GIN)** para expansión léxica e **ILIKE** como fallback — todo fusionado en un solo score ponderado. Extensiones de SQLite como `sqlite-vec` ofrecen búsqueda vectorial, pero carecen de índices GIN trigram, fusión híbrida texto+vector en una sola consulta, indexación HNSW de nivel productivo con escrituras concurrentes, y expansión por pg_trgm cuando los embeddings no bastan. Con más de 1,100 registros en dos tablas de memoria y creciendo, Hipocampo necesita una base de datos que escale sin sacrificar calidad de recuperación. PostgreSQL + pgvector no es "pesado" por capricho — es el stack mínimo viable para la precisión híbrida que BIRE y SSC exigen.
+
+---
+
 ## 🎯 Use Cases
 
 ### Error → Learn → Never Repeat (AI Agent Learning Loop)
