@@ -24,9 +24,9 @@ class TestEscalas:
 class TestAgruparPorProyecto:
     def test_agrupa_por_proyecto(self):
         entries = [
-            (1, "item1", json.dumps({"proyecto": "alpha"})),
-            (2, "item2", json.dumps({"proyecto": "beta"})),
-            (3, "item3", json.dumps({"proyecto": "alpha"})),
+            ((1, "item1", json.dumps({"proyecto": "alpha"})), False),
+            ((2, "item2", json.dumps({"proyecto": "beta"})), False),
+            ((3, "item3", json.dumps({"proyecto": "alpha"})), False),
         ]
         grupos = agrupar_por_proyecto(entries)
         assert "alpha" in grupos
@@ -36,14 +36,14 @@ class TestAgruparPorProyecto:
 
     def test_sin_proyecto_usar_general(self):
         entries = [
-            (1, "item", json.dumps({"tags": ["test"]})),
+            ((1, "item", json.dumps({"tags": ["test"]})), False),
         ]
         grupos = agrupar_por_proyecto(entries)
         assert "general" in grupos
 
     def test_usar_path_si_no_hay_proyecto(self):
         entries = [
-            (1, "item", json.dumps({"path": "mi_ruta"})),
+            ((1, "item", json.dumps({"path": "mi_ruta"})), False),
         ]
         grupos = agrupar_por_proyecto(entries)
         assert "mi_ruta" in grupos
@@ -55,7 +55,7 @@ class TestAgruparPorProyecto:
 class TestGenerarResumen:
     def test_resumen_simple(self):
         grupo = [
-            (1, "Este es un contenido de prueba para el resumen", json.dumps({"tags": ["test"]})),
+            ((1, "Este es un contenido de prueba para el resumen", json.dumps({"tags": ["test"]})), False),
         ]
         result = generar_resumen(grupo, max_chars=300)
         assert result is not None
@@ -65,7 +65,7 @@ class TestGenerarResumen:
 
     def test_resumen_truncado(self):
         grupo = [
-            (1, "A" * 500, json.dumps({"tags": []})),
+            ((1, "A" * 500, json.dumps({"tags": []})), False),
         ]
         result = generar_resumen(grupo, max_chars=100)
         assert len(result["resumen"]) <= 103  # 100 + "..."
@@ -76,9 +76,9 @@ class TestGenerarResumen:
 
     def test_multiples_items(self):
         grupo = [
-            (1, "Primer item", json.dumps({"tags": ["tag1"]})),
-            (2, "Segundo item", json.dumps({"tags": ["tag2"]})),
-            (3, "Tercer item", json.dumps({"tags": ["tag1", "tag3"]})),
+            ((1, "Primer item", json.dumps({"tags": ["tag1"]})), False),
+            ((2, "Segundo item", json.dumps({"tags": ["tag2"]})), False),
+            ((3, "Tercer item", json.dumps({"tags": ["tag1", "tag3"]})), False),
         ]
         result = generar_resumen(grupo, max_chars=500)
         assert result["total_items"] == 3
@@ -88,7 +88,7 @@ class TestGenerarResumen:
         assert "Primer item" in result["resumen"]
 
     def test_muestra_solo_primeros_5(self):
-        grupo = [(i, f"Item {i}", json.dumps({"tags": []})) for i in range(10)]
+        grupo = [((i, f"Item {i}", json.dumps({"tags": []})), False) for i in range(10)]
         result = generar_resumen(grupo, max_chars=1000)
         assert "Item 0" in result["resumen"]
         assert "Item 4" in result["resumen"]

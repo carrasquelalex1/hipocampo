@@ -32,10 +32,19 @@ EXPECTED_TOOLS = {
     "search_hipocampo",
     "quick_hipocampo_search",
     "compress_hipocampo",
+    "preload_context",
     "save_hipocampo",
     "profile_hipocampo",
     "update_hipocampo",
+    "set_nivel_hipocampo",
+    "consolidate_hipocampo",
     "delete_hipocampo",
+    "link_hipocampo",
+    "unlink_hipocampo",
+    "graph_hipocampo",
+    "path_hipocampo",
+    "index_project",
+    "search_code",
     "hipocampo_health",
     "hipocampo_auto_repair",
     "hipocampo_stats",
@@ -114,7 +123,7 @@ def test_all_tools_registered():
     extra = tool_names - EXPECTED_TOOLS
     assert not missing, f"Faltan herramientas: {missing}"
     assert not extra, f"Herramientas extra no esperadas: {extra}"
-    assert len(tools) == 17
+    assert len(tools) == 26
 
 
 def test_tool_annotations():
