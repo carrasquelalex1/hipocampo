@@ -7,11 +7,19 @@ PG_MAJOR="${PG_MAJOR:-16}"
 PG_BIN="/usr/lib/postgresql/${PG_MAJOR}/bin"
 PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 
+# Ensure data directory is owned by postgres (HF Spaces may persist with wrong owner)
+mkdir -p "$PGDATA"
+chown postgres:postgres "$PGDATA" 2>/dev/null || true
+
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
     echo "Initializing PostgreSQL..."
-    mkdir -p "$PGDATA"
-    chown -R postgres:postgres "$PGDATA"
-    su - postgres -c "${PG_BIN}/initdb -D $PGDATA"
+    # Force correct ownership (HF Spaces may have stale permissions)
+    chown -R postgres:postgres "$PGDATA" 2>/dev/null || true
+    su - postgres -c "${PG_BIN}/initdb -D $PGDATA" || {
+        echo "initdb failed, wiping PGDATA and retrying..."
+        rm -rf "$PGDATA"/*
+        su - postgres -c "${PG_BIN}/initdb -D $PGDATA"
+    }
 
     echo "listen_addresses = 'localhost'" >> "$PGDATA/postgresql.conf"
     echo "port = 5432" >> "$PGDATA/postgresql.conf"
