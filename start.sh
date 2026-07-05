@@ -74,6 +74,10 @@ if [ "$(id -u)" = "0" ]; then
     su - postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};'" 2>&1
     su - postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};'" 2>&1
     su - postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'GRANT CREATE ON SCHEMA public TO ${DB_USER};'" 2>&1
+    # Transfer ownership so hipocampo user can create/modify tables at runtime
+    for tbl in watches memory_links query_stats; do
+        su - postgres -c "${PG_BIN}/psql -d ${DB_NAME} -c 'ALTER TABLE IF EXISTS ${tbl} OWNER TO ${DB_USER};'" 2>&1 || true
+    done
 else
     createdb "${DB_NAME}" 2>/dev/null || true
     psql -d "${DB_NAME}" -c 'CREATE EXTENSION IF NOT EXISTS vector;' 2>&1
