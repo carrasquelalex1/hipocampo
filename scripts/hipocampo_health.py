@@ -36,6 +36,26 @@ def check_postgresql():
         cur.execute("SELECT 1")
         results["checks"]["connection"] = "ok"
 
+        # Versión de PostgreSQL y extensiones
+        cur.execute("SELECT version()")
+        results["checks"]["pg_version"] = cur.fetchone()[0][:60]
+        cur.execute("SELECT extversion FROM pg_extension WHERE extname='vector'")
+        pgv_row = cur.fetchone()
+        results["checks"]["pgvector_version"] = pgv_row[0] if pgv_row else "no instalado"
+
+        # Verificar register_vector (detecta incompatibilidad pgvector/PG17)
+        try:
+            from pgvector.psycopg2 import register_vector
+            register_vector(conn)
+            results["checks"]["register_vector"] = "ok"
+        except Exception as ve:
+            err = str(ve)
+            if "indam" in err:
+                results["checks"]["register_vector"] = "incompatible: pgvector no soporta esta versión de PostgreSQL (indam). Ejecuta: pip install --upgrade pgvector"
+            else:
+                results["checks"]["register_vector"] = f"error: {err[:100]}"
+            results["status"] = "degraded"
+
         for table in ["memoria_vectorial", "memory_items", "memory_categories", "query_stats", "watches"]:
             cur.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name=%s)", (table,))
             exists = cur.fetchone()[0]

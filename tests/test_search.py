@@ -71,7 +71,7 @@ class TestFusionarResultados:
                 "method": "vectorial",
                 "source": "memoria_vectorial",
                 "tabla": "memoria_vectorial",
-                "metadatos": {"date": "2026-06-26"},
+                "metadatos": {"date": "2026-07-04"},
                 "code_snippet": None,
             }
         ]
@@ -87,7 +87,7 @@ class TestFusionarResultados:
                 "method": "lexico_expansivo",
                 "source": "memoria_vectorial",
                 "tabla": "memoria_vectorial",
-                "metadatos": {"date": "2026-06-26"},
+                "metadatos": {"date": "2026-07-04"},
                 "code_snippet": None,
             }
         ]
@@ -102,7 +102,7 @@ class TestFusionarResultados:
                 "method": "vectorial",
                 "source": "memoria_vectorial",
                 "tabla": "memoria_vectorial",
-                "metadatos": {"date": "2026-06-26"},
+                "metadatos": {"date": "2026-07-04"},
                 "code_snippet": None,
             }
         ]
@@ -113,7 +113,7 @@ class TestFusionarResultados:
                 "method": "lexico_expansivo",
                 "source": "memoria_vectorial",
                 "tabla": "memoria_vectorial",
-                "metadatos": {"date": "2026-06-26"},
+                "metadatos": {"date": "2026-07-04"},
                 "code_snippet": None,
             }
         ]
@@ -129,7 +129,7 @@ class TestFusionarResultados:
                 "method": "vectorial",
                 "source": "memoria_vectorial",
                 "tabla": "memoria_vectorial",
-                "metadatos": {"date": "2026-06-26"},
+                "metadatos": {"date": "2026-07-04"},
                 "code_snippet": None,
             }
         ]
@@ -140,7 +140,7 @@ class TestFusionarResultados:
                 "method": "lexico_expansivo",
                 "source": "memoria_vectorial",
                 "tabla": "memoria_vectorial",
-                "metadatos": {"date": "2026-06-26"},
+                "metadatos": {"date": "2026-07-04"},
                 "code_snippet": None,
             }
         ]
@@ -155,7 +155,7 @@ class TestFusionarResultados:
                 "method": "vectorial",
                 "source": "memoria_vectorial",
                 "tabla": "memoria_vectorial",
-                "metadatos": {"date": "2026-06-26"},
+                "metadatos": {"date": "2026-07-04"},
                 "code_snippet": None,
             }
         ]
@@ -166,7 +166,7 @@ class TestFusionarResultados:
                 "method": "lexico_expansivo",
                 "source": "memoria_vectorial",
                 "tabla": "memoria_vectorial",
-                "metadatos": {"date": "2026-06-26"},
+                "metadatos": {"date": "2026-07-04"},
                 "code_snippet": None,
             }
         ]
@@ -180,7 +180,7 @@ class TestDecaimientoTemporal:
             {
                 "contenido": "nuevo",
                 "score": 80.0,
-                "metadatos": {"date": "2026-06-26"},
+                "metadatos": {"date": "2026-07-04"},
                 "method": "vectorial",
                 "source": "memoria_vectorial",
                 "tabla": "memoria_vectorial",

@@ -30,9 +30,10 @@ config = load_config()
 
 HYBRID_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hipocampo_hybrid_config.json")
 
-CONFIANZA_ALTA = 70.0
-CONFIANZA_MEDIA = 40.0
-SSC_TOP_K = 20
+CONFIANZA_ALTA = 60.0
+CONFIANZA_MEDIA = 35.0
+SSC_TOP_K = 15
+SSC_EF_SEARCH = 20 (perf: embedding LRU cache, SSC early exit, lower ef_search; fix: health check pgvector/PG17 compat, reset thresholds, cap tune bounds)
 
 PERFIL_KEYWORDS = [
     "nombre",
@@ -308,11 +309,23 @@ def _aplicar_decaimiento_ssc(resultados):
 
 # ─── FUSIÓN SSC ───────────────────────────────────────────────────────────────
 
+_register_vector_cache = {}
+
+def _ensure_vector_registration(conn):
+    conn_id = id(conn)
+    if conn_id not in _register_vector_cache:
+        register_vector(conn)
+        _register_vector_cache[conn_id] = True
+
 
 def ssc_search(query, umbral_minimo=10.0):
     conn = get_conn()
+    _ensure_vector_registration(conn)
     cur = conn.cursor()
     start = time.time()
+
+    # HNSW: ef_search bajo = más rápido, menos preciso
+    cur.execute(f"SET hnsw.ef_search = {SSC_EF_SEARCH}")
 
     router = tag_router(query)
     todos = {}
@@ -327,8 +340,9 @@ def ssc_search(query, umbral_minimo=10.0):
 
     tags_msg = router["modo"].upper()
 
-    # Fase 3: trigram si confianza baja
-    if confianza_max < CONFIANZA_ALTA or len(todos) < 3:
+    # Fase 3: trigram si confianza baja O pocos resultados
+    ya_tengo_buenos = len([r for r in todos.values() if r['score'] >= umbral_minimo]) >= 3
+    if (confianza_max < CONFIANZA_ALTA or len(todos) < 3) and not ya_tengo_buenos:
         tri_results, confianza = ssc_trigram(cur, query, router)
         confianza_max = max(confianza_max, confianza)
         fase = 3
@@ -336,8 +350,8 @@ def ssc_search(query, umbral_minimo=10.0):
             if r["id"] not in todos:
                 todos[r["id"]] = r
 
-    # Fase 4: ILIKE si confianza muy baja
-    if confianza_max < CONFIANZA_MEDIA or len([r for r in todos.values() if r["score"] >= umbral_minimo]) < 2:
+    ya_tengo_suficientes = len([r for r in todos.values() if r['score'] >= umbral_minimo]) >= 5
+    if (confianza_max < CONFIANZA_MEDIA or len([r for r in todos.values() if r['score'] >= umbral_minimo]) < 2) and not ya_tengo_suficientes:
         ili_results, confianza = ssc_ilike(cur, query, router)
         fase = 4
         for r in ili_results:

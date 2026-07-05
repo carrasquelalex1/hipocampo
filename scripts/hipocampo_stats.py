@@ -27,10 +27,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, load_config
 
 DEFAULT_THRESHOLDS = {
-    "vectorial_confidence_min": 0.7,
-    "trigram_confidence_min": 0.4,
-    "alpha": 0.6,
-    "beta": 0.4,
+    "vectorial_confidence_min": 0.65,
+    "trigram_confidence_min": 0.35,
+    "alpha": 0.5,
+    "beta": 0.5,
 }
 
 LATENCY_TABLE_SQL = """
@@ -164,23 +164,32 @@ def tune_thresholds():
     changes = {}
     old_config = dict(config)
 
-    if stats["p95_latency_ms"] > 8000 and config.get("vectorial_confidence_min", 0.7) < 0.85:
-        config["vectorial_confidence_min"] = min(0.85, config.get("vectorial_confidence_min", 0.7) + 0.05)
-        changes["vectorial_confidence_min"] = (
-            f"{old_config.get('vectorial_confidence_min', 0.7)} → {config['vectorial_confidence_min']}"
-        )
+    MAX_ALPHA = 0.6
+    MIN_ALPHA = 0.4
+    MAX_CONFIDENCE = 0.75
+    MIN_CONFIDENCE = 0.5
 
-    if stats["p95_latency_ms"] < 2000 and config.get("vectorial_confidence_min", 0.7) > 0.5:
-        config["vectorial_confidence_min"] = max(0.5, config.get("vectorial_confidence_min", 0.7) - 0.05)
-        changes["vectorial_confidence_min"] = (
-            f"{old_config.get('vectorial_confidence_min', 0.7)} → {config['vectorial_confidence_min']}"
-        )
+    if stats["p95_latency_ms"] > 8000 and config.get("vectorial_confidence_min", 0.65) < MAX_CONFIDENCE:
+        nuevo_vc = min(MAX_CONFIDENCE, config.get("vectorial_confidence_min", 0.65) + 0.05)
+        config["vectorial_confidence_min"] = nuevo_vc
+        changes["vectorial_confidence_min"] = f"{old_config.get('vectorial_confidence_min', 0.65):.2f} → {nuevo_vc:.2f}"
+
+    if stats["p95_latency_ms"] < 2000 and config.get("vectorial_confidence_min", 0.65) > MIN_CONFIDENCE:
+        nuevo_vc = max(MIN_CONFIDENCE, config.get("vectorial_confidence_min", 0.65) - 0.05)
+        config["vectorial_confidence_min"] = nuevo_vc
+        changes["vectorial_confidence_min"] = f"{old_config.get('vectorial_confidence_min', 0.65):.2f} → {nuevo_vc:.2f}"
 
     if stats["avg_top_score"] < 15 and stats["total_queries"] > 10:
-        new_alpha = min(0.7, config.get("alpha", 0.6) + 0.05)
+        new_alpha = min(MAX_ALPHA, config.get("alpha", 0.5) + 0.05)
         config["alpha"] = new_alpha
         config["beta"] = 1 - new_alpha
-        changes["alpha"] = f"{old_config.get('alpha', 0.6)} → {new_alpha}"
+        changes["alpha"] = f"{old_config.get('alpha', 0.5):.1f} → {new_alpha:.1f}"
+
+    if stats["avg_top_score"] > 30 and stats["total_queries"] > 10:
+        new_alpha = max(MIN_ALPHA, config.get("alpha", 0.5) - 0.05)
+        config["alpha"] = new_alpha
+        config["beta"] = 1 - new_alpha
+        changes["alpha"] = f"{old_config.get('alpha', 0.5):.1f} → {new_alpha:.1f}"
 
     config["last_tuned"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     with open(CONFIG_PATH, "w") as f:
