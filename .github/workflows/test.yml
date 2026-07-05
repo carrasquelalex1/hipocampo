@@ -13,6 +13,28 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
 
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: alex
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: hipocampo_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: localhost
+      DB_USER: alex
+      DB_PASSWORD: secret
+      DB_NAME: hipocampo_db
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,8 +46,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-asyncio
           pip install -r requirements.txt
+
+      - name: Create DB schema
+        run: |
+          psql "$DB_NAME" -f esquema.sql -h "$DB_HOST" -U "$DB_USER"
+        env:
+          PGPASSWORD: ${{ env.DB_PASSWORD }}
 
       - name: Run tests with coverage
         run: |

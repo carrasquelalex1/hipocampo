@@ -56,8 +56,11 @@ import hipocampo_checkpoint as _checkpoint
 import hipocampo_compress as _compress
 import hipocampo_index_project as _indexer
 
-# Ensure query_stats table exists at module load time
-_stats.ensure_stats_table()
+# Ensure query_stats table exists (lazy — safe if DB not reachable)
+try:
+    _stats.ensure_stats_table()
+except Exception:
+    logger.warning("query_stats table not available (DB not reachable yet)")
 
 WATCHES_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS watches (
