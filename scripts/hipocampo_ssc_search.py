@@ -33,7 +33,7 @@ HYBRID_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "h
 CONFIANZA_ALTA = 60.0
 CONFIANZA_MEDIA = 35.0
 SSC_TOP_K = 15
-SSC_EF_SEARCH = 20 (perf: embedding LRU cache, SSC early exit, lower ef_search; fix: health check pgvector/PG17 compat, reset thresholds, cap tune bounds)
+SSC_EF_SEARCH = 20  # perf: embedding LRU cache, SSC early exit, lower ef_search; fix: health check pgvector/PG17 compat, reset thresholds, cap tune bounds
 
 PERFIL_KEYWORDS = [
     "nombre",
