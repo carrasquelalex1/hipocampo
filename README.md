@@ -438,6 +438,35 @@ If this project helps you, consider supporting its development:
 
 ---
 
+## ⚡ Performance Optimizations (v3.9)
+
+Optimizations applied in July 2026 to address latency and threshold drift:
+
+### Embedding Cache
+
+`get_embedding()` now uses an **LRU cache (128 entries)** — repeated queries for identical text skip the NVIDIA API call entirely, saving ~450ms each. The OpenAI client is also reused across calls instead of being recreated.
+
+### SSC Search Acceleration
+
+- **`SSC_TOP_K`** reduced from 20 → 15: fewer vector results per table means faster vector search
+- **`hnsw.ef_search = 20`**: lower HNSW breadth-of-search for approximate (faster) nearest neighbors (default was 40)
+- **`CONFIANZA_ALTA`** lowered from 70 → 60: early exit from the SSC pipeline sooner when vector results are already good
+- **Early exit**: if ≥3 results already exceed the minimum threshold, trigram and ILIKE phases are skipped entirely
+- **`register_vector`** cached per connection to avoid redundant SQL introspection
+
+### Threshold Reset & Sane Auto-Tune
+
+- **`alpha`** reset from 0.6 → **0.5** (balanced 50% vector + 50% lexical), **`vectorial_confidence_min`** from 0.75 → **0.70**
+- Auto-tune (`hipocampo_tune()`) now **capped**: alpha stays within 0.4–0.6, confidence within 0.5–0.75
+- Auto-tune can now **decrease** alpha too (if scores are high enough, reduces vector bias)
+
+### Health Check Improvements
+
+- Reports **PostgreSQL version** and **pgvector version** for compatibility diagnostics
+- Verifies `register_vector()` and detects the **pgvector/PG17 `indam` incompatibility** with a clear upgrade message
+
+---
+
 ## 🧪 Testing
 
 Hipocampo includes **105+ unit tests** covering all core logic and MCP integration:
@@ -802,6 +831,35 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 - 105 tests totales, todos pasando
 
 **Impacto:** Mantenimiento cero tras `git pull`. Errores transitorios de NVIDIA API degradan gracefulmente. Carga de configuración determinista y segura. Operaciones vectoriales confiables. Tests siguen el protocolo MCP oficial.
+
+---
+
+## ⚡ Optimizaciones de Rendimiento (v3.9)
+
+Optimizaciones aplicadas en Julio 2026 para reducir latencia y estabilizar thresholds:
+
+### Caché de Embeddings
+
+`get_embedding()` ahora usa un **caché LRU (128 entradas)** — consultas repetidas con el mismo texto saltan la llamada a la API de NVIDIA, ahorrando ~450ms cada una. El cliente de OpenAI también se reutiliza entre llamadas.
+
+### Aceleración de Búsqueda SSC
+
+- **`SSC_TOP_K`** reducido de 20 → 15: menos resultados vectoriales por tabla = búsqueda más rápida
+- **`hnsw.ef_search = 20`**: menor amplitud de búsqueda HNSW para vecinos aproximados más rápidos (default era 40)
+- **`CONFIANZA_ALTA`** bajada de 70 → 60: salida temprana del pipeline SSC cuando los resultados vectoriales ya son buenos
+- **Early exit**: si ya hay ≥3 resultados sobre el umbral mínimo, se saltan las fases trigram e ILIKE
+- **`register_vector`** cacheado por conexión para evitar introspección SQL redundante
+
+### Reset de Thresholds y Auto-Tune Controlado
+
+- **`alpha`** reseteado de 0.6 → **0.5** (balanceado 50% vectorial + 50% léxico), **`vectorial_confidence_min`** de 0.75 → **0.70**
+- Auto-tune (`hipocampo_tune()`) ahora **limitado**: alpha se mantiene entre 0.4–0.6, confidence entre 0.5–0.75
+- Auto-tune ahora también puede **disminuir** alpha (si los scores son altos, reduce el sesgo vectorial)
+
+### Mejoras en Health Check
+
+- Reporta **versión de PostgreSQL** y **versión de pgvector** para diagnóstico de compatibilidad
+- Verifica `register_vector()` y detecta la **incompatibilidad pgvector/PG17 (`indam`)** con un mensaje claro de actualización
 
 ---
 
