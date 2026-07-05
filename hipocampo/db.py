@@ -42,6 +42,34 @@ def load_config(env_path=None):
     }
 
 
+_pool = None
+
+
+def init_pool(minconn=1, maxconn=10):
+    """Pre-warm connection pool. Called once at server startup."""
+    import psycopg2.pool
+    global _pool
+    if _pool is None:
+        cfg = load_config()
+        _pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn, maxconn,
+            host=cfg['DB_HOST'],
+            user=cfg['DB_USER'],
+            dbname=cfg['DB_NAME'],
+            password=cfg['DB_PASSWORD'],
+        )
+
+
+def get_conn_from_pool():
+    """Get a connection from the pool (falls back to direct connect)."""
+    if _pool is not None:
+        try:
+            return _pool.getconn()
+        except Exception:
+            pass
+    return get_conn()
+
+
 def get_conn(config=None):
     """Return a psycopg2 connection.
 
