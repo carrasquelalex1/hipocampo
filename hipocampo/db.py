@@ -45,6 +45,20 @@ def load_config(env_path=None):
 _pool = None
 
 
+def validate_config(config=None):
+    """Validate DB config and return list of missing/empty fields."""
+    if config is None:
+        config = load_config()
+    missing = []
+    db_keys = ['DB_HOST', 'DB_USER', 'DB_NAME']
+    empty_db = [k for k in db_keys if not config.get(k)]
+    if empty_db:
+        missing.append(f"PostgreSQL config missing: {', '.join(empty_db)}")
+    if not config.get('NVIDIA_API_KEY'):
+        missing.append("NVIDIA_API_KEY missing")
+    return missing
+
+
 def init_pool(minconn=1, maxconn=10):
     """Pre-warm connection pool. Called once at server startup."""
     import psycopg2.pool
