@@ -72,7 +72,7 @@ def check_postgresql():
                         SELECT 1 FROM pg_indexes i
                         JOIN pg_class c ON i.indexname = c.relname
                         JOIN pg_index idx ON c.oid = idx.indexrelid
-                        JOIN pg_am am ON idx.indam = am.oid
+                        JOIN pg_am am ON c.relam = am.oid
                         WHERE i.tablename = %s
                           AND am.amname = %s
                           AND i.indexdef LIKE %s
