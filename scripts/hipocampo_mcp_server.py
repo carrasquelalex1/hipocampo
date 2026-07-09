@@ -728,33 +728,92 @@ async def profile_hipocampo(
         conn = _conn()
         cur = conn.cursor()
         cat_list = categories or ["personal_info"]
-        row_id = str(uuid.uuid4())
 
-        cur.execute(
-            """INSERT INTO memory_items (id, summary, memory_type, extra, embedding, created_at, updated_at)
-               VALUES (%s, %s, 'profile', %s, %s::vector(1024), NOW(), NOW())""",
-            (
-                row_id,
-                summary,
-                json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today())}),
-                embedding,
-            ),
-        )
+        # Profile merge: buscar si ya existe un perfil similar (>0.85 similitud)
+        PROFILE_MERGE_THRESHOLD = 0.85
+        cur.execute("SELECT id, summary, embedding FROM memory_items WHERE embedding IS NOT NULL")
+        rows = cur.fetchall()
+        best_match = None
+        best_sim = 0.0
 
-        for cat in cat_list:
-            cur.execute("SELECT id FROM memory_categories WHERE name = %s", (cat,))
-            cat_row = cur.fetchone()
-            if cat_row:
-                cur.execute(
-                    "INSERT INTO category_items (id, item_id, category_id, created_at, updated_at) VALUES (%s, %s, %s, NOW(), NOW()) ON CONFLICT DO NOTHING",
-                    (str(uuid.uuid4()), row_id, cat_row[0]),
-                )
+        import math
 
-        conn.commit()
-        cur.close()
-        conn.close()
-        logger.info("✅ Perfil guardado id=%s", row_id)
-        return f"✅ Perfil guardado en Hipocampo (id={row_id})"
+        def _cosine_sim(a, b):
+            if not a or not b:
+                return 0.0
+            dot = sum(x * y for x, y in zip(a, b))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            return dot / (na * nb) if na * nb > 0 else 0.0
+
+        if isinstance(embedding, str):
+            import ast
+
+            new_emb = ast.literal_eval(embedding)
+        else:
+            new_emb = embedding
+
+        for row in rows:
+            try:
+                db_emb = row[2]
+                if isinstance(db_emb, str):
+                    db_emb = ast.literal_eval(db_emb)
+                if db_emb is None:
+                    continue
+                sim = _cosine_sim(new_emb, db_emb)
+                if sim > best_sim and sim >= PROFILE_MERGE_THRESHOLD:
+                    best_sim = sim
+                    best_match = row
+            except Exception:
+                pass
+
+        if best_match:
+            existing_id = best_match[0]
+            logger.info(
+                "🔄 Perfil similar encontrado (id=%s, sim=%.1f%%). Actualizando...", existing_id, best_sim * 100
+            )
+            cur.execute(
+                """UPDATE memory_items SET summary = %s, extra = %s, embedding = %s::vector(1024), updated_at = NOW()
+                   WHERE id = %s""",
+                (
+                    summary,
+                    json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today())}),
+                    embedding,
+                    existing_id,
+                ),
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+            logger.info("✅ Perfil actualizado id=%s (similitud %.1f%%)", existing_id, best_sim * 100)
+            return f"✅ Perfil actualizado en Hipocampo (id={existing_id}, similitud={best_sim * 100:.1f}%)"
+        else:
+            row_id = str(uuid.uuid4())
+            cur.execute(
+                """INSERT INTO memory_items (id, summary, memory_type, extra, embedding, created_at, updated_at)
+                   VALUES (%s, %s, 'profile', %s, %s::vector(1024), NOW(), NOW())""",
+                (
+                    row_id,
+                    summary,
+                    json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today())}),
+                    embedding,
+                ),
+            )
+
+            for cat in cat_list:
+                cur.execute("SELECT id FROM memory_categories WHERE name = %s", (cat,))
+                cat_row = cur.fetchone()
+                if cat_row:
+                    cur.execute(
+                        "INSERT INTO category_items (id, item_id, category_id, created_at, updated_at) VALUES (%s, %s, %s, NOW(), NOW()) ON CONFLICT DO NOTHING",
+                        (str(uuid.uuid4()), row_id, cat_row[0]),
+                    )
+
+            conn.commit()
+            cur.close()
+            conn.close()
+            logger.info("✅ Perfil guardado id=%s", row_id)
+            return f"✅ Perfil guardado en Hipocampo (id={row_id})"
 
     try:
         return await asyncio.to_thread(_do)
@@ -1154,6 +1213,8 @@ async def hipocampo_dedup(merge: bool = False) -> str:
             return "\n".join(lines) + "\n   ✅ Proceso completado"
         else:
             info = await asyncio.to_thread(_dedup.full_dedup_analysis)
+            if info is None:
+                return "❌ Dedup analysis returned None — possible config or DB connection issue"
             lines = []
             for table, data in info.items():
                 emoji = "⚠️" if data["total_recoverable"] > 0 else "✅"

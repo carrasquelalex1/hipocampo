@@ -22,6 +22,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, load_config
 
 SIMILARITY_THRESHOLD = 0.92
+# Umbral específico para memory_items (más agresivo — perfil personal tiende a duplicarse).
+MEMORY_ITEMS_THRESHOLD = 0.85
+
+
+def _threshold_for(table):
+    """Devuelve el umbral de similitud a aplicar para una tabla dada."""
+    return MEMORY_ITEMS_THRESHOLD if table == "memory_items" else SIMILARITY_THRESHOLD
 
 
 def find_exact_duplicates(table, text_col):
@@ -72,6 +79,8 @@ def find_semantic_duplicates(table, text_col, threshold=SIMILARITY_THRESHOLD):
     for row in rows:
         try:
             emb = ast.literal_eval(row[2]) if isinstance(row[2], str) else row[2]
+            if emb is None:
+                continue
             candidates.append({"id": row[0], "text": row[1], "embedding": emb})
         except Exception:
             pass
@@ -174,13 +183,15 @@ def full_dedup_analysis(threshold=SIMILARITY_THRESHOLD):
     results = {}
 
     for table, text_col in [("memoria_vectorial", "contenido"), ("memory_items", "summary")]:
+        thr = _threshold_for(table)
         exact = find_exact_duplicates(table, text_col)
-        semantic = find_semantic_duplicates(table, text_col, threshold)
+        semantic = find_semantic_duplicates(table, text_col, thr)
 
         total_exact = sum(row[1] - 1 for row in exact)
         total_semantic = sum(len(g) - 1 for g in semantic)
 
         results[table] = {
+            "threshold": thr,
             "exact_duplicates": len(exact),
             "exact_redundant_rows": total_exact,
             "semantic_groups": len(semantic),
@@ -199,11 +210,12 @@ def full_dedup_merge(threshold=SIMILARITY_THRESHOLD):
     report = {"exact": {}, "semantic": {}}
 
     for table, text_col in [("memoria_vectorial", "contenido"), ("memory_items", "summary")]:
+        thr = _threshold_for(table)
         exact = find_exact_duplicates(table, text_col)
         if exact:
             report["exact"][table] = merge_exact_duplicates(table, text_col, exact, dry_run=False)
 
-        semantic = find_semantic_duplicates(table, text_col, threshold)
+        semantic = find_semantic_duplicates(table, text_col, thr)
         if semantic:
             report["semantic"][table] = merge_semantic_duplicates(table, text_col, semantic, dry_run=False)
 
