@@ -480,8 +480,9 @@ def _time_decay(dias, lmbda=None):
     return max(0.2, math.exp(-lmbda * dias))
 
 
-def _aplicar_decaimiento_temporal(resultados):
-    hoy = date.today()
+def _aplicar_decaimiento_temporal(resultados, hoy=None):
+    if hoy is None:
+        hoy = date.today()
     lmbda = _cargar_time_decay_lambda()
     for r in resultados:
         fecha_str = r.get("metadatos", {}).get("date", "")
@@ -499,7 +500,7 @@ def _aplicar_decaimiento_temporal(resultados):
     return resultados
 
 
-def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None):
+def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None, hoy=None):
     """Fusión con ponderación híbrida calibrada.
 
     Si alpha no se especifica, se carga del archivo de configuración
@@ -508,6 +509,9 @@ def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None):
     hybrid_score = alpha * best_vec_score + (1-alpha) * best_lex_score
 
     Aplica decaimiento temporal: memorias >7 días pierden peso progresivamente.
+
+    Args:
+        hoy: Fecha de referencia para decaimiento (solo tests). Default: date.today().
     """
     if alpha is None:
         alpha = cargar_config_hibrida()
@@ -535,7 +539,7 @@ def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None):
             grupos[clave] = r
 
     fusionados = sorted(grupos.values(), key=lambda x: x["score"], reverse=True)
-    fusionados = _aplicar_decaimiento_temporal(fusionados)
+    fusionados = _aplicar_decaimiento_temporal(fusionados, hoy)
     fusionados.sort(key=lambda x: x["score"], reverse=True)
 
     return fusionados

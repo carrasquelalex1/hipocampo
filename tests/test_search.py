@@ -1,5 +1,6 @@
 import sys
 import os
+from datetime import date
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
@@ -13,6 +14,9 @@ from hipocampo_search import (
     cargar_config_hibrida,
     STEM_MAP,
 )
+
+# Fecha de referencia fija para que los tests nunca roten
+_HOY = date(2026, 7, 12)
 
 
 class TestExpandirConsulta:
@@ -75,7 +79,7 @@ class TestFusionarResultados:
                 "code_snippet": None,
             }
         ]
-        result = fusionar_resultados(vec, [], [], alpha=0.6)
+        result = fusionar_resultados(vec, [], [], alpha=0.6, hoy=_HOY)
         assert len(result) == 1
         assert result[0]["score"] > 0
 
@@ -91,7 +95,7 @@ class TestFusionarResultados:
                 "code_snippet": None,
             }
         ]
-        result = fusionar_resultados([], [], lex, alpha=0.6)
+        result = fusionar_resultados([], [], lex, alpha=0.6, hoy=_HOY)
         assert len(result) == 1
 
     def test_fusion_hibrida_mismo_contenido(self):
@@ -117,7 +121,7 @@ class TestFusionarResultados:
                 "code_snippet": None,
             }
         ]
-        result = fusionar_resultados(vec, [], lex, alpha=0.6)
+        result = fusionar_resultados(vec, [], lex, alpha=0.6, hoy=_HOY)
         assert len(result) == 1  # dedup por contenido
         assert 70 < result[0]["score"] < 75  # 0.6*80 + 0.4*60 = 72
 
@@ -144,7 +148,7 @@ class TestFusionarResultados:
                 "code_snippet": None,
             }
         ]
-        result = fusionar_resultados(vec, [], lex, alpha=1.0)
+        result = fusionar_resultados(vec, [], lex, alpha=1.0, hoy=_HOY)
         assert result[0]["score"] == 90.0
 
     def test_contenidos_diferentes(self):
@@ -170,7 +174,7 @@ class TestFusionarResultados:
                 "code_snippet": None,
             }
         ]
-        result = fusionar_resultados(vec, [], lex, alpha=0.6)
+        result = fusionar_resultados(vec, [], lex, alpha=0.6, hoy=_HOY)
         assert len(result) == 2
 
 
@@ -189,7 +193,7 @@ class TestDecaimientoTemporal:
                 "lex_score": 0,
             }
         ]
-        result = _aplicar_decaimiento_temporal(items)
+        result = _aplicar_decaimiento_temporal(items, hoy=_HOY)
         assert result[0]["score"] == 80.0
 
     def test_antiguo_con_decaimiento(self):
@@ -206,7 +210,7 @@ class TestDecaimientoTemporal:
                 "lex_score": 0,
             }
         ]
-        result = _aplicar_decaimiento_temporal(items)
+        result = _aplicar_decaimiento_temporal(items, hoy=_HOY)
         assert result[0]["score"] < 80.0  # debe decaer
         assert result[0]["score"] >= 16.0  # floor 20% de 80 (exponencial)
 
@@ -224,7 +228,7 @@ class TestDecaimientoTemporal:
                 "lex_score": 0,
             }
         ]
-        result = _aplicar_decaimiento_temporal(items)
+        result = _aplicar_decaimiento_temporal(items, hoy=_HOY)
         assert result[0]["score"] == 50.0
 
 
