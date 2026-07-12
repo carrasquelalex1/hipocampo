@@ -4,8 +4,8 @@ Replaces the duplicated boilerplate previously found in 11+ scripts.
 Usage:
     from hipocampo.db import get_conn, get_embedding, load_config
 """
+
 import os
-import sys
 import functools
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -25,20 +25,20 @@ def load_config(env_path=None):
       3. ``<project_root>/.env``
     """
     if env_path is None:
-        env_path = os.getenv('ENV_PATH')
+        env_path = os.getenv("ENV_PATH")
     if env_path is None or not os.path.exists(env_path):
-        candidate = os.path.join(_project_root(), '.env')
+        candidate = os.path.join(_project_root(), ".env")
         if os.path.exists(candidate):
             env_path = candidate
     if env_path:
         load_dotenv(env_path)
 
     return {
-        'DB_NAME': os.getenv('DB_NAME', 'hipocampo_db'),
-        'DB_USER': os.getenv('DB_USER', 'alex'),
-        'DB_PASSWORD': os.getenv('DB_PASSWORD', ''),
-        'DB_HOST': os.getenv('DB_HOST', '/var/run/postgresql'),
-        'NVIDIA_API_KEY': os.getenv('NVIDIA_API_KEY', ''),
+        "DB_NAME": os.getenv("DB_NAME", "hipocampo_db"),
+        "DB_USER": os.getenv("DB_USER", "alex"),
+        "DB_PASSWORD": os.getenv("DB_PASSWORD", ""),
+        "DB_HOST": os.getenv("DB_HOST", "/var/run/postgresql"),
+        "NVIDIA_API_KEY": os.getenv("NVIDIA_API_KEY", ""),
     }
 
 
@@ -50,11 +50,11 @@ def validate_config(config=None):
     if config is None:
         config = load_config()
     missing = []
-    db_keys = ['DB_HOST', 'DB_USER', 'DB_NAME']
+    db_keys = ["DB_HOST", "DB_USER", "DB_NAME"]
     empty_db = [k for k in db_keys if not config.get(k)]
     if empty_db:
         missing.append(f"PostgreSQL config missing: {', '.join(empty_db)}")
-    if not config.get('NVIDIA_API_KEY'):
+    if not config.get("NVIDIA_API_KEY"):
         missing.append("NVIDIA_API_KEY missing")
     return missing
 
@@ -62,15 +62,17 @@ def validate_config(config=None):
 def init_pool(minconn=1, maxconn=10):
     """Pre-warm connection pool. Called once at server startup."""
     import psycopg2.pool
+
     global _pool
     if _pool is None:
         cfg = load_config()
         _pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn, maxconn,
-            host=cfg['DB_HOST'],
-            user=cfg['DB_USER'],
-            dbname=cfg['DB_NAME'],
-            password=cfg['DB_PASSWORD'],
+            minconn,
+            maxconn,
+            host=cfg["DB_HOST"],
+            user=cfg["DB_USER"],
+            dbname=cfg["DB_NAME"],
+            password=cfg["DB_PASSWORD"],
         )
 
 
@@ -91,13 +93,14 @@ def get_conn(config=None):
     :func:`load_config`.
     """
     import psycopg2
+
     if config is None:
         config = load_config()
     return psycopg2.connect(
-        host=config['DB_HOST'],
-        user=config['DB_USER'],
-        dbname=config['DB_NAME'],
-        password=config['DB_PASSWORD'],
+        host=config["DB_HOST"],
+        user=config["DB_USER"],
+        dbname=config["DB_NAME"],
+        password=config["DB_PASSWORD"],
     )
 
 
@@ -115,6 +118,14 @@ def _cached_embedding(text: str, api_key: str) -> tuple:
         extra_body={"input_type": "query"},
     )
     return tuple(resp.data[0].embedding)
+
+
+_embedding_last_error = None
+
+
+def get_embedding_last_error():
+    """Return the last error message from get_embedding, or None."""
+    return _embedding_last_error
 
 
 _client_cache = {}
@@ -137,10 +148,32 @@ def get_embedding(text, dims=1024, api_key=None):
     Uses LRU cache (128 entries) — repeated queries for the same text
     skip the API call entirely. Returns ``None`` on failure.
     """
+    global _embedding_last_error
     if api_key is None:
         api_key = os.getenv("NVIDIA_API_KEY") or ""
+    if not api_key:
+        _embedding_last_error = "NVIDIA_API_KEY no está configurada"
+        return None
     try:
         result = _cached_embedding(text, api_key)
+        _embedding_last_error = None
         return list(result)
-    except Exception:
+    except Exception as e:
+        err_str = str(e)
+        status_code = ""
+        import re as _re
+
+        m = _re.search(r"\b(40[13]|429)\b", err_str)
+        if m:
+            status_code = m.group(1)
+        if status_code in ("401", "403") or "Unauthorized" in err_str or "Forbidden" in err_str:
+            _embedding_last_error = f"API key inválida o revocada (HTTP {status_code or err_str[:20]})"
+        elif "400" in err_str or "input_type" in err_str:
+            _embedding_last_error = f"Error de formato en petición: {err_str[:120]}"
+        elif "429" in err_str or "Too Many Requests" in err_str:
+            _embedding_last_error = "Límite de tasa excedido (429)"
+        elif "Connection" in err_str or "timeout" in err_str.lower():
+            _embedding_last_error = f"Error de conexión con API: {err_str[:120]}"
+        else:
+            _embedding_last_error = err_str[:200]
         return None

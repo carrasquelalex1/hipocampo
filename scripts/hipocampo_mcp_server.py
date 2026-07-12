@@ -45,7 +45,7 @@ sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, os.path.dirname(BASE_DIR))  # project root for hipocampo package
 
 
-from hipocampo.db import get_conn, get_embedding, init_pool, validate_config
+from hipocampo.db import get_conn, get_embedding, get_embedding_last_error, init_pool, validate_config
 from hipocampo.rate_limit import embedding_limiter, tool_limiter
 
 import hipocampo_search as _search
@@ -497,7 +497,8 @@ def _generar_embedding(texto: str, tool_name: str = "unknown") -> list[float]:
         raise RuntimeError(rate_err)
     emb = get_embedding(texto)
     if emb is None:
-        raise RuntimeError("No se pudo generar embedding (¿NVIDIA_API_KEY configurada?)")
+        detalle = get_embedding_last_error() or "razón desconocida"
+        raise RuntimeError(f"No se pudo generar embedding: {detalle}")
     return emb
 
 
