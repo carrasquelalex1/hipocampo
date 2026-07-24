@@ -1613,9 +1613,16 @@ async def graph_hipocampo(node_id: int = 0, depth: int = 2, max_nodes: int = 50)
         cur = conn.cursor()
         try:
             cur.execute(
-                "SELECT contenido FROM memoria_vectorial WHERE id=%s "
-                "UNION SELECT summary FROM memory_items WHERE id=%s",
-                (rid, rid),
+                "SELECT contenido FROM memoria_vectorial WHERE id=%s",
+                (rid,),
+            )
+            row = cur.fetchone()
+            if row:
+                text = row[0][:80].replace("\n", " ")
+                return f"[{rid}] {text}"
+            cur.execute(
+                "SELECT summary FROM memory_items WHERE id=%s",
+                (str(rid),),
             )
             row = cur.fetchone()
             if row:
