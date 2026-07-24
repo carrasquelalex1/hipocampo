@@ -320,3 +320,315 @@ git clone https://github.com/carrasquelalex1/hipocampo.git /tmp/opencode/hipocam
 | **1** | Time decay exponencial (λ=0.05, floor 20%), cache de embeddings, dedup en save, search_with_stats() estructurado, auto-checkpoint al iniciar |
 | **2** | HNSW health check + auto-create, context budget aware (budget_ratio, auto token estimation), session auto-summary cada 20 saves, preload_context(project_path) |
 | **3** | Memory Graph: tabla memory_links + 4 tools (link/unlink/graph/path), auto_link=True en save_hipocampo |
+
+---
+
+## 🇬🇧 English Version
+
+---
+
+name: hipocampo-protocol
+description: Dual-memory protocol with Sparse Selective Caching (SSC) v4.0 + Memory Graph + Hybrid Compression. Persists in memoria_vectorial and memory_items with progressive semantic search. Load at session start.
+
+---
+
+# Hipocampo Protocol v4.1 — SSC + Memory Graph + Hybrid Compression
+
+External persistent memory system with **Sparse Selective Caching** (inspired by "Memory Caching: RNNs with Growing Memory", Google 2025).
+
+Repo: `https://github.com/carrasquelalex1/hipocampo`
+MCP Server live: `https://alexbell1-hipocampo-mcp.hf.space/mcp` (Streamable HTTP)
+
+---
+
+## 📚 Structure
+
+```
+hipocampo_db (PostgreSQL 17 + pgvector + pg_trgm + memory_links)
+├── 🧠 memoria_vectorial (~830 records, 1024d embedding)
+│   └── content, metadata (jsonb), HNSW embedding (cosine), code_snippet
+├── 🤖 memory_items (~250 records, 1024d embedding)
+│   └── memory_type (profile|event|decision), summary, extra, categories
+├── 🔗 memory_links — directed graph between memories (source → target, type, weight)
+├── 🏷️ memory_categories
+├── 🔗 category_items (M:N)
+├── 📎 query_stats — search performance metrics
+└── 📎 watches — webhooks for memory events
+```
+
+Embeddings: **1024d** (`nvidia/nv-embedqa-e5-v5`) via NVIDIA NIM.
+
+---
+
+## 🔍 Phase 1: Pre-action — Search with SSC v4.0
+
+Use MCP tools `search_hipocampo()` or `quick_hipocampo_search()`:
+
+### SSC Pipeline (4 phases, progressive scale)
+```
+Phase 1 TAG ROUTER  → classify query (profile/technical/mixed), dynamic weights
+Phase 2 PGVECTOR    → top-20 semantic in BOTH tables ← 70%+ confidence: stop here
+Phase 3 TRIGRAM     → expand with GIN if confidence < 70%
+Phase 4 ILIKE       → full scan only if confidence < 40%
+```
+
+### Exponential time decay
+```math
+final_score = raw_score × max(0.20, e^{-λ × days})
+```
+- λ = 0.05 configurable
+- Floor 20%: no memory loses more than 80% of its score due to age
+- Auto-adjust thresholds via `hipocampo_tune()`
+
+DO NOT use `ILIKE '%...%' LIMIT 20` directly.
+
+---
+
+## ⚙️ Phase 2: Persistence — MCP Tools v4.0
+
+### Search & Retrieval
+| Tool | Description |
+|---|---|
+| `search_hipocampo(query, session_id)` | Hybrid semantic + lexical search with BIRE + SSC |
+| `quick_hipocampo_search(query, session_id)` | Short alias for search_hipocampo |
+| `preload_context(project_path, k)` | Extract keywords from path, search and compress relevant project context |
+| `compress_hipocampo(query, k, method, budget_ratio)` | Hybrid compression (extractive + LLM) of memories; auto-estimates tokens based on budget |
+
+### Save & Profile
+| Tool | Description |
+|---|---|
+| `save_hipocampo(content, memory_type, code, categories, session_id, force, auto_link)` | Save to memoria_vectorial. `auto_link=True` auto-links with similar memories |
+| `profile_hipocampo(summary, extra, categories)` | Save personal profile to memory_items |
+| `update_hipocampo(id, content, memory_type, code, categories)` | Update existing memory |
+| `delete_hipocampo(id)` | Delete memory |
+
+### Memory Graph (v4.0 Phase 3)
+| Tool | Description |
+|---|---|
+| `link_hipocampo(source_id, target_id, relation_type, weight)` | Create directed edge (related, follow_up, part_of, references, similar, chain) |
+| `unlink_hipocampo(id / source+target+type)` | Remove edge(s) from graph |
+| `graph_hipocampo(node_id, depth)` | BFS ASCII tree from a node; overview with node_id=0 |
+| `path_hipocampo(from_id, to_id, max_depth)` | Shortest BFS path between two memories |
+
+### Webhooks
+| Tool | Description |
+|---|---|
+| `watch_hipocampo(pattern, webhook_url)` | Register webhook triggered on create/modify/delete |
+| `unwatch_hipocampo(id)` | Remove webhook |
+| `list_watches()` | List all registered webhooks |
+
+---
+
+## 🕒 Phase 3: Maintenance (MCP Self-Improvement)
+
+The MCP server exposes 7 self-maintenance tools:
+
+### Self-diagnosis & Repair
+- `hipocampo_health()` — Full health check (PostgreSQL, API, disk, extensions, HNSW index)
+- `hipocampo_auto_repair()` — Auto-repair issues (including HNSW index creation)
+
+### Performance Optimization
+- `hipocampo_stats()` — Latency metrics, avg score, recommendations
+- `hipocampo_tune()` — Adjust SSC thresholds and hybrid weights based on real usage
+
+### Memory Maintenance
+- `hipocampo_dedup(merge)` — Detect and merge duplicates (exact + semantic via cosine)
+- `hipocampo_checkpoint(dry_run)` — Logarithmic checkpointing with auto-run on startup
+- `hipocampo_maintenance()` — Full cycle: repair → dedup → checkpoint → tune
+
+### Context Compression
+| Parameter | Description |
+|---|---|
+| `budget_ratio` | Scale auto-estimated token target (0.5 = half budget, 2.0 = double) |
+| `target_token=-1` | Auto-estimates: 30% of total content, min 200, max 2000 |
+| `method=hybrid` | Uses LLM for technical content, extractive for generic |
+
+### Session Auto-Summary
+Every 20 saves in the same session, a summary is auto-consolidated in the background.
+
+---
+
+## 🧠 Phase 4: Memory Graph
+
+Memories in Hipocampo can relate to each other forming a navigable **directed graph**.
+
+### Relation types
+| Type | Usage |
+|---|---|
+| `related` | Generic semantic relation (default) |
+| `follow_up` | Origin is continuation/sequel of target |
+| `part_of` | Origin is part of target (hierarchy) |
+| `references` | Origin references target |
+| `similar` | Semantically similar (auto-assigned by auto_link) |
+| `chain` | Part of a context chain |
+
+### Auto-linking
+When saving with `auto_link=True`, the system finds the 3 most similar memories (>0.75 cosine) and creates `similar` edges automatically.
+
+### Usage example
+```python
+# Create manual link
+link_hipocampo(source_id=1106, target_id=1105, relation_type="follow_up", weight=0.9)
+
+# Explore graph from a node
+graph_hipocampo(node_id=1106, depth=3)
+
+# Find path between two memories
+path_hipocampo(from_id=1000, to_id=1106, max_depth=5)
+
+# Save with auto-linking
+save_hipocampo("New memory", auto_link=True)
+```
+
+---
+
+## 🧬 Phase 5: Memory Hierarchy — Automatic Rules (Level 3)
+
+Memories in Hipocampo have 3 hierarchical levels that replicate biological memory consolidation: from fragile detail (episodic) to permanent reflex (automatic).
+
+### Levels
+
+| Level | Behavior | When to use |
+|---|---|---|
+| `episodica` (default) | Full detail, compressible by checkpoint | Daily events, decisions, learnings |
+| `semantica` | Consolidated knowledge, checkpoint-protected | Confirmed lessons, stable rules |
+| `automatica` | Permanent rule, **never** compressed or deleted | Critical errors, security patterns, invariants |
+
+### Consolidation flow
+
+```
+episodica ──(consolidate, min_age_days)──→ semantica ──(set_nivel)──→ automatica
+     ↑                                         ↑                         ↑
+   fragile,                                protected,               permanent,
+compressible                             checkpoint-safe           immutable
+```
+
+### Trigger-based preventive mechanism
+
+`automatica` rules use **trigger categories** to reactivate by context. Before editing code in a project, search with the trigger combination that applies:
+
+```
+search_hipocampo("trigger:<project> trigger:<language> trigger:<tech>")
+```
+
+The system replicates the biological hippocampus mechanism: a partial cue from the current context triggers retrieval of error memories **before** acting, not after.
+
+### Standard trigger catalog
+
+| Trigger | Activation context |
+|---|---|
+| `trigger:<project>` | When working on a specific project (e.g., `trigger:sgv`) |
+| `trigger:php`, `trigger:javascript`, `trigger:python`, `trigger:bash` | Language of the file being edited |
+| `trigger:chartjs`, `trigger:tomcat`, `trigger:json_encode` | Library or technology |
+| `trigger:csv`, `trigger:deploy`, `trigger:edit`, `trigger:audit` | Type of operation |
+| `trigger:password`, `trigger:hash`, `trigger:security` | Security context |
+| `trigger:frontend`, `trigger:dom`, `trigger:css` | Frontend audit |
+
+### Full flow example
+
+```python
+# 1. Save an error as an automatic rule with triggers
+save_hipocampo(
+    content="NEVER use JS variables inside <?= json_encode() ?> in PHP. Use literals.",
+    memory_type="decision",
+    categories=["trigger:project", "trigger:chartjs", "trigger:php", "trigger:json_encode"],
+    nivel="automatica"
+)
+
+# 2. Days later, when editing a chart in the same project, search triggers
+search_hipocampo("trigger:project trigger:chartjs trigger:php")
+
+# 3. The automatic rule appears in results → agent applies it preventively
+```
+
+### Hierarchy tools
+
+| Tool | Description |
+|---|---|
+| `set_nivel_hipocampo(id, nivel)` | Change memory level: `episodica`, `semantica`, `automatica` |
+| `consolidate_hipocampo(min_age_days, dry_run)` | Migrate old episodic memories to semantic |
+
+> **Important**: The `automatica` level is irreversible by design. An automatic rule is a conditioned reflex — it is never compressed by checkpoint, never merged in dedup, never deleted by consolidate. Use with criteria.
+
+---
+
+## 🌐 MCP Server — Connection
+
+### Local (Streamable HTTP, recommended)
+```bash
+python3 /path/to/hipocampo/scripts/hipocampo_mcp_server.py --http 8001
+```
+
+### Local (stdio, for desktop clients)
+```bash
+python3 /path/to/hipocampo/scripts/hipocampo_mcp_server.py
+```
+
+### Remote (Hugging Face Spaces — free, no API key)
+```json
+{
+  "mcpServers": {
+    "hipocampo": {
+      "url": "https://alexbell1-hipocampo-mcp.hf.space/mcp",
+      "type": "streamable-http"
+    }
+  }
+}
+```
+
+> **⚠️ SSE** is deprecated since MCP spec 2025-03-26. Use Streamable HTTP.
+
+### Systemd (persistent service)
+```bash
+systemctl --user status hipocampo-mcp.service
+systemctl --user restart hipocampo-mcp.service
+journalctl --user -u hipocampo-mcp.service -n 50
+```
+
+---
+
+## ✅ Critical Rules
+
+1. **Family** → `memory_type='profile'`, category `relationships`. NEVER `event`.
+2. **Auto-tagging** mandatory for all new `memory_items`.
+3. **SSC preferred over ILIKE** for searches. Do not use raw psql ILIKE.
+4. **memory_items** is read-only via MCP (no direct inserts).
+5. **PostgreSQL** uses Unix socket (`/var/run/postgresql`), user `alex`, no password.
+6. **Embeddings**: 1024d via NVIDIA NIM.
+7. **API Keys**: `NVIDIA_API_KEY` in the repo's `.env`.
+8. **Auto-dedup**: when saving, if a memory with similarity >0.9 exists, it's blocked (except with `force=True`).
+9. **Auto-checkpoint**: runs when the MCP server starts.
+10. **HNSW index**: if missing in health check, auto-created.
+
+---
+
+## 📂 Repo Scripts
+
+```bash
+git clone https://github.com/carrasquelalex1/hipocampo.git
+```
+
+| Script | Purpose |
+|---|---|
+| `hipocampo_mcp_server.py` | FastMCP server (stdio / HTTP / SSE) — 22+ MCP tools |
+| `hipocampo_ssc_search.py` | SSC v3.7 search (router + vectorial + trigram + ilike) |
+| `hipocampo_search.py` | BIRE v3.7 (unified search with time decay + search_with_stats) |
+| `hipocampo_compress.py` | Hybrid extractive + LLM compression with context budget |
+| `hipocampo_health.py` | Health check (PostgreSQL, API, disk, extensions, HNSW) |
+| `hipocampo_stats.py` | Performance metrics and threshold auto-tuning |
+| `hipocampo_dedup.py` | Detection and merging of semantic duplicates |
+| `hipocampo_checkpoint.py` | Checkpointing with logarithmic decay |
+| `hipocampo_autotag.py` | Auto-tagging via regex rules |
+| `hipocampo_backfill_vectorial.py` | Backfill missing embeddings |
+| `hipocampo_calibrate.py` | Hybrid weighting calibration |
+| `mm_brain_tool.py` | Persistence in memoria_vectorial + Freeplane |
+
+### Modules
+| Module | Purpose |
+|---|---|
+| `hipocampo/db.py` | Shared connection, get_embedding, load_config, init_pool |
+
+### Deployment
+- `Dockerfile`, `Dockerfile.fly`, `Dockerfile.simple` — containers
+- `docker-compose.yml` — full stack
+- `fly.toml` — deploy to Fly.io
