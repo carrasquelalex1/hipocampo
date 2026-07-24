@@ -51,10 +51,13 @@ EXPECTED_TOOLS = {
     "hipocampo_tune",
     "hipocampo_dedup",
     "hipocampo_checkpoint",
+    "rollback_checkpoint",
     "hipocampo_maintenance",
     "watch_hipocampo",
     "unwatch_hipocampo",
     "list_watches",
+    "review_automatica",
+    "validate_immune_rule",
 }
 
 TOOLS_WITH_SESSION_ID = {"search_hipocampo", "quick_hipocampo_search", "save_hipocampo"}
@@ -66,6 +69,8 @@ TOOLS_READ_ONLY = {
     "hipocampo_health",
     "hipocampo_stats",
     "list_watches",
+    "validate_immune_rule",
+    "rollback_checkpoint",
 }
 
 TOOLS_DESTRUCTIVE = {
@@ -74,6 +79,7 @@ TOOLS_DESTRUCTIVE = {
     "hipocampo_tune",
     "hipocampo_dedup",
     "hipocampo_checkpoint",
+    "review_automatica",
 }
 
 TOOLS_WITH_REQUIRED = {
@@ -123,7 +129,7 @@ def test_all_tools_registered():
     extra = tool_names - EXPECTED_TOOLS
     assert not missing, f"Faltan herramientas: {missing}"
     assert not extra, f"Herramientas extra no esperadas: {extra}"
-    assert len(tools) == 26
+    assert len(tools) == 29
 
 
 def test_tool_annotations():

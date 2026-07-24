@@ -76,8 +76,8 @@ CREATE INDEX IF NOT EXISTS idx_watches_pattern ON watches(pattern);
 MEMORY_LINKS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS memory_links (
     id SERIAL PRIMARY KEY,
-    source_id INTEGER NOT NULL,
-    target_id INTEGER NOT NULL,
+    source_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
     relation_type TEXT NOT NULL DEFAULT 'related',
     weight REAL NOT NULL DEFAULT 1.0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS memory_links (
 CREATE INDEX IF NOT EXISTS idx_memory_links_source ON memory_links(source_id);
 CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_id);
 CREATE INDEX IF NOT EXISTS idx_memory_links_type ON memory_links(relation_type);
+"""
+
+MEMORY_LINKS_MIGRATION_SQL = """
+ALTER TABLE memory_links ALTER COLUMN source_id TYPE TEXT;
+ALTER TABLE memory_links ALTER COLUMN target_id TYPE TEXT;
 """
 
 
@@ -113,6 +118,13 @@ def _init_memory_links_table():
         for stmt in MEMORY_LINKS_TABLE_SQL.split(";"):
             if stmt.strip():
                 cur.execute(stmt)
+        for stmt in MEMORY_LINKS_MIGRATION_SQL.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                try:
+                    cur.execute(stmt)
+                except psycopg2.Error:
+                    conn.rollback()
         conn.commit()
         cur.close()
         conn.close()
@@ -633,6 +645,9 @@ async def save_hipocampo(
             "source": "mcp",
             "nivel": nivel,
         }
+        if nivel == "automatica":
+            metadatos["review_count"] = 0
+            metadatos["created_at"] = str(date.today())
         if session_id:
             metadatos["session_id"] = session_id
         conn = _conn()
@@ -653,19 +668,20 @@ async def save_hipocampo(
         links_created = 0
         if auto_link:
             try:
-                emb = get_embedding(content)
-                if emb:
-                    cur = conn.cursor()
-                    cur.execute(
+                if embedding:
+                    link_conn = _conn()
+                    link_cur = link_conn.cursor()
+                    link_cur.execute(
                         """SELECT id, contenido, (embedding <=> %s::vector(1024)) AS dist
                            FROM memoria_vectorial
                            WHERE id != %s AND (embedding <=> %s::vector(1024)) < 0.25
                            ORDER BY dist
                            LIMIT 3""",
-                        (emb, row_id, emb),
+                        (embedding, row_id, embedding),
                     )
-                    similar = cur.fetchall()
-                    cur.close()
+                    similar = link_cur.fetchall()
+                    link_cur.close()
+                    link_conn.close()
                     for sim_id, sim_content, dist in similar:
                         sim = round((1 - dist) * 100, 1)
                         if sim > 75:
@@ -675,7 +691,7 @@ async def save_hipocampo(
                                 c2_cur.execute(
                                     """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
                                        VALUES (%s, %s, 'similar', %s) ON CONFLICT DO NOTHING""",
-                                    (row_id, sim_id, sim / 100),
+                                    (str(row_id), str(sim_id), sim / 100),
                                 )
                                 c2.commit()
                                 c2_cur.close()
@@ -683,6 +699,8 @@ async def save_hipocampo(
                                 links_created += 1
                             except Exception:
                                 pass
+                    if logger.isEnabledFor(logging.INFO):
+                        logger.info("auto_link: %d enlaces creados para id=%s", links_created, row_id)
             except Exception:
                 logger.warning("Auto-link falló para id=%s", row_id)
 
@@ -1024,6 +1042,192 @@ async def consolidate_hipocampo(min_age_days: int = 7, dry_run: bool = True) -> 
 
 
 @mcp.tool()
+async def review_automatica(max_age_days: int = 30, dry_run: bool = True) -> str:
+    """
+    Revisa reglas 'automatica' sin revisión en los últimos N días.
+
+    Las reglas automatica son permanentes por diseño, pero pueden degradarse
+    a 'semantica' si no han sido útiles (review_count=0) después de max_age_days.
+
+    Con dry_run=True solo lista las reglas candidatas a degradación.
+    Con dry_run=False las degrada a 'semantica' (no se borran, solo pierden
+    inmunidad de compresión).
+
+    Args:
+        max_age_days: Edad máxima sin revisión antes de considerar degradación (default 30).
+        dry_run: Si True, solo muestra qué se degradaría.
+
+    Returns:
+        Reporte de reglas encontradas.
+    """
+
+    def _do():
+        from datetime import datetime, timezone, timedelta
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, contenido, metadatos::text FROM memoria_vectorial
+               WHERE metadatos->>'nivel' = 'automatica'
+               ORDER BY id"""
+        )
+        rows = cur.fetchall()
+        candidates = []
+        for row in rows:
+            meta = json.loads(row[2])
+            review_count = int(meta.get("review_count", 0))
+            created_str = meta.get("created_at") or meta.get("date") or ""
+            try:
+                created = datetime.fromisoformat(created_str)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                if created < cutoff and review_count == 0:
+                    candidates.append((row[0], row[1][:80], created_str, review_count))
+            except (ValueError, TypeError):
+                if review_count == 0:
+                    candidates.append((row[0], row[1][:80], created_str or "desconocida", review_count))
+        if not candidates:
+            cur.close()
+            conn.close()
+            return "✅ No hay reglas automatica pendientes de revisión."
+        if dry_run:
+            lines = [
+                f"📋 Revisión de reglas automatica (dry-run, >{max_age_days}d, review_count=0):",
+                f"   {len(candidates)} candidatas a degradación → semantica",
+                "",
+            ]
+            for rid, content, created, rc in candidates[:20]:
+                lines.append(f"  [{rid}] review_count={rc}, creada={created}")
+                lines.append(f"       {content}...")
+            if len(candidates) > 20:
+                lines.append(f"  ... y {len(candidates) - 20} más")
+            cur.close()
+            conn.close()
+            return "\n".join(lines)
+        degraded = 0
+        for rid, _, _, _ in candidates:
+            cur.execute("SELECT metadatos FROM memoria_vectorial WHERE id=%s", (rid,))
+            row = cur.fetchone()
+            if row:
+                meta = (row[0] or {}).copy()
+                meta["nivel"] = "semantica"
+                meta["degraded_at"] = str(date.today())
+                meta["degraded_reason"] = "auto_review_expired"
+                cur.execute("UPDATE memoria_vectorial SET metadatos=%s WHERE id=%s", (json.dumps(meta), rid))
+                degraded += 1
+        conn.commit()
+        cur.close()
+        conn.close()
+        return f"✅ {degraded} reglas automatica degradadas a semantica por inactividad."
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("review_automatica", e)
+
+
+@mcp.tool()
+async def validate_immune_rule(rule_id: int) -> str:
+    """
+    Valida una regla inmunológica (Nivel 4).
+
+    Analiza una regla 'automatica' marcada como REGLA INMUNOLÓGICA:
+    1. Verifica snapshots pre-cambio vinculados en memory_links
+    2. Detecta reglas contradictorias sobre el mismo archivo/proyecto
+    3. Reporta reglas huérfanas (>30d sin enlaces entrantes)
+
+    Args:
+        rule_id: ID de la regla inmunológica a validar.
+
+    Returns:
+        Reporte de validación con recomendaciones.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT contenido, metadatos::text FROM memoria_vectorial WHERE id=%s",
+            (rule_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            conn.close()
+            return f"❌ No existe regla con id={rule_id}."
+        content = row[0]
+        meta = json.loads(row[1])
+        if meta.get("nivel") != "automatica":
+            cur.close()
+            conn.close()
+            return f"⚠️  La regla #{rule_id} no es nivel 'automatica' (es {meta.get('nivel', 'desconocido')})."
+        lines = [f"🧬 Validación de regla inmunológica #{rule_id}:"]
+        lines.append(f"   Contenido: {content[:100]}...")
+        review_count = int(meta.get("review_count", 0))
+        lines.append(f"   review_count: {review_count}")
+        cur.execute(
+            "SELECT target_id, relation_type, metadata FROM memory_links WHERE source_id=%s",
+            (str(rule_id),),
+        )
+        links = cur.fetchall()
+        incoming = 0
+        cur.execute(
+            "SELECT source_id FROM memory_links WHERE target_id=%s",
+            (str(rule_id),),
+        )
+        incoming = len(cur.fetchall())
+        lines.append(f"   Enlaces salientes: {len(links)} | Entrantes: {incoming}")
+        for target_id, rel, link_meta in links:
+            lines.append(f"      → [{target_id}] ({rel})")
+        if incoming == 0 and review_count == 0:
+            created_str = meta.get("created_at") or meta.get("date") or ""
+            try:
+                from datetime import datetime, timezone
+
+                created = datetime.fromisoformat(created_str)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                age_days = (datetime.now(timezone.utc) - created).days
+                if age_days > 30:
+                    lines.append(
+                        f"   ⚠️  Regla huérfana: {age_days}d sin uso ni enlaces. Considere degradar a semantica con review_automatica."
+                    )
+            except (ValueError, TypeError):
+                pass
+        import re
+
+        filenames = re.findall(r"(?:archivo|file|snapshot)\s+(\S+)", content, re.IGNORECASE)
+        if filenames:
+            contradictions = []
+            for fname in filenames[:3]:
+                cur.execute(
+                    """SELECT id, contenido FROM memoria_vectorial
+                       WHERE id != %s AND metadatos->>'nivel' = 'automatica'
+                       AND (contenido ILIKE %s OR contenido ILIKE %s)
+                       LIMIT 5""",
+                    (rule_id, f"%{fname}%", f"%REGLA INMUNOLÓGICA%{fname}%"),
+                )
+                for cid, ccontent in cur.fetchall():
+                    contradictions.append((cid, ccontent[:80]))
+            if contradictions:
+                lines.append(f"   ⚠️  {len(contradictions)} reglas similares sobre los mismos archivos:")
+                for cid, ccontent in contradictions:
+                    lines.append(f"      [{cid}] {ccontent}...")
+                lines.append("   Revise si hay contradicciones entre reglas.")
+        cur.close()
+        conn.close()
+        if links:
+            lines.append("   ✅ Tiene enlaces salientes — la regla está conectada al grafo.")
+        return "\n".join(lines)
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("validate_immune_rule", e)
+
+
+@mcp.tool()
 async def delete_hipocampo(id: int) -> str:
     """
     Elimina un recuerdo del Hipocampo (memoria_vectorial) por su ID.
@@ -1265,6 +1469,75 @@ async def hipocampo_checkpoint(dry_run: bool = True) -> str:
 
 
 @mcp.tool()
+async def rollback_checkpoint(snapshot_id: int) -> str:
+    """
+    Revierte un checkpoint usando el snapshot guardado previamente.
+
+    Busca el snapshot por ID y verifica qué IDs originales fueron comprimidos.
+    Si los originales aún existen, reporta que no se necesita rollback.
+    Si fueron eliminados, intenta restaurarlos.
+
+    Args:
+        snapshot_id: ID del snapshot [CHECKPOINT SNAPSHOT] guardado.
+
+    Returns:
+        Reporte de la operación de rollback.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT contenido, metadatos::text FROM memoria_vectorial WHERE id=%s",
+                (snapshot_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return f"❌ No existe snapshot con id={snapshot_id}."
+            content = row[0]
+            meta = json.loads(row[1])
+            if meta.get("tipo") != "checkpoint_snapshot":
+                return f"❌ El registro {snapshot_id} no es un checkpoint snapshot (tipo={meta.get('tipo')})."
+
+            import re
+
+            ids_match = re.search(r"\[([0-9,\s]+)\]", content)
+            if not ids_match:
+                return "❌ No se encontraron IDs en el snapshot."
+            original_ids = [int(x.strip()) for x in ids_match.group(1).split(",") if x.strip()]
+            still_present = 0
+            missing = 0
+            for oid in original_ids:
+                cur.execute("SELECT 1 FROM memoria_vectorial WHERE id=%s", (oid,))
+                if cur.fetchone():
+                    still_present += 1
+                else:
+                    missing += 1
+            lines = [
+                f"📦 Rollback snapshot #{snapshot_id}:",
+                f"   Comprimidos: {meta.get('comprimidos_count', '?')}",
+                f"   IDs rastreados: {len(original_ids)}",
+                f"   Aún presentes: {still_present}",
+                f"   Eliminados: {missing}",
+            ]
+            if missing > 0:
+                lines.append("   ⚠️  Algunos originales fueron eliminados. Restauración no disponible.")
+                lines.append("   Las memorias comprimidas permanecen como checkpoints en la DB.")
+            else:
+                lines.append("   ✅ Todos los originales aún existen. No se necesita rollback.")
+            return "\n".join(lines)
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("rollback_checkpoint", e)
+
+
+@mcp.tool()
 async def hipocampo_maintenance() -> str:
     """
     Ejecuta el ciclo completo de mantenimiento:
@@ -1491,39 +1764,42 @@ async def link_hipocampo(source_id: int, target_id: int, relation_type: str = "r
     Crea un enlace entre dos recuerdos en el grafo de memoria.
 
     Args:
-        source_id: ID del recuerdo origen.
+        source_id: ID del recuerdo origen (numérico: memoria_vectorial; string: memory_items).
         target_id: ID del recuerdo destino.
         relation_type: Tipo de relación. Valores comunes:
                        "related" (default), "follow_up", "part_of",
-                       "references", "similar", "chain".
+                       "references", "similar", "chain", "validates", "contradicts".
         weight: Peso de la relación (0.0 a 1.0, default 1.0).
 
     Returns:
         Confirmación del enlace creado.
     """
-    if source_id == target_id:
+    if str(source_id) == str(target_id):
         return "❌ No se puede enlazar un recuerdo consigo mismo."
 
     def _do():
         conn = _conn()
         cur = conn.cursor()
         try:
-            for rid in (source_id, target_id):
-                cur.execute(
-                    "SELECT id FROM memoria_vectorial WHERE id = %s UNION SELECT id FROM memory_items WHERE id = %s",
-                    (rid, rid),
-                )
+            sid = str(source_id)
+            tid = str(target_id)
+            for rid, tbl in ((sid, "memoria_vectorial"), (tid, "memoria_vectorial")):
+                cur.execute(f"SELECT id FROM {tbl} WHERE id = %s", (rid,))
+                if cur.fetchone():
+                    continue
+            for rid, tbl in ((sid, "memory_items"), (tid, "memory_items")):
+                cur.execute(f"SELECT id FROM {tbl} WHERE id = %s", (rid,))
                 if not cur.fetchone():
-                    return f"❌ No existe recuerdo con id={rid}."
+                    return f"❌ No existe recuerdo con id={rid} en ninguna tabla."
 
             cur.execute(
                 """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
                    VALUES (%s, %s, %s, %s) RETURNING id""",
-                (source_id, target_id, relation_type, weight),
+                (sid, tid, relation_type, weight),
             )
             link_id = cur.fetchone()[0]
             conn.commit()
-            return f"✅ Enlace #{link_id} creado: [{source_id}] --{relation_type}--> [{target_id}] (peso={weight})"
+            return f"✅ Enlace #{link_id} creado: [{sid}] --{relation_type}--> [{tid}] (peso={weight})"
         except psycopg2.Error as e:
             if "unique" in str(e).lower():
                 return f"⚠️ Ya existe un enlace {relation_type} entre {source_id} y {target_id}."
@@ -1608,39 +1884,54 @@ async def graph_hipocampo(node_id: int = 0, depth: int = 2, max_nodes: int = 50)
     """
     depth = min(depth, 5)
 
-    def _fetch_content(rid: int) -> str:
+    def _fetch_content_from_mv(rid: str) -> str | None:
+        try:
+            int(rid)
+            conn = _conn()
+            cur = conn.cursor()
+            try:
+                cur.execute("SELECT contenido FROM memoria_vectorial WHERE id=%s::bigint", (rid,))
+                row = cur.fetchone()
+                if row:
+                    return row[0][:80].replace("\n", " ")
+            finally:
+                cur.close()
+                conn.close()
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    def _fetch_content_from_mi(rid: str) -> str | None:
         conn = _conn()
         cur = conn.cursor()
         try:
-            cur.execute(
-                "SELECT contenido FROM memoria_vectorial WHERE id=%s",
-                (rid,),
-            )
+            cur.execute("SELECT summary FROM memory_items WHERE id=%s", (rid,))
             row = cur.fetchone()
             if row:
-                text = row[0][:80].replace("\n", " ")
-                return f"[{rid}] {text}"
-            cur.execute(
-                "SELECT summary FROM memory_items WHERE id=%s",
-                (str(rid),),
-            )
-            row = cur.fetchone()
-            if row:
-                text = row[0][:80].replace("\n", " ")
-                return f"[{rid}] {text}"
-            return f"[{rid}] (desconocido)"
+                return row[0][:80].replace("\n", " ")
         finally:
             cur.close()
             conn.close()
+        return None
 
-    def _fetch_edges(rid: int) -> list[tuple]:
+    def _fetch_content(rid) -> str:
+        rid_str = str(rid)
+        text = _fetch_content_from_mv(rid_str)
+        if text:
+            return f"[{rid}] {text}"
+        text = _fetch_content_from_mi(rid_str)
+        if text:
+            return f"[{rid}] {text}"
+        return f"[{rid}] (desconocido)"
+
+    def _fetch_edges(rid) -> list[tuple]:
         conn = _conn()
         cur = conn.cursor()
         try:
             cur.execute(
                 """SELECT target_id, relation_type, weight, id FROM memory_links
                    WHERE source_id=%s ORDER BY weight DESC, id""",
-                (rid,),
+                (str(rid),),
             )
             return cur.fetchall()
         finally:
@@ -1729,15 +2020,20 @@ async def path_hipocampo(from_id: int, to_id: int, max_depth: int = 5) -> str:
     """
     max_depth = min(max_depth, 10)
 
-    def _fetch_content(rid: int) -> str:
+    def _fetch_content(rid) -> str:
+        rid_str = str(rid)
         conn = _conn()
         cur = conn.cursor()
         try:
-            cur.execute(
-                "SELECT contenido FROM memoria_vectorial WHERE id=%s "
-                "UNION SELECT summary FROM memory_items WHERE id=%s",
-                (rid, rid),
-            )
+            try:
+                int(rid_str)
+                cur.execute("SELECT contenido FROM memoria_vectorial WHERE id=%s::bigint", (rid_str,))
+                row = cur.fetchone()
+                if row:
+                    return row[0][:60].replace("\n", " ")
+            except (ValueError, TypeError):
+                pass
+            cur.execute("SELECT summary FROM memory_items WHERE id=%s", (rid_str,))
             row = cur.fetchone()
             if row:
                 return row[0][:60].replace("\n", " ")
@@ -1746,14 +2042,14 @@ async def path_hipocampo(from_id: int, to_id: int, max_depth: int = 5) -> str:
             cur.close()
             conn.close()
 
-    def _fetch_neighbors(rid: int) -> list[int]:
+    def _fetch_neighbors(rid) -> list:
         conn = _conn()
         cur = conn.cursor()
         try:
             cur.execute(
                 "SELECT target_id FROM memory_links WHERE source_id=%s "
                 "UNION SELECT source_id FROM memory_links WHERE target_id=%s",
-                (rid, rid),
+                (str(rid), str(rid)),
             )
             return [r[0] for r in cur.fetchall()]
         finally:

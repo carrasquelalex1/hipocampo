@@ -201,6 +201,8 @@ def generar_checkpoints(escalas, sin_fecha, dry_run=False):
                             **r,
                             "comprimido": True,
                             "original_count": len(episodicas),
+                            "original_ids": [ep[0][0] for ep in episodicas],
+                            "escala": escala_nombre,
                         }
                     )
             else:
@@ -214,6 +216,7 @@ def generar_checkpoints(escalas, sin_fecha, dry_run=False):
                             "tags": meta.get("tags", []),
                             "comprimido": False,
                             "original_count": 1,
+                            "original_ids": [row[0]],
                         }
                     )
 
@@ -285,9 +288,36 @@ def run_checkpoint(dry_run: bool = True):
     output = formatear_reporte(reportes, sin_fecha, dry_run)
 
     if not dry_run:
+        comprimidos = []
         for r in reportes:
-            comprimidos = [s for s in r["resumenes"] if s["comprimido"]]
+            comp = [s for s in r["resumenes"] if s["comprimido"]]
+            comprimidos.extend(comp)
+
+        if comprimidos:
+            original_ids = []
             for s in comprimidos:
+                if "original_ids" in s:
+                    original_ids.extend(s["original_ids"])
+            if original_ids:
+                snapshot_meta = json.dumps(
+                    {
+                        "tipo": "checkpoint_snapshot",
+                        "escalas": list(set(s["escala"] for s in comprimidos if "escala" in s)),
+                        "fecha": datetime.now().isoformat(),
+                        "comprimidos_count": len(comprimidos),
+                    }
+                )
+                cur.execute(
+                    "INSERT INTO memoria_vectorial (contenido, metadatos) VALUES (%s, %s)",
+                    (
+                        f"[CHECKPOINT SNAPSHOT] {len(original_ids)} originales comprimidos: {original_ids[:50]}...",
+                        snapshot_meta,
+                    ),
+                )
+
+        for r in reportes:
+            comprimidos_escala = [s for s in r["resumenes"] if s["comprimido"]]
+            for s in comprimidos_escala:
                 resumen = s["resumen"]
                 tags = s["tags"]
                 try:
