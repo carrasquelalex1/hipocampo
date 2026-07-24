@@ -8,7 +8,7 @@
 
 ## 🧠 Hipocampo — Full Usage Required
 
-Hipocampo is not a sticky note. It is an **external brain** with 22+ MCP tools. **Use all of them, not just save/search.**
+Hipocampo is not a sticky note. It is an **external brain** with 29 MCP tools. **Use all of them, not just save/search.**
 
 ### Search & Retrieve
 - `search_hipocampo(query)` — Hybrid semantic + lexical search (BIRE v3.7). Use before answering any question about past work, user preferences, or project state.
@@ -35,6 +35,9 @@ Hipocampo is not a sticky note. It is an **external brain** with 22+ MCP tools. 
 - `hipocampo_stats()` — View performance metrics and optimization recommendations.
 - `hipocampo_dedup(merge=False)` — Detect and optionally merge duplicate memories.
 - `hipocampo_checkpoint(dry_run=True)` — Compress old memories with logarithmic decay.
+- `review_automatica(max_age_days=30, dry_run=True)` — Audit automatic rules; degrade unused ones to semantic level. Run every 72h.
+- `validate_immune_rule(rule_id)` — Validate an immune rule: detect orphans, contradictions, and missing graph links.
+- `rollback_checkpoint(snapshot_id)` — Verify/restore from a checkpoint snapshot saved during compression.
 - `hipocampo_maintenance()` — Full cycle: health → dedup → checkpoint → tune.
 
 ### Webhooks (for event-driven agents)
