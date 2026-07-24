@@ -223,6 +223,69 @@ search_hipocampo("trigger:sgv trigger:chartjs trigger:php")
 
 ---
 
+## 🛡️ Fase 6: Sistema Inmunológico — Protección contra Regresiones (v4.2)
+
+Las reglas automáticas previenen errores YA cometidos. Pero un agente también puede romper algo que funcionaba perfectamente — un error NUEVO, sin registro previo. Esta fase implementa un **sistema inmunológico de código**: detecta la rotura en el momento en que ocurre y genera inmunidad permanente para el futuro.
+
+### Ciclo de 3 pasos
+
+**Paso 1 — Snapshot pre-cambio.** Antes de editar un archivo, guardar un snapshot de lo que funciona:
+```python
+save_hipocampo(
+    "PRE-CHANGE SNAPSHOT: header.php en SGV.pro.
+     Dependencias críticas: sesión PHP, conexión PDO, 40+ archivos include.
+     Verificación: abrir dashboard.php, confirmar que carga sin error 500.",
+    categories=["snapshot", "trigger:sgv", "trigger:regresion", "trigger:header"],
+    nivel="episodica"  # barato — se comprime si no hubo problema
+)
+```
+
+**Paso 2 — Post-cambio: verificar.** Después de editar, ejecutar las verificaciones del snapshot:
+- Si todo OK → el snapshot episódico se comprimirá solo con checkpoint
+- Si algo se rompió → paso 3
+
+**Paso 3 — Inmunizar.** Crear regla automática que capture causa-efecto:
+```python
+save_hipocampo(
+    "REGLA INMUNOLÓGICA: Editar header.php en SGV.pro rompió dashboard.
+     Causa: se eliminó session_start() accidentalmente.
+     Síntoma: HTTP 500 en todas las páginas, 'session already started' en log.
+     Solución: restaurar session_start() al inicio del archivo.",
+    categories=["trigger:sgv","trigger:regresion","trigger:header","trigger:session"],
+    nivel="automatica"  # permanente — nunca se comprime
+)
+```
+
+### Principio de economía inmune
+
+| Momento | Costo | Nivel |
+|---------|-------|-------|
+| Pre-cambio (snapshot) | Barato | `episodica` — se comprime si no hubo problema |
+| Post-rotura (regla) | Caro | `automatica` — permanente, inmutable |
+
+El sistema solo paga el costo de la memoria cuando realmente ocurrió un daño — igual que el sistema inmunológico biológico: genera anticuerpos solo después de exponerse al patógeno.
+
+### Archivos frágiles pre-cargados
+
+| Archivo | Qué rompe si se edita mal |
+|---------|--------------------------|
+| `header.php` | Sesiones, conexión PDO, decenas de dependientes |
+| `conexion.php` | Toda la capa de datos del proyecto |
+| `utils.php` | Funciones compartidas (CSRF, geografía, fechas) |
+| `auth.php` | Login, roles, permisos en todo el sistema |
+| `db_connection.php` | Stack completo si cambian credenciales |
+
+### Cómo usar con triggers
+
+Antes de cualquier edición, buscar regresiones previas en ese archivo:
+```
+search_hipocampo("trigger:regresion trigger:<archivo> trigger:<proyecto>")
+```
+
+Si existe una regla inmunológica para ese archivo, aparecerá en los resultados y el agente sabrá exactamente qué no debe tocar.
+
+---
+
 ## 🌐 Servidor MCP — Conexión
 
 ### Local (Streamable HTTP, recomendado)
@@ -306,6 +369,12 @@ git clone https://github.com/carrasquelalex1/hipocampo.git /tmp/opencode/hipocam
 - `fly.toml` — deploy a Fly.io
 
 ---
+
+## 🆕 Changelog v4.2
+
+| Fase | Features |
+|---|---|
+| **6** | Sistema Inmunológico — Protección contra Regresiones: ciclo snapshot → verificar → inmunizar, archivos frágiles pre-cargados, economía inmune (snapshot=barato, regla=caro) |
 
 ## 🆕 Changelog v4.1
 
@@ -549,6 +618,69 @@ search_hipocampo("trigger:project trigger:chartjs trigger:php")
 | `consolidate_hipocampo(min_age_days, dry_run)` | Migrate old episodic memories to semantic |
 
 > **Important**: The `automatica` level is irreversible by design. An automatic rule is a conditioned reflex — it is never compressed by checkpoint, never merged in dedup, never deleted by consolidate. Use with criteria.
+
+---
+
+## 🛡️ Phase 6: Immune System — Regression Protection (v4.2)
+
+Automatic rules prevent errors ALREADY committed. But an agent can also break something that was working fine — a NEW error with no prior record. This phase implements a **code immune system**: it detects breakage the moment it happens and generates permanent immunity for the future.
+
+### 3-step cycle
+
+**Step 1 — Pre-change snapshot.** Before editing a file, save a snapshot of what works:
+```python
+save_hipocampo(
+    "PRE-CHANGE SNAPSHOT: header.php in SGV.pro.
+     Critical dependencies: PHP session, PDO connection, 40+ dependent files.
+     Verification: open dashboard.php, confirm it loads without error 500.",
+    categories=["snapshot", "trigger:project", "trigger:regression", "trigger:header"],
+    nivel="episodica"  # cheap — compressed away if no problem
+)
+```
+
+**Step 2 — Post-change: verify.** After editing, run the snapshot verification steps:
+- If OK → the episodic snapshot gets compressed by checkpoint (zero lingering cost)
+- If something broke → step 3
+
+**Step 3 — Immunize.** Create an automatic rule capturing cause and effect:
+```python
+save_hipocampo(
+    "IMMUNE RULE: Editing header.php in SGV.pro broke dashboard.
+     Cause: session_start() was accidentally removed.
+     Symptom: HTTP 500 on all pages, 'session already started' in logs.
+     Fix: restore session_start() at the top of the file.",
+    categories=["trigger:project","trigger:regression","trigger:header","trigger:session"],
+    nivel="automatica"  # permanent — never compressed
+)
+```
+
+### Immune economy principle
+
+| Moment | Cost | Level |
+|--------|------|-------|
+| Pre-change (snapshot) | Cheap | `episodica` — auto-compressed if no damage |
+| Post-break (rule) | Expensive | `automatica` — permanent, immutable |
+
+The system only pays the memory cost when real damage occurred — just like the biological immune system: it generates antibodies only after exposure to the pathogen.
+
+### Pre-loaded fragile files
+
+| File | What breaks if edited incorrectly |
+|------|----------------------------------|
+| `header.php` | Sessions, PDO connection, dozens of dependent files |
+| `conexion.php` | Entire data layer of the project |
+| `utils.php` | Shared functions (CSRF, geography, dates) |
+| `auth.php` | Login, roles, permissions system-wide |
+| `db_connection.php` | Full stack if credentials change |
+
+### How to use with triggers
+
+Before any edit, search for previous regressions on that file:
+```
+search_hipocampo("trigger:regression trigger:<file> trigger:<project>")
+```
+
+If an immune rule exists for that file, it will surface and the agent will know exactly what to avoid touching.
 
 ---
 

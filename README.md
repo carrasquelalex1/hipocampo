@@ -18,7 +18,7 @@ pinned: false
   Persistent memory for autonomous AI agents · PostgreSQL 17 + pgvector · Hybrid Search · MCP Server
 </p>
 
-[![Version](https://img.shields.io/badge/version-4.1-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
+[![Version](https://img.shields.io/badge/version-4.2-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-active-green)](https://registry.modelcontextprotocol.io/v0.1/servers?search=carrasquelalex1/hipocampo)
@@ -84,6 +84,7 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 * **Hybrid Prompt Compression** (v4.0): Two-phase compression pipeline — extractive (sentence-level) for generic text and LLM summarization (via NVIDIA NIM) for technical/code content. Reduces prompt tokens by 20-50% while preserving critical information. Available as `compress_hipocampo` MCP tool.
 * **Memory Graph** (v4.0): Directed graph of semantic relationships between memories. Link related records, navigate with BFS tree, find shortest paths. Available as `link_hipocampo`, `graph_hipocampo`, `path_hipocampo` MCP tools.
 * **Memory Hierarchy with Trigger-Based Prevention** (v4.1): 🧠🧠 Three-level memory (episodic → semantic → automatic) inspired by human mnemonic consolidation. **NEW:** Tag memories with contextual triggers (`trigger:php`, `trigger:chartjs`, `trigger:tomcat`) — when the agent starts working in that context, it searches for matching `automatica` rules and reactivates past errors *before* making the same mistake. This mirrors the biological hippocampus: a partial cue (project + language) triggers full memory retrieval of the error and its solution. Automatic rules are permanent — never compressed, never deleted. `set_nivel_hipocampo(id, nivel)` + `consolidate_hipocampo` tools included.
+* **Code Immune System — Regression Protection** (v4.2): 🛡️ Prevents agents from breaking code that was working. **3-step cycle:** (1) Snapshot functional state before editing, (2) Verify after editing, (3) If something broke → create a permanent `automatica` rule capturing the exact cause, symptom, and fix. Uses immune economy: pre-change snapshots are cheap `episodica` (auto-compressed if no damage), post-break rules are permanent `automatica`. Pre-loaded with fragile file catalog — header.php, conexion.php, utils.php, auth.php, etc. Agents search `trigger:regression trigger:<file>` before every edit to learn what other agents broke before.
 * **Code RAG** (v4.0): Index project source code (PHP, JS, TS, Python, SQL) as semantic embeddings. Search with `search_code(query, language)` — returns real code snippets with file paths and line numbers, not just summaries.
 * **Exponential Time Decay** (v4.0): `final_score = relevance × exp(-λ × days)` with λ=0.05 configurable and 20% floor. Recent knowledge naturally outranks old memories.
 * **Session Memory & Auto-Summarization**: Session-isolated save/search. After 20+ saves, Hipocampo auto-generates a consolidated session summary in the background.
@@ -197,6 +198,37 @@ search_hipocampo("trigger:<project> trigger:<language> trigger:<tech>")
 ```
 
 This mirrors the biological hippocampus: **a partial cue triggers full memory retrieval** — the brain doesn't wait for the error to happen before remembering it hurts.
+
+### 🛡️ Regression Protection — Code Immune System (NEW v4.2)
+
+Sometimes the agent breaks code that was working fine — not repeating an old error, but creating a new one. Hipocampo v4.2 implements a **3-step immune cycle** that mirrors how the body generates antibodies:
+
+```
+┌─ 1. SNAPSHOT ──────────────────────────────────┐
+│  Before editing header.php, save what works:    │
+│  "header.php depends on session_start().         │
+│   Verify: open dashboard.php, must load OK."    │
+│  Cost: episodica (cheap, auto-compressed)       │
+└───────────────────┬─────────────────────────────┘
+                    │
+┌─ 2. VERIFY ───────▼─────────────────────────────┐
+│  After editing, run the snapshot verification:  │
+│  - Dashboard loads OK → no cost, snapshot fades │
+│  - HTTP 500 on all pages → immune response!     │
+└───────────────────┬─────────────────────────────┘
+                    │
+┌─ 3. IMMUNIZE ─────▼─────────────────────────────┐
+│  Save permanent automatica rule:                │
+│  "Editing header.php: removed session_start(),  │
+│   broke 40+ pages. Fix: restore session_start() │
+│   at top of file. NEVER touch this line."       │
+│  Cost: automatica (permanent, never compressed) │
+└─────────────────────────────────────────────────┘
+```
+
+**Fragile file catalog (pre-loaded):** header.php, conexion.php, utils.php, auth.php, db_connection.php — these files have cascading dependencies. One wrong edit breaks dozens of pages. Hipocampo ships with fragile file rules so agents know what to handle with care.
+
+**Before every edit:** `search_hipocampo("trigger:regression trigger:<file> trigger:<project>")` — learn what other agents broke on this file before you touch it.
 
 ### ⚙️ How to configure your agent
 
@@ -613,6 +645,7 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 * **Compresión Híbrida de Prompts** (v4.0): Pipeline de dos fases — compresión extractiva (nivel de oraciones) para texto genérico y resumen LLM (vía NVIDIA NIM) para contenido técnico/código. Reduce tokens del prompt entre 20-50% preservando información crítica. Disponible como herramienta MCP `compress_hipocampo`.
 * **Grafo de Memoria** (v4.0): Grafo dirigido de relaciones semánticas entre recuerdos. Enlaza registros relacionados, navega con árbol BFS, encuentra caminos más cortos. Tools: `link_hipocampo`, `graph_hipocampo`, `path_hipocampo`.
 * **Jerarquía de Memoria con Prevención por Disparadores** (v4.1): 🧠🧠 Tres niveles (episódica → semántica → automática) inspirado en consolidación mnémica humana. **NOVEDAD:** Etiqueta recuerdos con disparadores contextuales (`trigger:php`, `trigger:chartjs`, `trigger:tomcat`) — cuando el agente comienza a trabajar en ese contexto, busca reglas `automatica` coincidentes y reactiva errores pasados *antes* de cometer el mismo error. Esto replica el hipocampo biológico: una pista parcial (proyecto + lenguaje) dispara la recuperación completa del error y su solución. Las reglas automáticas son permanentes — nunca se comprimen, nunca se eliminan. Tools: `set_nivel_hipocampo(id, nivel)` + `consolidate_hipocampo`.
+* **Sistema Inmunológico de Código — Protección contra Regresiones** (v4.2): 🛡️ Evita que los agentes rompan código que funcionaba. **Ciclo de 3 pasos:** (1) Snapshot del estado funcional antes de editar, (2) Verificar después de editar, (3) Si algo se rompió → crear regla `automatica` permanente que capture la causa exacta, el síntoma y la solución. Usa economía inmune: los snapshots pre-cambio son `episodica` baratos (se autocomprimen si no hubo daño), las reglas post-rotura son `automatica` permanentes. Precargado con catálogo de archivos frágiles — header.php, conexion.php, utils.php, auth.php, etc. El agente busca `trigger:regresion trigger:<archivo>` antes de cada edición para aprender lo que otros agentes rompieron antes.
 * **RAG de Código** (v4.0): Indexa código fuente de proyectos (PHP, JS, TS, Python, SQL) como embeddings semánticos. Busca con `search_code(consulta, lenguaje)` — devuelve código real con ruta de archivo y números de línea.
 * **Decaimiento Temporal Exponencial** (v4.0): `score_final = relevancia × exp(-λ × días)` con λ=0.05 configurable y piso 20%. El conocimiento reciente pesa naturalmente más.
 * **Memoria por Sesión y Auto-resumen**: Búsqueda/guardado aislado por sesión. Cada 20 guardados, Hipocampo genera un resumen consolidado de fondo.
@@ -726,6 +759,37 @@ search_hipocampo("trigger:<proyecto> trigger:<lenguaje> trigger:<tecnologia>")
 ```
 
 Esto replica el hipocampo biológico: **una pista parcial dispara la recuperación completa de la memoria** — el cerebro no espera a que ocurra el error para recordar que duele.
+
+### 🛡️ Protección contra Regresiones — Sistema Inmunológico (NUEVO v4.2)
+
+A veces el agente rompe código que funcionaba bien — no repite un error viejo, crea uno nuevo. Hipocampo v4.2 implementa un **ciclo inmune de 3 pasos** que replica cómo el cuerpo genera anticuerpos:
+
+```
+┌─ 1. SNAPSHOT ──────────────────────────────────┐
+│  Antes de editar header.php, guardar qué sirve: │
+│  "header.php depende de session_start().         │
+│   Verificar: abrir dashboard.php, debe cargar." │
+│  Costo: episodica (barato, se autocomprime)     │
+└───────────────────┬─────────────────────────────┘
+                    │
+┌─ 2. VERIFICAR ────▼─────────────────────────────┐
+│  Después de editar, verificar el snapshot:      │
+│  - Dashboard carga OK → sin costo, se desvanece │
+│  - HTTP 500 en todas las páginas → ¡respuesta!  │
+└───────────────────┬─────────────────────────────┘
+                    │
+┌─ 3. INMUNIZAR ────▼─────────────────────────────┐
+│  Guardar regla automatica permanente:           │
+│  "Editar header.php: quité session_start(),     │
+│   rompió 40+ páginas. Solución: restaurar        │
+│   session_start() al inicio. NUNCA tocar esto." │
+│  Costo: automatica (permanente, inmutable)      │
+└─────────────────────────────────────────────────┘
+```
+
+**Catálogo de archivos frágiles (precargado):** header.php, conexion.php, utils.php, auth.php, db_connection.php — estos archivos tienen dependencias en cascada. Una sola edición incorrecta rompe decenas de páginas. Hipocampo incluye reglas de fragilidad para que los agentes sepan qué manejar con cuidado.
+
+**Antes de cada edición:** `search_hipocampo("trigger:regresion trigger:<archivo> trigger:<proyecto>")` — aprende lo que otros agentes rompieron en este archivo antes de tocarlo.
 
 ### ⚙️ Cómo configurar tu agente
 
