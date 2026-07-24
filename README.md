@@ -255,6 +255,8 @@ To enable this behavior, you need to instruct your agent to use the cycle above.
 
 > 💡 **Tip:** For MCP-native agents (OpenCode, Claude Code), Hipocampo tools are available directly. For others, use the HTTP endpoint or CLI scripts.
 
+**📄 Want your agent to use ALL of Hipocampo?** [Copy `AGENTS_TEMPLATE.md`](./AGENTS_TEMPLATE.md) as your `AGENTS.md` / `CLAUDE.md` / `.cursorrules` — safe to share, no credentials.
+
 ### Other use cases
 - **Persistent user profile**: Remember preferences, configs, and personal data across sessions
 - **Project state tracking**: Keep context on ongoing projects, decisions made, and pending tasks
@@ -815,6 +817,8 @@ Para activar este comportamiento, hay que instruir al agente. Se hace agregando 
 ```
 
 > 💡 **Tip:** Para agentes nativos MCP (OpenCode, Claude Code), las tools de Hipocampo están disponibles directamente. Para otros, usa el endpoint HTTP o los scripts CLI.
+
+**📄 ¿Quieres que tu agente use TODO Hipocampo?** [Copia `AGENTS_TEMPLATE.md`](./AGENTS_TEMPLATE.md) como tu `AGENTS.md` / `CLAUDE.md` / `.cursorrules` — seguro de compartir, sin credenciales.
 
 ### Otros casos de uso
 - **Perfil de usuario persistente**: Recordar preferencias, configuraciones y datos personales entre sesiones
