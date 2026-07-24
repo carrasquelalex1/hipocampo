@@ -18,7 +18,7 @@ pinned: false
   Persistent memory for autonomous AI agents · PostgreSQL 17 + pgvector · Hybrid Search · MCP Server
 </p>
 
-[![Version](https://img.shields.io/badge/version-4.0-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
+[![Version](https://img.shields.io/badge/version-4.1-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-active-green)](https://registry.modelcontextprotocol.io/v0.1/servers?search=carrasquelalex1/hipocampo)
@@ -83,7 +83,7 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 * **Cross-System Vector Search**: Unified semantic search across over 1,100 records for deep cross-referencing.
 * **Hybrid Prompt Compression** (v4.0): Two-phase compression pipeline — extractive (sentence-level) for generic text and LLM summarization (via NVIDIA NIM) for technical/code content. Reduces prompt tokens by 20-50% while preserving critical information. Available as `compress_hipocampo` MCP tool.
 * **Memory Graph** (v4.0): Directed graph of semantic relationships between memories. Link related records, navigate with BFS tree, find shortest paths. Available as `link_hipocampo`, `graph_hipocampo`, `path_hipocampo` MCP tools.
-* **Memory Hierarchy** (v4.0): Three-level memory (episodic → semantic → automatic) inspired by human mnemonic consolidation. Episodic = raw detail; semantic = compressed knowledge; automatic = permanent reflexes. Checkpoint respects levels — automatic memories are never compressed.
+* **Memory Hierarchy with Trigger-Based Prevention** (v4.1): 🧠🧠 Three-level memory (episodic → semantic → automatic) inspired by human mnemonic consolidation. **NEW:** Tag memories with contextual triggers (`trigger:php`, `trigger:chartjs`, `trigger:tomcat`) — when the agent starts working in that context, it searches for matching `automatica` rules and reactivates past errors *before* making the same mistake. This mirrors the biological hippocampus: a partial cue (project + language) triggers full memory retrieval of the error and its solution. Automatic rules are permanent — never compressed, never deleted. `set_nivel_hipocampo(id, nivel)` + `consolidate_hipocampo` tools included.
 * **Code RAG** (v4.0): Index project source code (PHP, JS, TS, Python, SQL) as semantic embeddings. Search with `search_code(query, language)` — returns real code snippets with file paths and line numbers, not just summaries.
 * **Exponential Time Decay** (v4.0): `final_score = relevance × exp(-λ × days)` with λ=0.05 configurable and 20% floor. Recent knowledge naturally outranks old memories.
 * **Session Memory & Auto-Summarization**: Session-isolated save/search. After 20+ saves, Hipocampo auto-generates a consolidated session summary in the background.
@@ -147,6 +147,56 @@ Hipocampo enables AI agents to **learn from mistakes across sessions** using a s
 **Real example:** An agent tries `flatpak install npm` and fails. It saves the error to Hipocampo: *"npm is a Node.js package manager, not a Flatpak package. Use npm directly."* Next time the same command is attempted, the agent finds this record and knows the solution immediately — without repeating the mistake.
 
 **Over time**, the agent's error knowledge base grows organically. Each failure makes future sessions smarter. This turns Hipocampo from a simple archive into a **continuous learning system** for AI agents.
+
+### 🧠 Context-Aware Error Prevention (NEW v4.1) — Proactive, not Reactive
+
+Going beyond reactive learning, Hipocampo v4.1 introduces **trigger-based automatic rules** that fire *before* the agent writes a single line of code:
+
+```
+┌─ 1. DETECT CONTEXT ───────────────────────────────┐
+│  Agent is about to edit a PHP file in SGV.pro:     │
+│  File: analisis_visual.php                         │
+│  Library: Chart.js                                 │
+│  Language: PHP                                     │
+└────────────────────┬───────────────────────────────┘
+                     │
+┌─ 2. SEARCH TRIGGERS ───▼───────────────────────────┐
+│  search_hipocampo("trigger:sgv trigger:chartjs     │
+│                     trigger:php trigger:json_encode")│
+└────────────────────┬───────────────────────────────┘
+                     │
+┌─ 3. REACTIVATE RULES ─▼────────────────────────────┐
+│  REGLA AUTOMÁTICA FOUND (score 31.0):              │
+│  "NUNCA usar variables JS (C.red, C.primary)       │
+│   dentro de <?= json_encode() ?> en PHP.            │
+│   PHP las evalúa como constantes → Fatal Error."   │
+│  Solución: usar literales #ef4444 / #408AEC        │
+└────────────────────┬───────────────────────────────┘
+                     │
+┌─ 4. ACT WITH CONSTRAINT ─▼─────────────────────────┐
+│  Agent generates code using color literals instead │
+│  of JS variables. Error avoided BEFORE it happens. │
+└────────────────────────────────────────────────────┘
+```
+
+**How to implement:**
+
+```python
+# 1. When saving an error, tag it with contextual triggers and elevate to automatica
+save_hipocampo(
+    content="NUNCA usar variables JS en json_encode() PHP. Usar literales de color.",
+    memory_type="decision",
+    categories=["trigger:sgv", "trigger:chartjs", "trigger:php", "trigger:json_encode"],
+    nivel="automatica"
+)
+
+# 2. Before editing code in any project, search matching triggers
+search_hipocampo("trigger:<project> trigger:<language> trigger:<tech>")
+
+# 3. Automatic rules surface → agent applies them preventively
+```
+
+This mirrors the biological hippocampus: **a partial cue triggers full memory retrieval** — the brain doesn't wait for the error to happen before remembering it hurts.
 
 ### ⚙️ How to configure your agent
 
@@ -562,7 +612,7 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 * **Auto-MeJORA MCP**: Autodiagnóstico (health check + auto-repair), optimización dinámica (stats + tune), y mantenimiento de memoria (dedup + checkpoint) — todo desde herramientas MCP.
 * **Compresión Híbrida de Prompts** (v4.0): Pipeline de dos fases — compresión extractiva (nivel de oraciones) para texto genérico y resumen LLM (vía NVIDIA NIM) para contenido técnico/código. Reduce tokens del prompt entre 20-50% preservando información crítica. Disponible como herramienta MCP `compress_hipocampo`.
 * **Grafo de Memoria** (v4.0): Grafo dirigido de relaciones semánticas entre recuerdos. Enlaza registros relacionados, navega con árbol BFS, encuentra caminos más cortos. Tools: `link_hipocampo`, `graph_hipocampo`, `path_hipocampo`.
-* **Jerarquía de Memoria** (v4.0): Tres niveles (episódica → semántica → automática) inspirado en consolidación mnémica humana. Episódica = detalle crudo; semántica = conocimiento comprimido; automática = reflejos permanentes. El checkpoint respeta niveles — lo automático nunca se comprime.
+* **Jerarquía de Memoria con Prevención por Disparadores** (v4.1): 🧠🧠 Tres niveles (episódica → semántica → automática) inspirado en consolidación mnémica humana. **NOVEDAD:** Etiqueta recuerdos con disparadores contextuales (`trigger:php`, `trigger:chartjs`, `trigger:tomcat`) — cuando el agente comienza a trabajar en ese contexto, busca reglas `automatica` coincidentes y reactiva errores pasados *antes* de cometer el mismo error. Esto replica el hipocampo biológico: una pista parcial (proyecto + lenguaje) dispara la recuperación completa del error y su solución. Las reglas automáticas son permanentes — nunca se comprimen, nunca se eliminan. Tools: `set_nivel_hipocampo(id, nivel)` + `consolidate_hipocampo`.
 * **RAG de Código** (v4.0): Indexa código fuente de proyectos (PHP, JS, TS, Python, SQL) como embeddings semánticos. Busca con `search_code(consulta, lenguaje)` — devuelve código real con ruta de archivo y números de línea.
 * **Decaimiento Temporal Exponencial** (v4.0): `score_final = relevancia × exp(-λ × días)` con λ=0.05 configurable y piso 20%. El conocimiento reciente pesa naturalmente más.
 * **Memoria por Sesión y Auto-resumen**: Búsqueda/guardado aislado por sesión. Cada 20 guardados, Hipocampo genera un resumen consolidado de fondo.
@@ -626,6 +676,56 @@ Hipocampo permite que agentes de IA **aprendan de sus errores entre sesiones** c
 **Ejemplo real:** Un agente intenta `flatpak install npm` y falla. Guarda el error en Hipocampo: *"npm es un gestor de paquetes de Node.js, no un paquete Flatpak. Usar npm directamente."* La próxima vez que se intente el mismo comando, el agente encuentra este registro y aplica la solución de inmediato.
 
 **Con el tiempo**, la base de conocimiento de errores crece orgánicamente. Cada fallo hace más inteligentes las sesiones futuras. Esto convierte a Hipocampo de un simple archivo en un **sistema de aprendizaje continuo** para agentes de IA.
+
+### 🧠 Prevención de Errores por Disparadores Contextuales (NUEVO v4.1) — Proactivo, no Reactivo
+
+Más allá del aprendizaje reactivo, Hipocampo v4.1 introduce **reglas automáticas con disparadores** que se activan *antes* de que el agente escriba una sola línea de código:
+
+```
+┌─ 1. DETECTAR CONTEXTO ───────────────────────────┐
+│  El agente va a editar un archivo PHP en SGV.pro: │
+│  Archivo: analisis_visual.php                     │
+│  Librería: Chart.js                               │
+│  Lenguaje: PHP                                    │
+└───────────────────┬───────────────────────────────┘
+                    │
+┌─ 2. BUSCAR DISPARADORES ──▼───────────────────────┐
+│  search_hipocampo("trigger:sgv trigger:chartjs    │
+│                    trigger:php trigger:json_encode")│
+└───────────────────┬───────────────────────────────┘
+                    │
+┌─ 3. REACTIVAR REGLAS ─▼───────────────────────────┐
+│  REGLA AUTOMÁTICA ENCONTRADA (score 31.0):        │
+│  "NUNCA usar variables JS (C.red, C.primary)      │
+│   dentro de <?= json_encode() ?> en PHP.           │
+│   PHP las evalúa como constantes → Fatal Error."  │
+│  Solución: usar literales #ef4444 / #408AEC       │
+└───────────────────┬───────────────────────────────┘
+                    │
+┌─ 4. ACTUAR CON RESTRICCIÓN ─▼─────────────────────┐
+│  El agente genera código usando literales de      │
+│  color. Error EVITADO antes de que ocurra.        │
+└───────────────────────────────────────────────────┘
+```
+
+**Cómo implementarlo:**
+
+```python
+# 1. Al guardar un error, etiquetarlo con triggers contextuales y elevar a automatica
+save_hipocampo(
+    content="NUNCA usar variables JS en json_encode() PHP. Usar literales de color.",
+    memory_type="decision",
+    categories=["trigger:sgv", "trigger:chartjs", "trigger:php", "trigger:json_encode"],
+    nivel="automatica"
+)
+
+# 2. Antes de editar código en cualquier proyecto, buscar disparadores coincidentes
+search_hipocampo("trigger:<proyecto> trigger:<lenguaje> trigger:<tecnologia>")
+
+# 3. Las reglas automáticas aparecen → el agente las aplica preventivamente
+```
+
+Esto replica el hipocampo biológico: **una pista parcial dispara la recuperación completa de la memoria** — el cerebro no espera a que ocurra el error para recordar que duele.
 
 ### ⚙️ Cómo configurar tu agente
 
