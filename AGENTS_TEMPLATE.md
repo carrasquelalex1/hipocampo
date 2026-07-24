@@ -1,6 +1,6 @@
 # AGENTS.md Template — Hipocampo Integration
 
-> Copy this file as `AGENTS.md` (OpenCode), `CLAUDE.md` (Claude Code), `.cursorrules` (Cursor), or equivalent to enable full Hipocampo memory capabilities for your AI agent.
+> Append the relevant sections below into your `AGENTS.md` (OpenCode), `CLAUDE.md` (Claude Code), `.cursorrules` (Cursor), or equivalent to enable full Hipocampo memory capabilities for your AI agent. Pick only what you need — keep your existing instructions.
 >
 > These are **generic instructions** — no credentials, no paths, no personal data. Safe to copy.
 
