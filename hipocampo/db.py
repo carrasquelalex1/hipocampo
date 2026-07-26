@@ -66,14 +66,23 @@ def init_pool(minconn=1, maxconn=10):
     global _pool
     if _pool is None:
         cfg = load_config()
-        _pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn,
-            maxconn,
-            host=cfg["DB_HOST"],
-            user=cfg["DB_USER"],
-            dbname=cfg["DB_NAME"],
-            password=cfg["DB_PASSWORD"],
-        )
+        try:
+            _pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn,
+                maxconn,
+                host=cfg["DB_HOST"],
+                user=cfg["DB_USER"],
+                dbname=cfg["DB_NAME"],
+                password=cfg["DB_PASSWORD"],
+            )
+        except psycopg2.Error as e:
+            import logging
+
+            logging.getLogger("hipocampo").warning(
+                "No se pudo crear pool de conexiones (DB no disponible). "
+                "Las herramientas de BD fallarán hasta que esté accesible: %s",
+                e,
+            )
 
 
 def get_conn_from_pool():
