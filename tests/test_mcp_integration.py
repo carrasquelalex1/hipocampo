@@ -58,6 +58,7 @@ EXPECTED_TOOLS = {
     "list_watches",
     "review_automatica",
     "validate_immune_rule",
+    "decay_hipocampo",
 }
 
 TOOLS_WITH_SESSION_ID = {"search_hipocampo", "quick_hipocampo_search", "save_hipocampo"}
@@ -129,7 +130,7 @@ def test_all_tools_registered():
     extra = tool_names - EXPECTED_TOOLS
     assert not missing, f"Faltan herramientas: {missing}"
     assert not extra, f"Herramientas extra no esperadas: {extra}"
-    assert len(tools) == 29
+    assert len(tools) == 30
 
 
 def test_tool_annotations():
