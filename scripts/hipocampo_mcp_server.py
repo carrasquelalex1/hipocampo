@@ -94,6 +94,13 @@ ALTER TABLE memory_links ALTER COLUMN source_id TYPE TEXT;
 ALTER TABLE memory_links ALTER COLUMN target_id TYPE TEXT;
 """
 
+MEMORY_LINKS_DECAY_MIGRATION_SQL = """
+ALTER TABLE memory_links ADD COLUMN IF NOT EXISTS last_accessed TIMESTAMPTZ;
+ALTER TABLE memory_links ADD COLUMN IF NOT EXISTS reinforced_at TIMESTAMPTZ DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_memory_links_last_accessed ON memory_links(last_accessed);
+CREATE INDEX IF NOT EXISTS idx_memory_links_reinforced ON memory_links(reinforced_at);
+"""
+
 
 def _init_watches_table():
     try:
@@ -125,10 +132,17 @@ def _init_memory_links_table():
                     cur.execute(stmt)
                 except psycopg2.Error:
                     conn.rollback()
+        for stmt in MEMORY_LINKS_DECAY_MIGRATION_SQL.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                try:
+                    cur.execute(stmt)
+                except psycopg2.Error:
+                    conn.rollback()
         conn.commit()
         cur.close()
         conn.close()
-        logger.info("✅ memory_links table initialized")
+        logger.info("✅ memory_links table initialized (decay columns ready)")
     except psycopg2.Error as e:
         logger.warning("DB error al inicializar memory_links: %s", e)
     except Exception as e:
@@ -1755,6 +1769,50 @@ async def preload_context(project_path: str = "", k: int = 8) -> str:
     return "\n".join(lines)
 
 
+# ─── MEMORY GRAPH — Helpers ────────────────────────────────────────────────────
+
+
+def _compute_effective_weight(weight: float, last_accessed, decay_half_life_days: int = 90) -> float:
+    if last_accessed is None:
+        return weight
+    try:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        if last_accessed.tzinfo is None:
+            last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+        days = (now - last_accessed).days
+        if days <= 0:
+            return weight
+        decay = 0.5 ** (days / decay_half_life_days)
+        return round(weight * decay, 4)
+    except Exception:
+        return weight
+
+
+def _reinforce_link_db(cur, link_id: int):
+    cur.execute("UPDATE memory_links SET reinforced_at = NOW(), last_accessed = NOW() WHERE id = %s", (link_id,))
+
+
+def _fetch_effective_edges(conn, source_id):
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """SELECT target_id, relation_type, weight, id, last_accessed, reinforced_at
+               FROM memory_links
+               WHERE source_id = %s
+               ORDER BY weight DESC, id""",
+            (source_id,),
+        )
+        edges = []
+        for target_id, rel_type, weight, link_id, last_accessed, reinforced_at in cur.fetchall():
+            effective = _compute_effective_weight(weight, last_accessed)
+            edges.append((target_id, rel_type, effective, link_id, weight, last_accessed))
+        return edges
+    finally:
+        cur.close()
+
+
 # ─── MEMORY GRAPH — Tools ────────────────────────────────────────────────────
 
 
@@ -1793,8 +1851,8 @@ async def link_hipocampo(source_id: int, target_id: int, relation_type: str = "r
                     return f"❌ No existe recuerdo con id={rid} en ninguna tabla."
 
             cur.execute(
-                """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
-                   VALUES (%s, %s, %s, %s) RETURNING id""",
+                """INSERT INTO memory_links (source_id, target_id, relation_type, weight, reinforced_at)
+                   VALUES (%s, %s, %s, %s, NOW()) RETURNING id""",
                 (sid, tid, relation_type, weight),
             )
             link_id = cur.fetchone()[0]
@@ -1926,16 +1984,9 @@ async def graph_hipocampo(node_id: int = 0, depth: int = 2, max_nodes: int = 50)
 
     def _fetch_edges(rid) -> list[tuple]:
         conn = _conn()
-        cur = conn.cursor()
         try:
-            cur.execute(
-                """SELECT target_id, relation_type, weight, id FROM memory_links
-                   WHERE source_id=%s ORDER BY weight DESC, id""",
-                (str(rid),),
-            )
-            return cur.fetchall()
+            return _fetch_effective_edges(conn, rid)
         finally:
-            cur.close()
             conn.close()
 
     def _build_tree(rid: int, current_depth: int, visited: set) -> list[str]:
@@ -1951,9 +2002,9 @@ async def graph_hipocampo(node_id: int = 0, depth: int = 2, max_nodes: int = 50)
 
         if current_depth < depth:
             edges = _fetch_edges(rid)
-            for target_id, rel_type, weight, link_id in edges:
+            for target_id, rel_type, effective_weight, link_id, raw_weight, last_accessed in edges:
                 indent = "  " * (current_depth + 1)
-                prefix = f"{indent}└── ({rel_type}, w={weight}) "
+                prefix = f"{indent}└── ({rel_type}, w={effective_weight}) "
                 child_lines = _build_tree(target_id, current_depth + 1, visited)
                 if child_lines:
                     lines.append(prefix + child_lines[0])
@@ -2047,11 +2098,11 @@ async def path_hipocampo(from_id: int, to_id: int, max_depth: int = 5) -> str:
         cur = conn.cursor()
         try:
             cur.execute(
-                "SELECT target_id FROM memory_links WHERE source_id=%s "
-                "UNION SELECT source_id FROM memory_links WHERE target_id=%s",
+                "SELECT target_id, id FROM memory_links WHERE source_id=%s "
+                "UNION ALL SELECT source_id, id FROM memory_links WHERE target_id=%s",
                 (str(rid), str(rid)),
             )
-            return [r[0] for r in cur.fetchall()]
+            return [(r[0], r[1]) for r in cur.fetchall()]
         finally:
             cur.close()
             conn.close()
@@ -2059,33 +2110,54 @@ async def path_hipocampo(from_id: int, to_id: int, max_depth: int = 5) -> str:
     def _bfs():
         from collections import deque
 
-        visited = {from_id: None}
+        visited = {from_id: (None, None)}
         q = deque([from_id])
         while q:
             current = q.popleft()
             if current == to_id:
                 path = []
-                while current is not None:
-                    path.append(current)
-                    current = visited[current]
+                link_ids = []
+                node = current
+                while node is not None:
+                    path.append(node)
+                    parent, link_id = visited[node]
+                    if link_id is not None:
+                        link_ids.append(link_id)
+                    node = parent
                 path.reverse()
-                return path
-            for nb in _fetch_neighbors(current):
+                link_ids.reverse()
+                return path, link_ids
+            for nb, link_id in _fetch_neighbors(current):
                 if nb not in visited:
-                    visited[nb] = current
+                    visited[nb] = (current, link_id)
                     q.append(nb)
             if len(visited) > 1000:
                 break
-        return None
+        return None, []
+
+    def _reinforce_path(link_ids):
+        if not link_ids:
+            return
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            for lid in link_ids:
+                _reinforce_link_db(cur, lid)
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
 
     try:
         if from_id == to_id:
             label = await asyncio.to_thread(_fetch_content, from_id)
             return f"📍 Origen = destino: {label}"
 
-        path = await asyncio.to_thread(_bfs)
+        path, link_ids = await asyncio.to_thread(_bfs)
         if not path or len(path) > max_depth + 1:
             return f"❌ No se encontró camino entre [{from_id}] y [{to_id}] (hasta depth={max_depth})."
+
+        await asyncio.to_thread(_reinforce_path, link_ids)
 
         lines = [f"🔗 Camino encontrado ({len(path) - 1} saltos):"]
         for i, nid in enumerate(path):
@@ -2206,6 +2278,92 @@ async def search_code(query: str, k: int = 5, language: str = "") -> str:
         return await asyncio.to_thread(_do)
     except Exception as e:
         return _tool_err("search_code", e)
+
+
+# ─── GRAPH DECAY — Tool ──────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def decay_hipocampo(dry_run: bool = True) -> str:
+    """
+    Aplica decaimiento temporal a los pesos de los enlaces del grafo.
+
+    Los enlaces pierden peso exponencialmente si no son accedidos.
+    Half-life: 90 días (el peso se reduce a la mitad cada 90 días sin acceso).
+
+    Con dry_run=True (default) solo muestra el estado actual sin modificar.
+    Con dry_run=False aplica el decaimiento y elimina enlaces con peso < 0.01.
+
+    Returns:
+        Reporte del decaimiento aplicado.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                SELECT id, source_id, target_id, relation_type, weight,
+                       COALESCE(last_accessed, created_at) as effective_last,
+                       reinforced_at
+                FROM memory_links
+                ORDER BY COALESCE(last_accessed, created_at) ASC
+            """)
+            rows = cur.fetchall()
+
+            if not rows:
+                return "📊 No hay enlaces en el grafo."
+
+            total = len(rows)
+            decayed = 0
+            dead = 0
+            lines = [
+                "🧠 DECAIMIENTO DE ENLACES — Análisis del Grafo",
+                "   Half-life: 90 días",
+                f"   Total enlaces: {total}",
+                "",
+            ]
+
+            for link_id, src, tgt, rel, weight, last_acc, reinf in rows:
+                effective = _compute_effective_weight(weight, last_acc)
+
+                if effective < weight * 0.99:
+                    if not dry_run:
+                        cur.execute(
+                            "UPDATE memory_links SET weight = %s WHERE id = %s",
+                            (effective, link_id),
+                        )
+                    decayed += 1
+                    if effective < 0.01:
+                        if not dry_run:
+                            cur.execute(
+                                "DELETE FROM memory_links WHERE id = %s",
+                                (link_id,),
+                            )
+                        dead += 1
+
+            if not dry_run:
+                conn.commit()
+
+            lines.append(f"   Enlaces con decaimiento: {decayed}")
+            lines.append(f"   Enlaces muertos (peso < 0.01): {dead}")
+            lines.append("")
+
+            if dry_run:
+                lines.append("🔍 Modo dry_run — no se modificaron datos.")
+                lines.append("   Usa dry_run=False para aplicar los cambios.")
+            else:
+                lines.append("✅ Decaimiento aplicado.")
+
+            return "\n".join(lines)
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("decay_hipocampo", e)
 
 
 if __name__ == "__main__":

@@ -142,3 +142,25 @@ CREATE TABLE IF NOT EXISTS watches (
 );
 
 CREATE INDEX IF NOT EXISTS idx_watches_pattern ON watches(pattern);
+
+-- ============================================================
+-- memory_links — Grafo de memoria con decaimiento temporal
+-- ============================================================
+CREATE TABLE IF NOT EXISTS memory_links (
+    id SERIAL PRIMARY KEY,
+    source_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL DEFAULT 'related',
+    weight REAL NOT NULL DEFAULT 1.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_accessed TIMESTAMPTZ,
+    reinforced_at TIMESTAMPTZ DEFAULT NOW(),
+    metadata JSONB DEFAULT '{}',
+    UNIQUE(source_id, target_id, relation_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_links_source ON memory_links(source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_id);
+CREATE INDEX IF NOT EXISTS idx_memory_links_type ON memory_links(relation_type);
+CREATE INDEX IF NOT EXISTS idx_memory_links_last_accessed ON memory_links(last_accessed);
+CREATE INDEX IF NOT EXISTS idx_memory_links_reinforced ON memory_links(reinforced_at);

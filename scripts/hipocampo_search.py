@@ -20,6 +20,42 @@ from hipocampo.db import get_conn, get_embedding, load_config
 config = load_config()
 
 
+def _cosine_similarity(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _parse_vector(vec):
+    if vec is None:
+        return None
+    if isinstance(vec, str):
+        inner = vec.strip("[]")
+        if not inner:
+            return None
+        return [float(x) for x in inner.split(",")]
+    if isinstance(vec, list):
+        return vec
+    return None
+
+
+def _extract_numeric_id(result_id):
+    for prefix in ("vmi", "tm", "tv", "l", "m", "v"):
+        if result_id.startswith(prefix):
+            raw_id = result_id[len(prefix) :]
+            if prefix in ("v", "l", "tv"):
+                try:
+                    return int(raw_id), prefix
+                except (ValueError, TypeError):
+                    return raw_id, prefix
+            else:
+                return raw_id, prefix
+    return None, None
+
+
 # ─── FASE 1: EXPANSIÓN DE CONSULTA ───────────────────────────────────────────
 
 STEM_MAP = {
@@ -472,6 +508,18 @@ def _cargar_time_decay_lambda():
         return 0.05
 
 
+def load_diversity_config():
+    try:
+        with open(HYBRID_CONFIG_PATH) as f:
+            cfg = json.load(f)
+            return {
+                "enabled": cfg.get("diversity_enabled", True),
+                "lambda": cfg.get("diversity_lambda", 0.7),
+            }
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"enabled": True, "lambda": 0.7}
+
+
 def _time_decay(dias, lmbda=None):
     if lmbda is None:
         lmbda = _cargar_time_decay_lambda()
@@ -543,6 +591,96 @@ def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None, hoy=None):
     fusionados.sort(key=lambda x: x["score"], reverse=True)
 
     return fusionados
+
+
+def aplicar_diversidad_mmr(resultados, diversity_lambda=0.7, max_diverse=30):
+    if len(resultados) <= 3 or diversity_lambda >= 1.0:
+        return resultados
+
+    candidates = resultados[:max_diverse]
+    rest = resultados[max_diverse:]
+
+    selected = [candidates[0]]
+    pool = candidates[1:]
+
+    id_to_prefix = {}
+    for r in candidates:
+        numeric_id, prefix = _extract_numeric_id(r["id"])
+        if numeric_id is not None:
+            id_to_prefix[numeric_id] = prefix
+
+    mv_ids = []
+    mi_ids = []
+    for numeric_id, prefix in id_to_prefix.items():
+        if prefix in ("v", "l", "tv"):
+            mv_ids.append(numeric_id)
+        elif prefix in ("vmi", "m", "tm"):
+            mi_ids.append(numeric_id)
+
+    embeddings = {}
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        if mv_ids:
+            cur.execute(
+                "SELECT id, embedding::text FROM memoria_vectorial WHERE id = ANY(%s)",
+                (mv_ids,),
+            )
+            for row in cur.fetchall():
+                emb = _parse_vector(row[1])
+                if emb:
+                    embeddings[row[0]] = emb
+
+        if mi_ids:
+            cur.execute(
+                "SELECT id, embedding::text FROM memory_items WHERE id::text = ANY(%s)",
+                ([str(x) for x in mi_ids],),
+            )
+            for row in cur.fetchall():
+                emb = _parse_vector(row[1])
+                if emb:
+                    embeddings[str(row[0])] = emb
+    finally:
+        cur.close()
+        conn.close()
+
+    if not embeddings:
+        return resultados
+
+    first_numeric, _ = _extract_numeric_id(selected[0]["id"])
+    selected_vectors = []
+    if first_numeric is not None and first_numeric in embeddings:
+        selected_vectors.append(embeddings[first_numeric])
+
+    while pool:
+        best_candidate = None
+        best_score = -float("inf")
+
+        for cand in pool:
+            numeric_id, _ = _extract_numeric_id(cand["id"])
+            if numeric_id is None or numeric_id not in embeddings:
+                continue
+
+            cand_vec = embeddings[numeric_id]
+            relevance = cand["score"] / 100.0
+            max_cos = max((_cosine_similarity(cand_vec, sv) for sv in selected_vectors), default=0.0)
+            mmr_score = diversity_lambda * relevance - (1 - diversity_lambda) * max_cos
+
+            if mmr_score > best_score:
+                best_score = mmr_score
+                best_candidate = cand
+
+        if best_candidate is None:
+            break
+
+        selected.append(best_candidate)
+        pool.remove(best_candidate)
+
+        best_numeric, _ = _extract_numeric_id(best_candidate["id"])
+        if best_numeric is not None and best_numeric in embeddings:
+            selected_vectors.append(embeddings[best_numeric])
+
+    return selected + pool + rest
 
 
 # ─── FASE 6: RE-RANKING POR EL AGENTE ACTIVO ─────────────────────────────────
@@ -695,6 +833,11 @@ def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
     if tags_encontrados:
         por_tags = expandir_por_tags(cur, tags_encontrados, contenidos_existentes)
         fusionados = fusionar_resultados(fusionados, por_tags, [])
+
+    diversity_config = load_diversity_config()
+    if diversity_config.get("enabled", True):
+        diversity_lambda = diversity_config.get("lambda", 0.7)
+        fusionados = aplicar_diversidad_mmr(fusionados, diversity_lambda)
 
     if rerank:
         fusionados = re_rank_results(fusionados, query, top_n=RE_RANK_TOP_N)

@@ -6,5 +6,7 @@
   "description": "Ponderación híbrida balanceada: 50% vectorial + 50% léxico",
   "calibrated_at": "2026-07-05",
   "dataset_size": 12,
-  "last_tuned": "2026-07-08T22:46:54"
+  "last_tuned": "2026-07-08T22:46:54",
+  "diversity_enabled": true,
+  "diversity_lambda": 0.7
 }
