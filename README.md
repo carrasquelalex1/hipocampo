@@ -18,7 +18,7 @@ pinned: false
   Persistent memory for autonomous AI agents · PostgreSQL 17 + pgvector · Hybrid Search · MCP Server
 </p>
 
-[![Version](https://img.shields.io/badge/version-4.2-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
+[![Version](https://img.shields.io/badge/version-4.3-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-active-green)](https://registry.modelcontextprotocol.io/v0.1/servers?search=carrasquelalex1/hipocampo)
@@ -87,12 +87,14 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 * **Code Immune System — Regression Protection** (v4.2): 🛡️ Prevents agents from breaking code that was working. **3-step cycle:** (1) Snapshot functional state before editing, (2) Verify after editing, (3) If something broke → create a permanent `automatica` rule capturing the exact cause, symptom, and fix. Uses immune economy: pre-change snapshots are cheap `episodica` (auto-compressed if no damage), post-break rules are permanent `automatica`. Pre-loaded with fragile file catalog — header.php, conexion.php, utils.php, auth.php, etc. Agents search `trigger:regression trigger:<file>` before every edit to learn what other agents broke before.
 * **Code RAG** (v4.0): Index project source code (PHP, JS, TS, Python, SQL) as semantic embeddings. Search with `search_code(query, language)` — returns real code snippets with file paths and line numbers, not just summaries.
 * **Exponential Time Decay** (v4.0): `final_score = relevance × exp(-λ × days)` with λ=0.05 configurable and 20% floor. Recent knowledge naturally outranks old memories.
+* **MMR Diversity Anti-Cluster** (v4.3): Maximum Marginal Relevance post-fusion re-ranking prevents dense embedding clusters from monopolizing search results. Iteratively selects results that balance relevance with diversity: `diversity_lambda × relevance - (1-diversity_lambda) × max_similarity_to_selected`. Configurable in `hipocampo_hybrid_config.json`.
+* **Link Weight Decay** (v4.3): Exponential weight decay on memory graph links (half-life 90 days). Links that aren't traversed lose strength over time; links <0.01 are pruned. `graph_hipocampo()` and `path_hipocampo()` auto-reinforce traversed links. New `decay_hipocampo(dry_run)` tool for graph maintenance. Columns: `last_accessed`, `reinforced_at`.
 * **Session Memory & Auto-Summarization**: Session-isolated save/search. After 20+ saves, Hipocampo auto-generates a consolidated session summary in the background.
 * **Proactive Context Preloading**: `preload_context(project_path)` extracts meaningful keywords from the project path, searches relevant memories, and returns a compressed summary — ideal for session start.
 * **Context Budget Awareness**: `compress_hipocampo` auto-estimates token budget and adjusts k dynamically. `budget_ratio` parameter gives fine-grained control over output size.
 * **Auto-Linking**: `save_hipocampo(..., auto_link=True)` auto-discovers semantically similar memories (>0.75 cosine) and creates `similar` edges in the memory graph.
 * **HNSW Auto-Recovery**: `hipocampo_health()` checks the HNSW index on startup and auto-creates it if missing — no more manual `CREATE INDEX` commands.
-* **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 22+ tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
+* **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 25 tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
 
 ---
 
@@ -354,7 +356,7 @@ An **SSC (Sparse Selective Caching)** pipeline is also available as an experimen
 
 Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to autonomously read and write memories.
 
-### Available MCP Tools (22+ tools)
+### Available MCP Tools (25 tools)
 
 **Memory Operations:**
 * `search_hipocampo(query, session_id?)`: Unified semantic and lexical search (auto-records metrics). Optionally filter by session.
@@ -650,12 +652,14 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 * **Sistema Inmunológico de Código — Protección contra Regresiones** (v4.2): 🛡️ Evita que los agentes rompan código que funcionaba. **Ciclo de 3 pasos:** (1) Snapshot del estado funcional antes de editar, (2) Verificar después de editar, (3) Si algo se rompió → crear regla `automatica` permanente que capture la causa exacta, el síntoma y la solución. Usa economía inmune: los snapshots pre-cambio son `episodica` baratos (se autocomprimen si no hubo daño), las reglas post-rotura son `automatica` permanentes. Precargado con catálogo de archivos frágiles — header.php, conexion.php, utils.php, auth.php, etc. El agente busca `trigger:regresion trigger:<archivo>` antes de cada edición para aprender lo que otros agentes rompieron antes.
 * **RAG de Código** (v4.0): Indexa código fuente de proyectos (PHP, JS, TS, Python, SQL) como embeddings semánticos. Busca con `search_code(consulta, lenguaje)` — devuelve código real con ruta de archivo y números de línea.
 * **Decaimiento Temporal Exponencial** (v4.0): `score_final = relevancia × exp(-λ × días)` con λ=0.05 configurable y piso 20%. El conocimiento reciente pesa naturalmente más.
+* **Diversidad MMR Anti-Cluster** (v4.3): Reordenamiento post-fusión con Maximum Marginal Relevance para evitar que clusters densos monopolden los resultados. Selecciona iterativamente resultados balanceando relevancia con diversidad: `diversity_lambda × relevancia - (1-diversity_lambda) × max_similitud_a_seleccionados`. Configurable en `hipocampo_hybrid_config.json`.
+* **Decaimiento de Pesos en Enlaces** (v4.3): Decaimiento exponencial en enlaces del grafo con half-life de 90 días. Los enlaces no recorridos pierden fuerza; enlaces <0.01 se podan. `graph_hipocampo()` y `path_hipocampo()` refuerzan automáticamente los enlaces atravesados. Nueva tool `decay_hipocampo(dry_run)` para mantenimiento del grafo. Columnas: `last_accessed`, `reinforced_at`.
 * **Memoria por Sesión y Auto-resumen**: Búsqueda/guardado aislado por sesión. Cada 20 guardados, Hipocampo genera un resumen consolidado de fondo.
 * **Precarga Proactiva de Contexto**: `preload_context(ruta_proyecto)` extrae keywords del proyecto, busca memorias relevantes y devuelve resumen comprimido. Ideal al inicio de sesión.
 * **Presupuesto de Contexto Inteligente**: `compress_hipocampo` auto-estima tokens y ajusta k dinámicamente. `budget_ratio` da control fino sobre el tamaño de salida.
 * **Auto-Enlace**: `save_hipocampo(..., auto_link=True)` descubre recuerdos semánticamente similares (>0.75 cosine) y crea aristas `similar` en el grafo.
 * **Recuperación Automática de HNSW**: `hipocampo_health()` verifica el índice HNSW al arrancar y lo crea si falta — sin comandos `CREATE INDEX` manuales.
-* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante servidor FastMCP con 22+ herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
+* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante servidor FastMCP con 25 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
 
 ---
 
