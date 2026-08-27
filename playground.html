@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hipocampo Playground — Memoria Dual para IA</title>
+<style>
+:root{--bg:#0a0a0f;--surface:#12121a;--border:#1e1e2e;--text:#c4c4cf;--dim:#6b6b7e;--accent:#7c5cfc;--glow:rgba(124,92,252,.25);--green:#34d399;--radius:12px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;justify-content:center;padding:20px}
+.container{max-width:640px;width:100%}
+h1{font-size:1.5rem;font-weight:700;color:#fff;margin:20px 0 4px;display:flex;align-items:center;gap:8px}
+h1 span{font-size:.7rem;background:var(--accent);color:#fff;border-radius:6px;padding:1px 7px}
+p.sub{color:var(--dim);font-size:.85rem;margin-bottom:20px}
+.card{background:var(--surface);border-radius:var(--radius);padding:16px;border:1px solid var(--border);margin-bottom:12px}
+.card .label{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin-bottom:8px}
+.flex{display:flex;gap:8px}
+.col{flex-direction:column}
+.grow{flex:1}
+input,textarea,select{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.85rem;font-family:inherit;outline:none;transition:border-color .2s}
+input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
+textarea{resize:vertical;min-height:60px;font-family:monospace}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;font-weight:600;font-size:.8rem;cursor:pointer;border:none;font-family:inherit;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{box-shadow:0 0 16px var(--glow)}
+.btn-sm{padding:5px 10px;font-size:.75rem}
+.output{background:var(--bg);border-radius:8px;padding:12px;font-size:.8rem;max-height:260px;overflow:auto;border:1px solid var(--border);margin-top:10px;white-space:pre-wrap;line-height:1.4;font-family:monospace;color:var(--dim);display:none}
+.output.show{display:block}
+.output .ok{color:var(--green)}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tag{font-size:.7rem;color:var(--dim);margin-top:20px;text-align:center}
+.tag a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🧠 Hipocampo <span>Playground</span></h1>
+<p class="sub">Prueba la memoria dual con búsqueda semántica. Sin registro, gratis.</p>
+
+<div class="card">
+<div class="label">💾 Guardar recuerdo</div>
+<textarea id="content" placeholder="Ej: El usuario prefiere Python sobre JavaScript para backend..."></textarea>
+<div class="grid-2">
+<select id="type"><option value="event">event</option><option value="decision">decision</option><option value="profile">profile</option></select>
+<input id="code" placeholder="código (opcional)">
+</div>
+<div class="flex" style="margin-top:8px">
+<button class="btn btn-primary" onclick="save()">Guardar</button>
+</div>
+<div class="output" id="saveOut"></div>
+</div>
+
+<div class="card">
+<div class="label">🔍 Buscar recuerdos</div>
+<div class="flex">
+<input id="query" placeholder="Ej: preferencias de backend, errores comunes..." class="grow">
+<button class="btn btn-primary btn-sm" onclick="search()">Buscar</button>
+</div>
+<div class="output" id="searchOut"></div>
+</div>
+
+<div class="card">
+<div class="label">❤️ Salud del sistema</div>
+<button class="btn btn-primary btn-sm" onclick="health()">Ejecutar health check</button>
+<div class="output" id="healthOut"></div>
+</div>
+
+<p class="tag">🧠 <a href="https://github.com/carrasquelalex1/hipocampo">Hipocampo</a> — Memoria Dual para Agentes IA · <a href="https://alexbell1-hipocampo-mcp.hf.space/mcp">Endpoint MCP</a></p>
+</div>
+
+<script>
+async function api(url, opts={}){try{const r=await fetch(url,opts),d=await r.json();return d}catch(e){return{ok:false,error:e.message}}}
+
+function show(el, html, asText){const o=document.getElementById(el);if(asText){o.textContent=html}else{o.innerHTML=html}o.classList.add('show')}
+
+async function save(){
+const content=document.getElementById('content').value.trim();
+if(!content)return show('saveOut','✕ Escribe contenido');
+show('saveOut','⏳ Guardando...');
+const r=await api('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content,type:document.getElementById('type').value,code:document.getElementById('code').value})});
+show('saveOut',r.ok?'✅ Guardado (id: '+r.id+')':'✕ '+r.error)}
+
+async function search(){
+const q=document.getElementById('query').value.trim();
+if(!q)return show('searchOut','✕ Escribe una consulta');
+show('searchOut','⏳ Buscando...');
+const r=await api('/api/search?q='+encodeURIComponent(q));
+console.log('search result:', r);
+show('searchOut',r.ok?r.results:'✕ '+r.error, true)}
+
+async function health(){
+show('healthOut','⏳ Ejecutando...');
+const r=await api('/api/health');
+show('healthOut',r.ok?r.output:'✕ '+r.error)}
+</script>
+</body>
+</html>
