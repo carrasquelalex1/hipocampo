@@ -26,6 +26,7 @@ import asyncio
 import logging
 import sys
 import os
+import time
 import json
 from datetime import date
 
@@ -2399,6 +2400,15 @@ if __name__ == "__main__":
     _init_memory_links_table()
     init_pool()
     _auto_checkpoint()
+
+    # Warm-up del modelo de embeddings (evita cold-start de ~16s en el primer request)
+    try:
+        _tw0 = time.monotonic()
+        get_embedding("warmup")
+        _tw = time.monotonic() - _tw0
+        logger.info("🔥 Embedding model warm-up completado en %.2fs", _tw)
+    except Exception as _we:
+        logger.warning("⚠️  Warm-up de embedding falló (se reintentará en el primer request): %s", _we)
 
     http_port = args.http_port
     if not http_port and args.transport == "http":

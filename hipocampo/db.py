@@ -6,6 +6,7 @@ Usage:
 """
 
 import os
+import time
 import functools
 import logging
 from dotenv import load_dotenv
@@ -178,7 +179,15 @@ def get_embedding(text, dims=1024, api_key=None):
         text = text[:MAX_EMBED_CHARS]
     try:
         model = _get_active_embed_model()
+        _t0 = time.monotonic()
         result = _cached_embedding(text, api_key, model)
+        _latency = time.monotonic() - _t0
+        if _latency > 1.0:
+            logger.info("embedding %s generado en %.2fs (chars=%d)", model, _latency, len(text))
+        if _latency > 5.0:
+            logger.warning(
+                "ALTA LATENCIA de embedding: %.2fs (modelo=%s) — Ollama puede estar sobrecargido", _latency, model
+            )
         _embedding_last_error = None
         return list(result)
     except Exception as e:
