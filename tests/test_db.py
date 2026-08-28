@@ -1,5 +1,7 @@
 """Tests for hipocampo/db.py — config validation and helpers."""
 
+from unittest.mock import patch
+
 from hipocampo.db import validate_config
 
 
@@ -48,7 +50,8 @@ class TestValidateConfig:
             "DB_NAME": "hipocampo_db",
             "NVIDIA_API_KEY": "",
         }
-        errors = validate_config(config)
+        with patch("hipocampo.db.EMBED_BASE_URL", "https://integrate.api.nvidia.com/v1"):
+            errors = validate_config(config)
         assert len(errors) == 1
         assert "NVIDIA_API_KEY" in errors[0]
 
@@ -60,10 +63,23 @@ class TestValidateConfig:
             "DB_NAME": "",
             "NVIDIA_API_KEY": "",
         }
-        errors = validate_config(config)
+        with patch("hipocampo.db.EMBED_BASE_URL", "https://integrate.api.nvidia.com/v1"):
+            errors = validate_config(config)
         assert len(errors) == 2
         assert any("PostgreSQL" in e for e in errors)
         assert any("NVIDIA_API_KEY" in e for e in errors)
+
+    def test_nvidia_key_not_required_for_ollama(self):
+        config = {
+            "DB_HOST": "localhost",
+            "DB_USER": "alex",
+            "DB_PASSWORD": "secret",
+            "DB_NAME": "hipocampo_db",
+            "NVIDIA_API_KEY": "",
+        }
+        with patch("hipocampo.db.EMBED_BASE_URL", "http://127.0.0.1:11434/v1"):
+            errors = validate_config(config)
+        assert errors == []
 
     def test_default_from_env_not_required(self):
         # When config is None, validate_config calls load_config which
