@@ -102,36 +102,25 @@ def check_postgresql():
 
 
 def check_nvidia_api():
-    """Verifica que la NVIDIA API key sea funcional."""
+    """Verifica que la API de embeddings (Ollama local o NVIDIA NIM) sea funcional."""
     results = {"status": "ok", "checks": {}}
-    api_key = os.getenv("NVIDIA_API_KEY", "")
-    if not api_key or api_key == "":
-        results["status"] = "error"
-        results["checks"]["api_key_present"] = "missing"
-        return results
-
-    results["checks"]["api_key_present"] = "ok"
     try:
-        from openai import OpenAI
-        from hipocampo.model_failover import get_active_model
+        from hipocampo.db import get_embedding, EMBED_BASE_URL, EMBED_MODEL
 
-        model = get_active_model("embedding") or "nvidia/llama-nemotron-embed-vl-1b-v2"
-        client = OpenAI(
-            base_url="https://integrate.api.nvidia.com/v1",
-            api_key=api_key,
-        )
+        results["checks"]["provider"] = EMBED_BASE_URL
+        results["checks"]["model"] = EMBED_MODEL
         t0 = time.time()
-        resp = client.embeddings.create(
-            input="health check probe",
-            model=model,
-            encoding_format="float",
-            extra_body={"input_type": "query", "dimensions": 1024},
-        )
+        emb = get_embedding("health check probe")
         latency = time.time() - t0
+        if emb is None:
+            from hipocampo.db import get_embedding_last_error
+
+            results["status"] = "error"
+            results["checks"]["embedding_generation"] = get_embedding_last_error() or "error desconocido"
+            return results
         results["checks"]["embedding_generation"] = "ok"
-        results["checks"]["embedding_model"] = model
         results["checks"]["embedding_latency_s"] = round(latency, 2)
-        results["checks"]["embedding_dim"] = len(resp.data[0].embedding)
+        results["checks"]["embedding_dim"] = len(emb)
         if latency > 5:
             results["status"] = "degraded"
             results["checks"]["embedding_latency_note"] = "alta latencia (>5s)"

@@ -13,6 +13,10 @@ from openai import OpenAI
 
 logger = logging.getLogger("hipocampo.db")
 
+# === Embeddings locales (Ollama) ===
+EMBED_BASE_URL = os.getenv("EMBED_BASE_URL", "http://127.0.0.1:11434/v1")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "qwen3-embedding:0.6b")
+
 
 def _project_root():
     """Return absolute path to the project root (one level above scripts/)."""
@@ -57,7 +61,7 @@ def validate_config(config=None):
     empty_db = [k for k in db_keys if not config.get(k)]
     if empty_db:
         missing.append(f"PostgreSQL config missing: {', '.join(empty_db)}")
-    if not config.get("NVIDIA_API_KEY"):
+    if "nvidia.com" in EMBED_BASE_URL and not config.get("NVIDIA_API_KEY"):
         missing.append("NVIDIA_API_KEY missing")
     return missing
 
@@ -117,16 +121,8 @@ def get_conn(config=None):
 
 
 def _get_active_embed_model() -> str:
-    """Return the active embedding model, checking failover config first."""
-    try:
-        from hipocampo.model_failover import get_active_model
-
-        m = get_active_model("embedding")
-        if m:
-            return m
-    except ImportError:
-        pass
-    return "nvidia/llama-nemotron-embed-vl-1b-v2"
+    """Return the active embedding model (local Ollama by default)."""
+    return EMBED_MODEL
 
 
 @functools.lru_cache(maxsize=128)
@@ -137,7 +133,6 @@ def _cached_embedding(text: str, api_key: str, model: str) -> tuple:
         input=text,
         model=model,
         encoding_format="float",
-        extra_body={"input_type": "query", "dimensions": 1024},
     )
     return tuple(resp.data[0].embedding)
 
@@ -155,29 +150,27 @@ _client_cache = {}
 
 def _get_client(api_key=None):
     if api_key is None:
-        api_key = os.getenv("NVIDIA_API_KEY")
+        api_key = os.getenv("NVIDIA_API_KEY") or "ollama"
     if api_key not in _client_cache:
         _client_cache[api_key] = OpenAI(
-            base_url="https://integrate.api.nvidia.com/v1",
+            base_url=EMBED_BASE_URL,
             api_key=api_key,
+            timeout=30.0,
         )
     return _client_cache[api_key]
 
 
 def get_embedding(text, dims=1024, api_key=None):
-    """Generate a 1024-dim embedding via NVIDIA API.
+    """Generate a 1024-dim embedding via Ollama local (qwen3-embedding:0.6b).
 
     Uses LRU cache (128 entries) — repeated queries for the same text
     skip the API call entirely. Returns ``None`` on failure.
-
-    On model errors (410/404/EOL), triggers automatic failover to find
-    a working embedding model across all configured providers.
     """
     global _embedding_last_error
     if api_key is None:
-        api_key = os.getenv("NVIDIA_API_KEY") or ""
+        api_key = os.getenv("NVIDIA_API_KEY") or "ollama"
     if not api_key:
-        _embedding_last_error = "NVIDIA_API_KEY no está configurada"
+        _embedding_last_error = "API key no está configurada"
         return None
     # Guard: límite del modelo es 8192 tokens (~4 chars/token). Truncar con margen.
     MAX_EMBED_CHARS = 28_000
