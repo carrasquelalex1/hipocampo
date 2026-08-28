@@ -68,7 +68,7 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 
 **Hybrid compression** adds a second reduction layer:
 - **Extractive phase**: Removes redundant sentences (filtering by keyword relevance to your query). Reduces generic text by 30-50% instantly, with no API calls.
-- **LLM phase**: Summarizes technical/code content using the same NVIDIA NIM endpoint already used for embeddings. Preserves all code, variable names, and syntax while dropping explanatory verbosity.
+- **LLM phase**: Summarizes technical/code content using the configured embedding endpoint (Ollama local or NVIDIA NIM). Preserves all code, variable names, and syntax while dropping explanatory verbosity.
 - **Combined**: 20-50% token reduction with near-zero quality loss. A 1500-token memory block becomes 750-1200 tokens — that's real savings on every LLM call.
 
 **Real impact**: If you call `compress_hipocampo` before every `search_hipocampo` → LLM round-trip, you save 200-800 tokens per interaction. At scale (hundreds of queries), this translates to meaningful cost reduction and faster responses.
@@ -76,12 +76,12 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 ## 🚀 Key Features
 
 * **Dual-Memory Architecture**: Distinct storage layers for technical records (`memoria_vectorial`) and user profile data (`memory_items`), each utilizing 1024-dimensional embeddings.
-* **BIRE v3.7 (default)**: Hybrid search engine combining NVIDIA embeddings (1024d), query expansion, GIN trigram, and composite scoring — used by all MCP tools.
+* **BIRE v3.7 (default)**: Hybrid search engine combining local embeddings (1024d, Ollama `qwen3-embedding:0.6b` by default), query expansion, GIN trigram, and composite scoring — used by all MCP tools.
 * **SSC (experimental)**: Alternative four-phase progressive pipeline: *Tag Router* → *pgvector Top-K* → *GIN Trigram* → *ILIKE Fallback*.
 * **Logarithmic Checkpointing**: Intelligently compresses historical memories based on time decay, shrinking 24-hour granular details into unified 90-day checkpoints.
 * **Automated Tagging Engine**: A robust, Regex-based rule engine that autonomously categorizes and tags records upon persistence.
 * **Cross-System Vector Search**: Unified semantic search across over 1,100 records for deep cross-referencing.
-* **Hybrid Prompt Compression** (v4.0): Two-phase compression pipeline — extractive (sentence-level) for generic text and LLM summarization (via NVIDIA NIM) for technical/code content. Reduces prompt tokens by 20-50% while preserving critical information. Available as `compress_hipocampo` MCP tool.
+* **Hybrid Prompt Compression** (v4.0): Two-phase compression pipeline — extractive (sentence-level) for generic text and LLM summarization (via configured embedding endpoint) for technical/code content. Reduces prompt tokens by 20-50% while preserving critical information. Available as `compress_hipocampo` MCP tool.
 * **Memory Graph** (v4.0): Directed graph of semantic relationships between memories. Link related records, navigate with BFS tree, find shortest paths. Available as `link_hipocampo`, `graph_hipocampo`, `path_hipocampo` MCP tools.
 * **Memory Hierarchy with Trigger-Based Prevention** (v4.1): 🧠🧠 Three-level memory (episodic → semantic → automatic) inspired by human mnemonic consolidation. **NEW:** Tag memories with contextual triggers (`trigger:php`, `trigger:chartjs`, `trigger:tomcat`) — when the agent starts working in that context, it searches for matching `automatica` rules and reactivates past errors *before* making the same mistake. This mirrors the biological hippocampus: a partial cue (project + language) triggers full memory retrieval of the error and its solution. Automatic rules are permanent — never compressed, never deleted. `set_nivel_hipocampo(id, nivel)` + `consolidate_hipocampo` tools included.
 * **Code Immune System — Regression Protection** (v4.2): 🛡️ Prevents agents from breaking code that was working. **3-step cycle:** (1) Snapshot functional state before editing, (2) Verify after editing, (3) If something broke → create a permanent `automatica` rule capturing the exact cause, symptom, and fix. Uses immune economy: pre-change snapshots are cheap `episodica` (auto-compressed if no damage), post-break rules are permanent `automatica`. Pre-loaded with fragile file catalog — header.php, conexion.php, utils.php, auth.php, etc. Agents search `trigger:regression trigger:<file>` before every edit to learn what other agents broke before.
@@ -286,7 +286,7 @@ Restart OpenCode for the change to take effect.
 ### Prerequisites
 * **PostgreSQL 17+** (with `pgvector` and `pg_trgm` extensions enabled)
 * **Python 3.13+**
-* **NVIDIA API Key** (for `nvidia/nv-embedqa-e5-v5` embeddings) — or **Hugging Face API Key** for `sentence-transformers/all-MiniLM-L6-v2` (free via HF Inference API)
+* **Ollama** (default, local) — or **NVIDIA API Key** (for NVIDIA NIM cloud embeddings)
 
 ### Installation
 
@@ -307,7 +307,7 @@ pip install -r requirements.txt
 
 # 4. Environment Configuration
 cp .env.example .env
-# Edit .env with your DB_HOST, DB_USER, and NVIDIA_API_KEY
+# Edit .env with your DB_HOST, DB_USER, and EMBED_BASE_URL/EMBED_MODEL (defaults to Ollama local)
 ```
 
 ### Basic Usage
@@ -354,7 +354,7 @@ hipocampo_db (PostgreSQL 17 + pgvector + pg_trgm)
 BIRE (Búsqueda Integrada por Relevancia Expansiva) is the default search engine used by all MCP tools. It combines vector and lexical search with dynamic score fusion:
 
 1. **Query Expansion** — Expands terms using synonyms and stemming before search.
-2. **Vector Search** — NVIDIA embeddings (1024d) cosine similarity across both tables.
+2. **Vector Search** — Embeddings (1024d) cosine similarity across both tables (Ollama local by default).
 3. **GIN Trigram** — Lexical expansion when vector confidence is low.
 4. **Composite Scoring** — Weighted fusion of vector + lexical scores with adaptive cutoff.
 
@@ -398,7 +398,7 @@ Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to
 * `consolidate_hipocampo(min_age_days=7, dry_run=True)`: Migrate old episodic memories to semantic level with optional content compression.
 
 **Self-Diagnosis & Auto-Repair:**
-* `hipocampo_health()`: Full system health check (PostgreSQL, NVIDIA API, disk, extensions, HNSW index).
+* `hipocampo_health()`: Full system health check (PostgreSQL, embedding API, disk, extensions, HNSW index).
 * `hipocampo_auto_repair()`: Automatically repairs detected issues (restart PostgreSQL, create missing tables, create HNSW index).
 
 **Performance Optimization (Fase 2):**
@@ -462,7 +462,7 @@ The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode
 
 **After:**
 - `init_pool(minconn=1, maxconn=10)` creates a `ThreadedConnectionPool` at server startup — connections are reused across calls, handshake happens once
-- All 16 tools are `async def` — blocking I/O (DB queries, NVIDIA API) runs in `asyncio.to_thread()`, freeing the event loop for other requests
+- All 16 tools are `async def` — blocking I/O (DB queries, embedding API) runs in `asyncio.to_thread()`, freeing the event loop for other requests
 - A thin `_PooledConnection` proxy transparently returns connections to the pool when `.close()` is called — zero caller-side changes
 
 **Impact:** Concurrent requests no longer block each other; PostgreSQL connection overhead drops from ~10–50ms per call to near zero.
@@ -475,13 +475,13 @@ The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode
 ### Config Validation, Rate Limiting & Granular Errors (v3.8)
 
 **Before:**
-- Missing `NVIDIA_API_KEY` or `DB_HOST` → server started without errors, failed with cryptic `fe_sendauth` / `401` on the first query
-- Any client could hammer the NVIDIA API (`$` per embedding) and the free-tier PostgreSQL — no limits at all
+- Missing `DB_HOST` or embedding config → server started without errors, failed with cryptic `fe_sendauth` / `401` on the first query
+- Any client could hammer the embedding API and the free-tier PostgreSQL — no limits at all
 - Every error caught with `except Exception: logger.error("msg: %s", e)` — no traceback, impossible to tell if it was a DB, network, or validation failure
 
 **After:**
 - `validate_config()` runs at startup and logs clear warnings for each missing variable. `init_pool()` and `get_conn()` reject early with messages like *"PostgreSQL connection incomplete: DB_HOST, DB_USER not configured in .env"*
-- Three sliding-window rate limiters protect the system: `embedding_limiter` (30/min — shields NVIDIA API cost), `tool_limiter` (60/min — shields PostgreSQL), `watch_limiter` (20/min). Clients get *"⏳ Too many requests. Limit: 30 per 60s. Wait 12s."*
+- Three sliding-window rate limiters protect the system: `embedding_limiter` (30/min — shields embedding API cost), `tool_limiter` (60/min — shields PostgreSQL), `watch_limiter` (20/min). Clients get *"⏳ Too many requests. Limit: 30 per 60s. Wait 12s."*
 - `_tool_err()` helper differentiates by exception type: `psycopg2.Error` → `logger.exception()` with full traceback, `ValueError` / `TypeError` → `logger.warning()` (client error), others → `logger.exception()`. `_fire_webhooks` catches `urllib.error.URLError` separately
 
 **Impact:** Failures are caught before they reach the database, costs are capped, and logs are actionable — you know instantly if it's a misconfiguration, a network blip, or a code bug.
@@ -489,7 +489,7 @@ The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode
 ### Retry with Backoff, Consistent CLI & Pre-commit Hooks (v3.8)
 
 **Before:**
-- `get_embedding()` failed on the first NVIDIA API timeout or rate limit — no retry at all
+- `get_embedding()` failed on the first embedding API timeout or rate limit — no retry at all
 - All 12 scripts used manual `sys.argv` parsing — no `--help`, no type validation, inconsistent interfaces
 - No pre-commit hooks — easy to push code with lint errors or broken tests
 
@@ -508,7 +508,7 @@ The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode
 - Scripts in `scripts/` were independent copies of the repo — each `git pull` required manual sync, and new files like `hipocampo_compress.py` were missing
 - Local scripts (user-owned) lived in the same `scripts/` directory — no separation from repo files
 - The `hipocampo/` Python package was also a copy: `load_config()` looked for `.env` in `project_root/.env` instead of `~/.hipocampo/.env`, loading incorrect credentials (alex/hipocampo123)
-- If NVIDIA NIM API returned transient HTTP errors (403, 429, timeout), `compress` operations failed with a generic exception
+- If the embedding API returned transient HTTP errors (403, 429, timeout), `compress` operations failed with a generic exception
 - The `query_stats` table existed in `esquema.sql` but was never auto-created — `hipocampo_health` reported `DEGRADED`
 - 4 scripts called `register_vector(conn)` on the `_PooledConnection` from `get_conn()` — psycopg2 rejected it with `TypeError`, breaking all vector operations
 - Integration tests sent raw JSON-RPC to FastMCP v1.27+ — missing the `initialize` handshake, failing with `Invalid request parameters`
@@ -522,7 +522,7 @@ The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode
 - Integration tests rewritten with `mcp[client]` SDK (`stdio_client` + `ClientSession` + `initialize()`) — proper MCP 2025-03-26 handshake
 - 105 tests total, all passing
 
-**Impact:** Zero-touch maintenance after `git pull`. Transient NVIDIA API errors degrade gracefully. Config loading is deterministic and secure. Vector operations work reliably. Tests follow the official MCP protocol.
+**Impact:** Zero-touch maintenance after `git pull`. Transient embedding API errors degrade gracefully. Config loading is deterministic and secure. Vector operations work reliably. Tests follow the official MCP protocol.
 
 ---
 
@@ -545,7 +545,7 @@ Optimizations applied in July 2026 to address latency and threshold drift:
 
 ### Embedding Cache
 
-`get_embedding()` now uses an **LRU cache (128 entries)** — repeated queries for identical text skip the NVIDIA API call entirely, saving ~450ms each. The OpenAI client is also reused across calls instead of being recreated.
+`get_embedding()` now uses an **LRU cache (128 entries)** — repeated queries for identical text skip the embedding API call entirely, saving ~450ms each. The OpenAI client is also reused across calls instead of being recreated.
 
 ### SSC Search Acceleration
 
@@ -580,7 +580,7 @@ Hipocampo includes **105+ unit tests** covering all core logic and MCP integrati
 | `tests/test_checkpoint.py` | Age scale classification, project grouping, summary generation |
 | `tests/test_mcp_integration.py` | 6 schema tests (tool registration, annotations, params, async signature) + 3 live integration tests (stdio server, mcp[client] SDK) |
 | `tests/test_rate_limit.py` | Sliding-window rate limiter: acquire/release, prune, stats, default limiters |
-| `tests/test_db.py` | Config validation: missing DB_HOST, NVIDIA_API_KEY, comprehensive coverage |
+| `tests/test_db.py` | Config validation: missing DB_HOST, embedding API config, comprehensive coverage |
 
 ```bash
 # Run all tests
@@ -649,7 +649,7 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 
 **La compresión híbrida** añade una segunda capa de reducción:
 - **Fase extractiva**: Elimina oraciones redundantes (filtrando por relevancia de keywords a la consulta). Reduce texto genérico entre 30-50% al instante, sin llamadas API.
-- **Fase LLM**: Resume contenido técnico/código usando el mismo endpoint NVIDIA NIM ya configurado para embeddings. Preserva todo el código, nombres de variables y sintaxis, eliminando verbosidad explicativa.
+- **Fase LLM**: Resume contenido técnico/código usando el endpoint de embeddings configurado (Ollama local o NVIDIA NIM). Preserva todo el código, nombres de variables y sintaxis, eliminando verbosidad explicativa.
 - **Combinado**: 20-50% de reducción de tokens con pérdida de calidad casi nula. Un bloque de memoria de 1500 tokens se convierte en 750-1200 tokens — ahorro real en cada llamada al LLM.
 
 **Impacto real**: Si usas `compress_hipocampo` antes de cada `search_hipocampo` → LLM, ahorras 200-800 tokens por interacción. A escala (cientos de consultas), esto se traduce en reducción significativa de costos y respuestas más rápidas.
@@ -657,11 +657,11 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 ## 🚀 Características Principales
 
 * **Arquitectura de Memoria Dual**: Capas de almacenamiento separadas para registros técnicos (`memoria_vectorial`) y datos de perfil (`memory_items`), ambas utilizando embeddings de 1024 dimensiones.
-* **BIRE v3.7 (por defecto)**: Búsqueda híbrida con embeddings NVIDIA (1024d), expansión de consulta, GIN trigram y puntuación compuesta — usado por todas las tools MCP.
+* **BIRE v3.7 (por defecto)**: Búsqueda híbrida con embeddings locales (1024d, Ollama `qwen3-embedding:0.6b` por defecto), expansión de consulta, GIN trigram y puntuación compuesta — usado por todas las tools MCP.
 * **Caché Selectivo (CS/SSC, experimental)**: Pipeline alternativo de 4 fases: *Tag Router* → *pgvector Top-K* → *GIN Trigram* → *ILIKE Fallback*.
 * **Checkpointing Logarítmico**: Compresión inteligente basada en el decaimiento del tiempo, consolidando detalles granulares en un solo registro tras 90 días.
 * **Auto-MeJORA MCP**: Autodiagnóstico (health check + auto-repair), optimización dinámica (stats + tune), y mantenimiento de memoria (dedup + checkpoint) — todo desde herramientas MCP.
-* **Compresión Híbrida de Prompts** (v4.0): Pipeline de dos fases — compresión extractiva (nivel de oraciones) para texto genérico y resumen LLM (vía NVIDIA NIM) para contenido técnico/código. Reduce tokens del prompt entre 20-50% preservando información crítica. Disponible como herramienta MCP `compress_hipocampo`.
+* **Compresión Híbrida de Prompts** (v4.0): Pipeline de dos fases — compresión extractiva (nivel de oraciones) para texto genérico y resumen LLM (vía endpoint de embeddings configurado) para contenido técnico/código. Reduce tokens del prompt entre 20-50% preservando información crítica. Disponible como herramienta MCP `compress_hipocampo`.
 * **Grafo de Memoria** (v4.0): Grafo dirigido de relaciones semánticas entre recuerdos. Enlaza registros relacionados, navega con árbol BFS, encuentra caminos más cortos. Tools: `link_hipocampo`, `graph_hipocampo`, `path_hipocampo`.
 * **Jerarquía de Memoria con Prevención por Disparadores** (v4.1): 🧠🧠 Tres niveles (episódica → semántica → automática) inspirado en consolidación mnémica humana. **NOVEDAD:** Etiqueta recuerdos con disparadores contextuales (`trigger:php`, `trigger:chartjs`, `trigger:tomcat`) — cuando el agente comienza a trabajar en ese contexto, busca reglas `automatica` coincidentes y reactiva errores pasados *antes* de cometer el mismo error. Esto replica el hipocampo biológico: una pista parcial (proyecto + lenguaje) dispara la recuperación completa del error y su solución. Las reglas automáticas son permanentes — nunca se comprimen, nunca se eliminan. Tools: `set_nivel_hipocampo(id, nivel)` + `consolidate_hipocampo`.
 * **Sistema Inmunológico de Código — Protección contra Regresiones** (v4.2): 🛡️ Evita que los agentes rompan código que funcionaba. **Ciclo de 3 pasos:** (1) Snapshot del estado funcional antes de editar, (2) Verificar después de editar, (3) Si algo se rompió → crear regla `automatica` permanente que capture la causa exacta, el síntoma y la solución. Usa economía inmune: los snapshots pre-cambio son `episodica` baratos (se autocomprimen si no hubo daño), las reglas post-rotura son `automatica` permanentes. Precargado con catálogo de archivos frágiles — header.php, conexion.php, utils.php, auth.php, etc. El agente busca `trigger:regresion trigger:<archivo>` antes de cada edición para aprender lo que otros agentes rompieron antes.
@@ -877,7 +877,7 @@ pip install -r requirements.txt
 
 # 3. Configurar variables de entorno
 cp .env.example .env
-# Editar .env con DB_HOST, DB_USER, NVIDIA_API_KEY
+# Editar .env con DB_HOST, DB_USER, y EMBED_BASE_URL/EMBED_MODEL (por defecto Ollama local)
 ```
 
 Para usar la búsqueda directamente desde la terminal:
@@ -921,7 +921,7 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 * `consolidate_hipocampo(dias_min=7, seco=True)`: Migra recuerdos episódicos antiguos a nivel semántico con compresión opcional.
 
 **Autodiagnóstico y Reparación:**
-* `hipocampo_health()`: Health check completo (PostgreSQL, API NVIDIA, disco, extensiones, índice HNSW).
+* `hipocampo_health()`: Health check completo (PostgreSQL, API de embeddings, disco, extensiones, índice HNSW).
 * `hipocampo_auto_repair()`: Repara problemas automáticamente (crea tablas, índice HNSW, reinicia PostgreSQL).
 
 **Optimización de Rendimiento (Fase 2):**
@@ -970,7 +970,7 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 
 **Ahora:**
 - `init_pool(minconn=1, maxconn=10)` crea un `ThreadedConnectionPool` al arrancar — las conexiones se reúsan, el handshake ocurre una sola vez
-- Las 16 herramientas son `async def` — I/O bloqueante (queries BD, API NVIDIA) corre en `asyncio.to_thread()`, liberando el event loop para otras requests
+- Las 16 herramientas son `async def` — I/O bloqueante (queries BD, API de embeddings) corre en `asyncio.to_thread()`, liberando el event loop para otras requests
 - Un proxy `_PooledConnection` devuelve las conexiones al pool automáticamente al llamar `.close()` — sin cambios en el caller
 
 **Impacto:** Requests concurrentes ya no se bloquean entre sí; el overhead de conexión PostgreSQL baja de ~10–50ms por llamada a casi cero.
@@ -984,12 +984,12 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 
 **Antes:**
 - `NVIDIA_API_KEY` o `DB_HOST` faltantes → el server arrancaba sin errores y fallaba con un críptico `fe_sendauth` / `401` recién en el primer query
-- Cualquier cliente podía saturar la API de NVIDIA (`$` por embedding) y el PostgreSQL gratuito — sin ningún límite
+- Cualquier cliente podía saturar la API de embeddings y el PostgreSQL gratuito — sin ningún límite
 - Todos los errores se capturaban con `except Exception: logger.error("msg: %s", e)` — sin traceback, imposible saber si era error de BD, red o validación
 
 **Ahora:**
 - `validate_config()` se ejecuta al arranque y logea warnings claros para cada variable faltante. `init_pool()` y `get_conn()` rechazan temprano con mensajes como *"PostgreSQL connection incomplete: DB_HOST, DB_USER no configurados en .env"*
-- Tres rate limiters sliding-window protegen el sistema: `embedding_limiter` (30/min — protege el costo de la API NVIDIA), `tool_limiter` (60/min — protege PostgreSQL), `watch_limiter` (20/min). Los clientes reciben *"⏳ Demasiadas solicitudes. Límite: 30 por 60s. Espera 12s."*
+- Tres rate limiters sliding-window protegen el sistema: `embedding_limiter` (30/min — protege el costo de la API de embeddings), `tool_limiter` (60/min — protege PostgreSQL), `watch_limiter` (20/min). Los clientes reciben *"⏳ Demasiadas solicitudes. Límite: 30 por 60s. Espera 12s."*
 - `_tool_err()` diferencia por tipo de excepción: `psycopg2.Error` → `logger.exception()` con traceback completo, `ValueError` / `TypeError` → `logger.warning()` (error del cliente), otros → `logger.exception()`. `_fire_webhooks` captura `urllib.error.URLError` por separado
 
 **Impacto:** Los errores se detectan antes de llegar a la BD, los costos están limitados, y los logs son accionables — sabés al instante si es una mala configuración, un problema de red o un bug de código.
@@ -999,7 +999,7 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 ### Retry con Backoff, CLI Consistente y Pre-commit Hooks (v3.8)
 
 **Antes:**
-- `get_embedding()` fallaba al primer timeout o rate limit de la API de NVIDIA — sin reintentos
+- `get_embedding()` fallaba al primer timeout o rate limit de la API de embeddings — sin reintentos
 - Los 12 scripts usaban `sys.argv` manual — sin `--help`, sin validación de tipos, interfaces inconsistentes
 - No había hooks de pre-commit — fácil pushear código con lint sucio o tests rotos
 
@@ -1018,7 +1018,7 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 - Los scripts en `scripts/` eran copias independientes del repo — cada `git pull` requería sincronización manual, y archivos nuevos como `hipocampo_compress.py` no se propagaban
 - Scripts locales (del usuario) convivían en el mismo `scripts/` — sin separación de archivos del repo
 - El paquete `hipocampo/` era también copia: `load_config()` buscaba `.env` en `project_root/.env` en vez de `~/.hipocampo/.env`, cargando credenciales incorrectas (alex/hipocampo123)
-- Si la API de NVIDIA NIM devolvía errores HTTP transitorios (403, 429, timeout), la compresión fallaba con excepción genérica
+- Si la API de embeddings devolvía errores HTTP transitorios (403, 429, timeout), las operaciones de compresión fallaban con excepción genérica
 - La tabla `query_stats` existía en `esquema.sql` pero nunca se creaba automáticamente — `hipocampo_health` reportaba `DEGRADED`
 - 4 scripts llamaban `register_vector(conn)` sobre el `_PooledConnection` devuelto por `get_conn()` — psycopg2 lo rechazaba con `TypeError`, rompiendo todas las operaciones vectoriales
 - Los tests de integración enviaban JSON-RPC raw a FastMCP v1.27+ — sin el handshake `initialize`, fallaban con `Invalid request parameters`
@@ -1032,7 +1032,7 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 - Tests de integración reescritos con el SDK `mcp[client]` (`stdio_client` + `ClientSession` + `initialize()`) — handshake MCP 2025-03-26 correcto
 - 105 tests totales, todos pasando
 
-**Impacto:** Mantenimiento cero tras `git pull`. Errores transitorios de NVIDIA API degradan gracefulmente. Carga de configuración determinista y segura. Operaciones vectoriales confiables. Tests siguen el protocolo MCP oficial.
+**Impacto:** Mantenimiento cero tras `git pull`. Errores transitorios de la API de embeddings degradan gracefulmente. Carga de configuración determinista y segura. Operaciones vectoriales confiables. Tests siguen el protocolo MCP oficial.
 
 ---
 
@@ -1042,7 +1042,7 @@ Optimizaciones aplicadas en Julio 2026 para reducir latencia y estabilizar thres
 
 ### Caché de Embeddings
 
-`get_embedding()` ahora usa un **caché LRU (128 entradas)** — consultas repetidas con el mismo texto saltan la llamada a la API de NVIDIA, ahorrando ~450ms cada una. El cliente de OpenAI también se reutiliza entre llamadas.
+`get_embedding()` ahora usa un **caché LRU (128 entradas)** — consultas repetidas con el mismo texto saltan la llamada a la API de embeddings, ahorrando ~450ms cada una. El cliente de OpenAI también se reutiliza entre llamadas.
 
 ### Aceleración de Búsqueda SSC
 
@@ -1077,7 +1077,7 @@ Hipocampo incluye **105+ tests unitarios** cubriendo toda la lógica central e i
 | `tests/test_checkpoint.py` | Clasificación por escalas de edad, agrupación por proyecto, generación de resúmenes |
 | `tests/test_mcp_integration.py` | 6 tests de schema (registro de tools, anotaciones, parámetros, firma async) + 3 tests de integración en vivo (servidor stdio, mcp[client] SDK) |
 | `tests/test_rate_limit.py` | Rate limiter sliding-window: acquire/release, prune, stats, limiters por defecto |
-| `tests/test_db.py` | Validación de config: DB_HOST faltante, NVIDIA_API_KEY faltante, cobertura completa |
+| `tests/test_db.py` | Validación de config: DB_HOST faltante, config de API de embeddings, cobertura completa |
 
 ```bash
 # Ejecutar todos los tests
