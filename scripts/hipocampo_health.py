@@ -68,25 +68,24 @@ def check_postgresql():
 
         for table in ["memoria_vectorial", "memory_items"]:
             col = "embedding"
-            for idx_type in ["hnsw", "ivfflat"]:
-                cur.execute(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1 FROM pg_indexes i
-                        JOIN pg_class c ON i.indexname = c.relname
-                        JOIN pg_index idx ON c.oid = idx.indexrelid
-                        JOIN pg_am am ON c.relam = am.oid
-                        WHERE i.tablename = %s
-                          AND am.amname = %s
-                          AND i.indexdef LIKE %s
-                    )
-                """,
-                    (table, idx_type, f"%{col}%"),
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_indexes i
+                    JOIN pg_class c ON i.indexname = c.relname
+                    JOIN pg_index idx ON c.oid = idx.indexrelid
+                    JOIN pg_am am ON c.relam = am.oid
+                    WHERE i.tablename = %s
+                      AND am.amname = 'hnsw'
+                      AND i.indexdef LIKE %s
                 )
-                has_idx = cur.fetchone()[0]
-                results["checks"][f"index_{idx_type}_{table}"] = "ok" if has_idx else "missing"
-                if not has_idx and idx_type == "hnsw":
-                    results["status"] = "degraded"
+            """,
+                (table, f"%{col}%"),
+            )
+            has_idx = cur.fetchone()[0]
+            results["checks"][f"index_hnsw_{table}"] = "ok" if has_idx else "missing"
+            if not has_idx:
+                results["status"] = "degraded"
 
         cur.execute("SELECT count(*) FROM memoria_vectorial")
         results["checks"]["memoria_vectorial_count"] = cur.fetchone()[0]
