@@ -548,6 +548,151 @@ def _check_dedup(content: str, threshold: float = 0.9) -> str | None:
         return None
 
 
+def _check_dedup_trigram(content: str, threshold: float = 0.85) -> str | None:
+    """Chequeo de duplicado casi-idéntico SIN embedding (rápido, vía pg_trgm).
+
+    Se usa en el hot path síncrono de save_hipocampo para detectar duplicados
+    por similitud de palabras sin pagar el costo de un embedding. El dedup
+    semántico completo corre luego en background (_finalize_save_bg).
+    """
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, left(contenido, 120), similarity(contenido, %s) AS s
+               FROM memoria_vectorial
+               WHERE contenido %% %s
+               ORDER BY s DESC
+               LIMIT 1""",
+            (content, content),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and row[2] >= threshold:
+            return (
+                f"⚠️ Ya existe un recuerdo casi idéntico (id={row[0]}, similitud_trgm={row[2]:.2f}). "
+                f"Contenido existente: {row[1][:100]}... "
+                f"Usa update_hipocampo(id={row[0]}) o pasa force=True."
+            )
+        return None
+    except Exception as e:
+        logger.warning("Dedup trigram falló: %s", e)
+        return None
+
+
+def _check_dedup_semantic(row_id: int, content: str, embedding: list, threshold: float = 0.9) -> int | None:
+    """Dedup semántico best-effort (usa embedding ya generado). Devuelve el id
+    del duplicado existente, o None. Solo loguea — el guardado ya ocurrió."""
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id FROM memoria_vectorial
+               WHERE id != %s AND (embedding <=> %s::vector(1024)) < %s
+               ORDER BY (embedding <=> %s::vector(1024))
+               LIMIT 1""",
+            (row_id, embedding, 1 - threshold, embedding),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        logger.warning("Dedup semántico bg falló: %s", e)
+        return None
+
+
+def _auto_link_similar(row_id: int, embedding: list) -> int:
+    """Auto-enlaza 'similar' entre el recuerdo recién guardado y los existentes."""
+    links_created = 0
+    try:
+        link_conn = _conn()
+        link_cur = link_conn.cursor()
+        link_cur.execute(
+            """SELECT id, contenido, (embedding <=> %s::vector(1024)) AS dist
+               FROM memoria_vectorial
+               WHERE id != %s AND (embedding <=> %s::vector(1024)) < 0.25
+               ORDER BY dist
+               LIMIT 3""",
+            (embedding, row_id, embedding),
+        )
+        similar = link_cur.fetchall()
+        link_cur.close()
+        link_conn.close()
+        for sim_id, _sim_content, dist in similar:
+            sim = round((1 - dist) * 100, 1)
+            if sim > 75:
+                try:
+                    c2 = _conn()
+                    c2_cur = c2.cursor()
+                    c2_cur.execute(
+                        """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
+                           VALUES (%s, %s, 'similar', %s) ON CONFLICT DO NOTHING""",
+                        (str(row_id), str(sim_id), sim / 100),
+                    )
+                    c2.commit()
+                    c2_cur.close()
+                    c2.close()
+                    links_created += 1
+                except Exception:
+                    pass
+    except Exception:
+        logger.warning("Auto-link falló para id=%s", row_id)
+    if links_created and logger.isEnabledFor(logging.INFO):
+        logger.info("auto_link: %d enlaces creados para id=%s", links_created, row_id)
+    return links_created
+
+
+def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_link: bool) -> None:
+    """Finaliza un save de forma asíncrona (best-effort, nunca lanza).
+
+    1. Genera el embedding y hace backfill a la fila (INSERT ya ocurrió con NULL).
+    2. Dedup semántico (solo loguea si hay duplicado).
+    3. Auto-link 'similar' si se solicitó.
+    4. Auditoría de contradicciones (acotada).
+
+    Si el embedding falla o es lento, la memoria queda en tier WARM
+    (embedding=NULL): recuperable por búsqueda de texto/trigram.
+    """
+    try:
+        embedding = get_embedding(content)
+    except Exception as e:
+        logger.warning("Embedding falló para id=%s (queda WARM): %s", row_id, e)
+        return
+    if embedding is None:
+        logger.warning("Embedding no disponible para id=%s (queda WARM)", row_id)
+        return
+
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE memoria_vectorial SET embedding = %s::vector(1024) WHERE id = %s",
+            (embedding, row_id),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning("Backfill de embedding id=%s falló: %s", row_id, e)
+        return
+
+    dup_id = _check_dedup_semantic(row_id, content, embedding)
+    if dup_id:
+        logger.warning(
+            "⚠️ Duplicado semántico post-save: id=%s es muy similar a #%s "
+            "(save async omite el bloqueo síncrono de dedup)",
+            row_id,
+            dup_id,
+        )
+
+    if auto_link:
+        _auto_link_similar(row_id, embedding)
+
+    _audit_contradicciones_bg(row_id, content, embedding)
+
+
 def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5, max_probes: int | None = None) -> list[dict]:
     """Detect contradictions using negation-probe embeddings.
 
@@ -750,11 +895,14 @@ async def save_hipocampo(
     """
     Guarda un recuerdo en el Hipocampo (memoria_vectorial).
 
-    Genera embedding automáticamente y persiste el contenido para que sea
-    encontrable por búsqueda semántica futura.
+    INSERT inmediato y NO bloqueante: el embedding se genera en background
+    (_finalize_save_bg) junto con dedup semántico, auto-link y auditoría de
+    contradicciones. Hasta que el embedding se backfillea (~segundos), la
+    memoria queda en tier WARM (embedding=NULL) y es recuperable por texto.
 
-    Si ya existe un recuerdo con similitud semántica >0.9, se advierte
-    y se omite el guardado a menos que force=True.
+    Si ya existe un recuerdo casi idéntico (trigram), se advierte y se omite
+    el guardado a menos que force=True. El dedup semántico (>0.9) corre en
+    background y solo loguea — no bloquea.
 
     Args:
         content: Texto del recuerdo a guardar.
@@ -795,12 +943,10 @@ async def save_hipocampo(
             return f"❌ Nivel inválido: {nivel}. Usa: episodica, semantica, automatica."
 
         if not force:
-            dedup_warning = _check_dedup(content)
+            dedup_warning = _check_dedup_trigram(content)
             if dedup_warning:
-                logger.info("Dedup bloqueó guardado (similar existente)")
+                logger.info("Dedup (trigram) bloqueó guardado (casi-idéntico)")
                 return dedup_warning
-
-        embedding = _generar_embedding(content, "save_hipocampo")
 
         metadatos = {
             "type": memory_type,
@@ -820,9 +966,9 @@ async def save_hipocampo(
         conn = _conn()
         cur = conn.cursor()
         cur.execute(
-            """INSERT INTO memoria_vectorial (contenido, metadatos, embedding)
-               VALUES (%s, %s, %s::vector(1024)) RETURNING id""",
-            (content, json.dumps(metadatos), embedding),
+            """INSERT INTO memoria_vectorial (contenido, metadatos)
+               VALUES (%s, %s) RETURNING id""",
+            (content, json.dumps(metadatos)),
         )
         row_id = cur.fetchone()[0]
         conn.commit()
@@ -832,59 +978,19 @@ async def save_hipocampo(
         _fire_webhooks("save", row_id, content, metadatos)
         _auto_summarize_session(session_id)
 
-        if embedding:
-            threading.Thread(
-                target=_audit_contradicciones_bg,
-                args=(row_id, content, embedding),
-                daemon=True,
-                name=f"contradicciones-bg-{row_id}",
-            ).start()
+        threading.Thread(
+            target=_finalize_save_bg,
+            args=(row_id, content, session_id, auto_link),
+            daemon=True,
+            name=f"finalize-save-{row_id}",
+        ).start()
 
-        links_created = 0
-        if auto_link:
-            try:
-                if embedding:
-                    link_conn = _conn()
-                    link_cur = link_conn.cursor()
-                    link_cur.execute(
-                        """SELECT id, contenido, (embedding <=> %s::vector(1024)) AS dist
-                           FROM memoria_vectorial
-                           WHERE id != %s AND (embedding <=> %s::vector(1024)) < 0.25
-                           ORDER BY dist
-                           LIMIT 3""",
-                        (embedding, row_id, embedding),
-                    )
-                    similar = link_cur.fetchall()
-                    link_cur.close()
-                    link_conn.close()
-                    for sim_id, sim_content, dist in similar:
-                        sim = round((1 - dist) * 100, 1)
-                        if sim > 75:
-                            try:
-                                c2 = _conn()
-                                c2_cur = c2.cursor()
-                                c2_cur.execute(
-                                    """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
-                                       VALUES (%s, %s, 'similar', %s) ON CONFLICT DO NOTHING""",
-                                    (str(row_id), str(sim_id), sim / 100),
-                                )
-                                c2.commit()
-                                c2_cur.close()
-                                c2.close()
-                                links_created += 1
-                            except Exception:
-                                pass
-                    if logger.isEnabledFor(logging.INFO):
-                        logger.info("auto_link: %d enlaces creados para id=%s", links_created, row_id)
-            except Exception:
-                logger.warning("Auto-link falló para id=%s", row_id)
-
-        logger.info("✅ Guardado id=%s", row_id)
-        msg = f"✅ Guardado en Hipocampo (id={row_id})"
-        if links_created:
-            msg += f" 🔗 {links_created} auto-enlace(s) creado(s)"
-        if embedding:
-            msg += "\n🔍 Auditoría de contradicciones enviada a background (no bloquea)."
+        logger.info("✅ Guardado id=%s (embedding en background)", row_id)
+        msg = (
+            f"✅ Guardado en Hipocampo (id={row_id}) — INSERT instantáneo.\n"
+            "🔍 Embedding + dedup + auto-link + auditoría de contradicciones se "
+            "procesan en background. La búsqueda semántica lo encontrará en unos segundos."
+        )
         return msg
 
     try:
