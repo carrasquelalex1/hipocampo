@@ -548,6 +548,65 @@ def _aplicar_decaimiento_temporal(resultados, hoy=None):
     return resultados
 
 
+def _aplicar_fatiga(resultados, cur):
+    """Boost scores based on recent access frequency (memory fatigue).
+
+    boost = min(15, 5 * log1p(access_count_7d)) * exp(-age_hours / 168)
+
+    Only boosts results already above threshold; doesn't resuscitate garbage.
+    """
+
+    if not resultados:
+        return resultados
+
+    ids = [r.get("id") for r in resultados if r.get("id")]
+    if not ids:
+        return resultados
+
+    try:
+        cur.execute(
+            """
+            SELECT memory_id, count(*) as cnt
+            FROM memory_access
+            WHERE memory_id = ANY(%s)
+              AND accessed_at > NOW() - interval '7 days'
+            GROUP BY memory_id
+            """,
+            (ids,),
+        )
+        access_counts = dict(cur.fetchall())
+    except Exception:
+        return resultados
+
+    hoy = date.today()
+    MAX_BOOST = 15.0
+    ALPHA = 5.0
+    TAU = 168.0  # hours (7 days)
+
+    for r in resultados:
+        rid = r.get("id", "")
+        cnt = access_counts.get(rid, 0)
+        if cnt <= 0:
+            continue
+
+        age_hours = 0.0
+        fecha_str = r.get("metadatos", {}).get("date", "")
+        if fecha_str:
+            try:
+                partes = fecha_str.split("-")
+                fecha = date(int(partes[0]), int(partes[1]), int(partes[2]))
+                age_hours = (hoy - fecha).days * 24.0
+            except (ValueError, IndexError):
+                pass
+
+        boost = min(MAX_BOOST, ALPHA * math.log1p(cnt)) * math.exp(-age_hours / TAU)
+        if boost > 0.1:
+            r["score"] = round(r["score"] + boost, 1)
+            r["fatigue_boost"] = round(boost, 1)
+
+    return resultados
+
+
 def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None, hoy=None):
     """Fusión con ponderación híbrida calibrada.
 
@@ -807,6 +866,36 @@ def search_with_stats(query: str, session_id: str = "") -> tuple[str, dict]:
     return text, stats
 
 
+def _record_access_batch(cur, results, query):
+    """Record memory access for top search results (batch insert)."""
+    import hashlib
+
+    query_hash = hashlib.sha256(query.encode()).hexdigest()[:12]
+    memory_ids = []
+    sources = []
+    for r in results:
+        rid = r.get("id", "")
+        src = r.get("source", "")
+        if not rid or not src:
+            continue
+        memory_ids.append(rid)
+        sources.append(src)
+
+    if not memory_ids:
+        return
+
+    try:
+        cur.execute(
+            """
+            INSERT INTO memory_access (memory_id, source, query_hash)
+            SELECT unnest(%s::text[]), unnest(%s::text[]), %s
+            """,
+            (memory_ids, sources, query_hash),
+        )
+    except Exception:
+        pass
+
+
 def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
     conn = get_conn()
     cur = conn.cursor()
@@ -820,6 +909,9 @@ def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
     lexico_mi = buscar_lexico_memory_items(cur, patterns, terms, query_original=query)
 
     fusionados = fusionar_resultados(vectorial_mv, lexico_mv + vectorial_mi, lexico_mi)
+
+    # Fatigue boost: recent access frequency
+    fusionados = _aplicar_fatiga(fusionados, cur)
 
     # Expansión por tags: combina tags de resultados + tags que coinciden con la consulta
     contenidos_existentes = {r["contenido"][:120].lower() for r in fusionados}
@@ -845,6 +937,9 @@ def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
     filtrados = [r for r in fusionados if r["score"] >= umbral_minimo]
     if session_id:
         filtrados = [r for r in filtrados if r.get("metadatos", {}).get("session_id") == session_id]
+
+    if filtrados:
+        _record_access_batch(cur, filtrados[:10], query)
 
     cur.close()
     conn.close()

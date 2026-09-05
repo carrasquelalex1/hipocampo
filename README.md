@@ -18,7 +18,7 @@ pinned: false
   Persistent memory for autonomous AI agents · PostgreSQL 17 + pgvector · Hybrid Search · MCP Server
 </p>
 
-[![Version](https://img.shields.io/badge/version-4.3-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
+[![Version](https://img.shields.io/badge/version-5.0-blue.svg)](https://github.com/carrasquelalex1/hipocampo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://alexbell1-hipocampo-mcp.hf.space/mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-active-green)](https://registry.modelcontextprotocol.io/v0.1/servers?search=carrasquelalex1/hipocampo)
@@ -88,13 +88,18 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 * **Code RAG** (v4.0): Index project source code (PHP, JS, TS, Python, SQL) as semantic embeddings. Search with `search_code(query, language)` — returns real code snippets with file paths and line numbers, not just summaries.
 * **Exponential Time Decay** (v4.0): `final_score = relevance × exp(-λ × days)` with λ=0.05 configurable and 20% floor. Recent knowledge naturally outranks old memories.
 * **MMR Diversity Anti-Cluster** (v4.3): Maximum Marginal Relevance post-fusion re-ranking prevents dense embedding clusters from monopolizing search results. Iteratively selects results that balance relevance with diversity: `diversity_lambda × relevance - (1-diversity_lambda) × max_similarity_to_selected`. Configurable in `hipocampo_hybrid_config.json`.
+* **Active Forgetting with Archive Tiers** (v5.0): `decay_hipocampo` now archives old `episodica` memories to `memoria_historica` (cold storage) when they exceed age thresholds. Protected levels: `automatica`, `semantica`, `critico` — never archived. New `critico` parameter on `save_hipocampo` for mission-critical memories. `restaurar_historica(id)` restores cold memories back to active tier.
+* **Memory Fatigue Boost** (v5.0): New `memory_access` table tracks per-record access frequency. BIRE search applies a fatigue boost: `boost = min(15, 5·log1p(accesses_7d))·e^(-age_hours/168)`. Frequently accessed memories naturally rank higher — mimicking how the human brain strengthens neural pathways through repeated recall.
+* **Memory Budget & Tiering** (v5.0): `hipocampo_budget(dry_run)` manages three storage tiers — HOT (embedding present, full semantic search), WARM (embedding=NULL, text-only search), COLD (`memoria_historica` archive). Hot tier cap: 5000 records. When the cap is exceeded, oldest episodica memories are automatically demoted to WARM. `restaurar_historica(id)` restores any cold memory back to active.
+* **Contradiction Detection** (v5.0): `save_hipocampo` runs `_detectar_contradicciones()` using negation-probe embeddings to detect factual contradictions with existing memories. When detected: logs a warning and creates a `contradicts` link — never blocks the save. `contradicciones_hipocampo(id)` performs on-demand contradiction audits across the memory graph.
+* **File Watcher with Systemd** (v5.0): `hipocampo_watch.py` watches configured directories for file changes and auto-reindexes modified files via `index_project`. Managed by `hipocampo-watch.timer` (10-minute interval). MCP tools: `list_watch_dirs`, `add_watch_dir(path, patterns)`, `remove_watch_dir(path)`, `reindex_now(path?)`.
 * **Link Weight Decay** (v4.3): Exponential weight decay on memory graph links (half-life 90 days). Links that aren't traversed lose strength over time; links <0.01 are pruned. `graph_hipocampo()` and `path_hipocampo()` auto-reinforce traversed links. New `decay_hipocampo(dry_run)` tool for graph maintenance. Columns: `last_accessed`, `reinforced_at`.
 * **Session Memory & Auto-Summarization**: Session-isolated save/search. After 20+ saves, Hipocampo auto-generates a consolidated session summary in the background.
 * **Proactive Context Preloading**: `preload_context(project_path)` extracts meaningful keywords from the project path, searches relevant memories, and returns a compressed summary — ideal for session start.
 * **Context Budget Awareness**: `compress_hipocampo` auto-estimates token budget and adjusts k dynamically. `budget_ratio` parameter gives fine-grained control over output size.
 * **Auto-Linking**: `save_hipocampo(..., auto_link=True)` auto-discovers semantically similar memories (>0.75 cosine) and creates `similar` edges in the memory graph.
 * **HNSW Auto-Recovery**: `hipocampo_health()` checks the HNSW index on startup and auto-creates it if missing — no more manual `CREATE INDEX` commands.
-* **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 25 tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
+* **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 37 tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
 
 ---
 
@@ -371,7 +376,7 @@ An **SSC (Sparse Selective Caching)** pipeline is also available as an experimen
 
 Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to autonomously read and write memories.
 
-### Available MCP Tools (25 tools)
+### Available MCP Tools (37 tools)
 
 **Memory Operations:**
 * `search_hipocampo(query, session_id?)`: Unified semantic and lexical search (auto-records metrics). Optionally filter by session.
@@ -380,6 +385,7 @@ Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to
 * `compress_hipocampo(query, k=5, method="hybrid", budget_ratio=1.0, include_metadata=False)`: Search + hybrid compression with context budget awareness. Auto-estimates tokens and adjusts k dynamically. Three methods: `"hybrid"` (recommended), `"extractive"` (fastest, no API cost), `"llm"` (highest quality).
 * `save_hipocampo(content, memory_type, code, categories, session_id?, force?, auto_link=False, nivel="episodica")`: Persist data into `memoria_vectorial`. Supports session isolation, auto-dedup, auto-linking, and hierarchical memory levels.
 * `profile_hipocampo(summary, extra, categories)`: Store personal or event-driven user data (`memory_items`).
+* `save_hipocampo` now supports `critico=True` parameter to protect mission-critical memories from decay and archiving.
 
 **Memory Graph (v4.0):**
 * `link_hipocampo(source_id, target_id, relation_type, weight)`: Create a directed edge between two memories. Relation types: `related`, `follow_up`, `part_of`, `references`, `similar`, `chain`.
@@ -412,6 +418,18 @@ Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to
 
 **Time Decay:**
 * Scores of memories >7 days old automatically decay ~5% per week (floor at 30%), keeping recent knowledge at the top.
+
+**Active Forgetting & Tiering (v5.0):**
+* `decay_hipocampo(dry_run=True)`: Extended to archive old `episodica` memories to `memoria_historica` (cold storage). Protected: `automatica`, `semantica`, `critico`. Dry run shows what would be archived.
+* `hipocampo_budget(dry_run=True)`: Shows memory distribution across HOT/WARM/COLD tiers. Hot cap: 5000. When exceeded, oldest episodica are auto-demoted.
+* `restaurar_historica(id)`: Restore a cold memory from `memoria_historica` back to active `memoria_vectorial`.
+* `contradicciones_hipocampo(id=None)`: On-demand contradiction audit. With ID: checks one memory. Without: scans all memories for contradictions.
+
+**File Watcher (v5.0):**
+* `list_watch_dirs()`: List all directories being watched for auto-reindexing.
+* `add_watch_dir(path, patterns=["*.php","*.py","*.js"])`: Add a directory to the watch list.
+* `remove_watch_dir(path)`: Remove a directory from the watch list.
+* `reindex_now(path=None)`: Trigger immediate reindex of watched files (or all if no path given).
 
 **Webhook Watches:**
 * `watch_hipocampo(pattern, webhook_url)`: Register a webhook that fires on save/update/delete events matching a text pattern.
@@ -570,7 +588,7 @@ Optimizations applied in July 2026 to address latency and threshold drift:
 
 ## 🧪 Testing
 
-Hipocampo includes **105+ unit tests** covering all core logic and MCP integration:
+Hipocampo includes **103 unit tests** covering all core logic and MCP integration:
 
 | Test file | What it covers |
 |-----------|---------------|
@@ -668,13 +686,18 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 * **RAG de Código** (v4.0): Indexa código fuente de proyectos (PHP, JS, TS, Python, SQL) como embeddings semánticos. Busca con `search_code(consulta, lenguaje)` — devuelve código real con ruta de archivo y números de línea.
 * **Decaimiento Temporal Exponencial** (v4.0): `score_final = relevancia × exp(-λ × días)` con λ=0.05 configurable y piso 20%. El conocimiento reciente pesa naturalmente más.
 * **Diversidad MMR Anti-Cluster** (v4.3): Reordenamiento post-fusión con Maximum Marginal Relevance para evitar que clusters densos monopolden los resultados. Selecciona iterativamente resultados balanceando relevancia con diversidad: `diversity_lambda × relevancia - (1-diversity_lambda) × max_similitud_a_seleccionados`. Configurable en `hipocampo_hybrid_config.json`.
+* **Olvido Activo con Tiers de Archivo** (v5.0): `decay_hipocampo` ahora archiva memorias `episodica` antiguas en `memoria_historica` (almacenamiento frío) al superar umbrales de edad. Niveles protegidos: `automatica`, `semantica`, `critico` — nunca se archivan. Nuevo parámetro `critico` en `save_hipocampo` para memorias críticas. `restaurar_historica(id)` restaura memorias frías al tier activo.
+* **Boost de Fatiga de Memoria** (v5.0): Nueva tabla `memory_access` rastrea frecuencia de acceso por registro. BIRE aplica un boost de fatiga: `boost = min(15, 5·log1p(accesos_7d))·e^(-edad_horas/168)`. Las memorias accedidas con frecuencia en una ventana de 7 días suben naturalmente en el ranking — imitando cómo el cerebro fortalece vías neuronales mediante la recuperación repetida.
+* **Presupuesto de Memoria y Tiering** (v5.0): `hipocampo_budget(dry_run)` gestiona tres tiers — HOT (embedding presente, búsqueda semántica completa), WARM (embedding=NULL, búsqueda solo por texto), COLD (`memoria_historica` archivo). Cap del tier hot: 5000 registros. `restaurar_historica(id)` restaura memorias frías al tier activo.
+* **Detección de Contradicciones** (v5.0): `save_hipocampo` ejecuta `_detectar_contradicciones()` usando embeddings de sonda de negación para detectar contradicciones factuales. Cuando detecta: registra warning y crea enlace `contradicts` — nunca bloquea el guardado. `contradicciones_hipocampo(id)` realiza auditorías de contradicción bajo demanda.
+* **Watcher de Archivos con Systemd** (v5.0): `hipocampo_watch.py` monitorea directorios configurados y auto-reindexa archivos modificados via `index_project`. Gestionado por `hipocampo-watch.timer` (intervalo 10 minutos). Tools MCP: `list_watch_dirs`, `add_watch_dir(path, patterns)`, `remove_watch_dir(path)`, `reindex_now(path?)`.
 * **Decaimiento de Pesos en Enlaces** (v4.3): Decaimiento exponencial en enlaces del grafo con half-life de 90 días. Los enlaces no recorridos pierden fuerza; enlaces <0.01 se podan. `graph_hipocampo()` y `path_hipocampo()` refuerzan automáticamente los enlaces atravesados. Nueva tool `decay_hipocampo(dry_run)` para mantenimiento del grafo. Columnas: `last_accessed`, `reinforced_at`.
 * **Memoria por Sesión y Auto-resumen**: Búsqueda/guardado aislado por sesión. Cada 20 guardados, Hipocampo genera un resumen consolidado de fondo.
 * **Precarga Proactiva de Contexto**: `preload_context(ruta_proyecto)` extrae keywords del proyecto, busca memorias relevantes y devuelve resumen comprimido. Ideal al inicio de sesión.
 * **Presupuesto de Contexto Inteligente**: `compress_hipocampo` auto-estima tokens y ajusta k dinámicamente. `budget_ratio` da control fino sobre el tamaño de salida.
 * **Auto-Enlace**: `save_hipocampo(..., auto_link=True)` descubre recuerdos semánticamente similares (>0.75 cosine) y crea aristas `similar` en el grafo.
 * **Recuperación Automática de HNSW**: `hipocampo_health()` verifica el índice HNSW al arrancar y lo crea si falta — sin comandos `CREATE INDEX` manuales.
-* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante servidor FastMCP con 25 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
+* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante servidor FastMCP con 37 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
 
 ---
 
@@ -894,7 +917,7 @@ python3 scripts/hipocampo_mcp_server.py --http 8001   # Streamable HTTP (recomen
 python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 ```
 
-### Herramientas MCP Disponibles (22+ herramientas)
+### Herramientas MCP Disponibles (37 herramientas)
 
 **Operaciones de Memoria:**
 * `search_hipocampo(consulta, session_id?)`: Búsqueda semántica + léxica híbrida (auto-registra métricas). Filtro opcional por sesión.
@@ -935,6 +958,18 @@ python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 
 **Decaimiento Temporal:**
 * Scores de memorias >7 días decaen ~5% por semana (piso 30%), priorizando conocimiento reciente.
+
+**Olvido Activo y Tiering (v5.0):**
+* `decay_hipocampo(seco=True)`: Archiva memorias `episodica` antiguas a `memoria_historica` (almacenamiento frío). Protegidos: `automatica`, `semantica`, `critico`. Modo seco muestra qué se archivaría.
+* `hipocampo_budget(seco=True)`: Muestra distribución de memorias en tiers HOT/WARM/COLD. Cap del tier hot: 5000.
+* `restaurar_historica(id)`: Restaura una memoria fría del archivo al tier activo.
+* `contradicciones_hipocampo(id=None)`: Auditoría de contradicciones bajo demanda. Con ID: verifica una memoria. Sin ID: escanea todas.
+
+**Watcher de Archivos (v5.0):**
+* `list_watch_dirs()`: Lista los directorios monitoreados para auto-reindexación.
+* `add_watch_dir(path, patterns=["*.php","*.py","*.js"])`: Agrega un directorio al watch list.
+* `remove_watch_dir(path)`: Elimina un directorio del watch list.
+* `reindex_now(path=None)`: Dispara reindexación inmediata de archivos modificados (o todos si no se da path).
 
 **Webhooks (Watch):**
 * `watch_hipocampo(patron, webhook_url)`: Registra un webhook que se dispara en eventos save/update/delete cuando el contenido coincide con un patrón.
@@ -1067,7 +1102,7 @@ Optimizaciones aplicadas en Julio 2026 para reducir latencia y estabilizar thres
 
 ## 🧪 Tests
 
-Hipocampo incluye **105+ tests unitarios** cubriendo toda la lógica central e integración MCP:
+Hipocampo incluye **103 tests unitarios** cubriendo toda la lógica central e integración MCP:
 
 | Archivo | Qué cubre |
 |---------|-----------|

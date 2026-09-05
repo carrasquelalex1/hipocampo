@@ -227,6 +227,40 @@ def format_result(data):
     return "\n".join(lines)
 
 
+def purge_memory_access(max_age_days=30):
+    """Remove old memory_access records to keep the table small."""
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "DELETE FROM memory_access WHERE accessed_at < NOW() - interval '%s days'",
+            (max_age_days,),
+        )
+        deleted = cur.rowcount
+        conn.commit()
+        return {"deleted": deleted, "max_age_days": max_age_days}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_memory_access_stats():
+    """Return stats about memory access tracking."""
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT count(*) FROM memory_access")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT count(DISTINCT memory_id) FROM memory_access")
+        unique = cur.fetchone()[0]
+        cur.execute("SELECT source, count(*) FROM memory_access GROUP BY source")
+        by_source = {r[0]: r[1] for r in cur.fetchall()}
+        return {"total_records": total, "unique_memories": unique, "by_source": by_source}
+    finally:
+        cur.close()
+        conn.close()
+
+
 if __name__ == "__main__":
     import argparse
 

@@ -28,7 +28,7 @@ import sys
 import os
 import time
 import json
-from datetime import date
+from datetime import date, datetime
 
 import uuid
 
@@ -102,6 +102,18 @@ CREATE INDEX IF NOT EXISTS idx_memory_links_last_accessed ON memory_links(last_a
 CREATE INDEX IF NOT EXISTS idx_memory_links_reinforced ON memory_links(reinforced_at);
 """
 
+MEMORY_ACCESS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS memory_access (
+    id SERIAL PRIMARY KEY,
+    memory_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    accessed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    query_hash VARCHAR(64)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_access_lookup ON memory_access(memory_id, accessed_at);
+CREATE INDEX IF NOT EXISTS idx_memory_access_age ON memory_access(accessed_at);
+"""
+
 
 def _init_watches_table():
     try:
@@ -148,6 +160,23 @@ def _init_memory_links_table():
         logger.warning("DB error al inicializar memory_links: %s", e)
     except Exception as e:
         logger.warning("Error inesperado al inicializar memory_links: %s", e)
+
+
+def _init_memory_access_table():
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        for stmt in MEMORY_ACCESS_TABLE_SQL.split(";"):
+            if stmt.strip():
+                cur.execute(stmt)
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("✅ memory_access table initialized")
+    except psycopg2.Error as e:
+        logger.warning("DB error al inicializar memory_access: %s", e)
+    except Exception as e:
+        logger.warning("Error inesperado al inicializar memory_access: %s", e)
 
 
 def _fire_webhooks(event_type: str, record_id, content: str, metadatos: dict):
@@ -518,6 +547,74 @@ def _check_dedup(content: str, threshold: float = 0.9) -> str | None:
         return None
 
 
+def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5) -> list[dict]:
+    """Detect contradictions using negation-probe embeddings.
+
+    For each candidate (cosine sim 0.5-0.95 with new content):
+    - Embed a negation probe: "AFIRMACIÓN: {candidate} — ¿Esto es FALSO según: {new}?"
+    - If sim(neg_probe, candidate) > sim(new, candidate) + margin → contradiction
+    """
+    CONTRADICTION_MARGIN = 0.05
+    SIM_MIN = 0.35  # cosine distance < 0.65 = similar enough
+    SIM_MAX = 0.70  # cosine distance > 0.30 = not too similar (that's dedup)
+
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, contenido,
+                      (embedding <=> %s::vector(1024)) AS dist
+               FROM memoria_vectorial
+               WHERE embedding IS NOT NULL
+                 AND (embedding <=> %s::vector(1024)) BETWEEN %s AND %s
+               ORDER BY dist ASC
+               LIMIT %s""",
+            (new_emb, new_emb, SIM_MIN, SIM_MAX, top_k),
+        )
+        candidates = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not candidates:
+            return []
+
+        contradictions = []
+        for cand_id, cand_content, cand_dist in candidates:
+            cand_emb = get_embedding(cand_content[:2000])
+            if cand_emb is None:
+                continue
+
+            neg_probe_text = f"AFIRMACIÓN: {cand_content[:300]} — ¿Esto es FALSO según: {content[:300]}?"
+            neg_probe_emb = get_embedding(neg_probe_text[:2000])
+            if neg_probe_emb is None:
+                continue
+
+            import math as _m
+
+            sim_new_old = 1.0 - cand_dist
+            norm_a = _m.sqrt(sum(x * x for x in neg_probe_emb))
+            norm_b = _m.sqrt(sum(x * x for x in cand_emb))
+            if norm_a == 0 or norm_b == 0:
+                continue
+            sim_neg_old = sum(x * y for x, y in zip(neg_probe_emb, cand_emb)) / (norm_a * norm_b)
+
+            if sim_neg_old > sim_new_old + CONTRADICTION_MARGIN:
+                contradictions.append(
+                    {
+                        "id": cand_id,
+                        "contenido": cand_content[:200],
+                        "sim_new_old": round(sim_new_old, 3),
+                        "sim_neg_old": round(sim_neg_old, 3),
+                        "confidence": round(sim_neg_old - sim_new_old, 3),
+                    }
+                )
+
+        return contradictions
+    except Exception as e:
+        logger.warning("Contradiction detection failed: %s", e)
+        return []
+
+
 def _generar_embedding(texto: str, tool_name: str = "unknown") -> list[float]:
     rate_err = _check_rate(embedding_limiter, tool_name)
     if rate_err:
@@ -599,6 +696,7 @@ async def save_hipocampo(
     force: bool = False,
     auto_link: bool = False,
     nivel: str = "episodica",
+    critico: bool = False,
 ) -> str:
     """
     Guarda un recuerdo en el Hipocampo (memoria_vectorial).
@@ -628,6 +726,8 @@ async def save_hipocampo(
                "episodica" (default) — detalle completo, comprimible,
                "semantica" — conocimiento consolidado, protegido,
                "automatica" — regla permanente, nunca se comprime.
+        critico: Si True, la memoria NUNCA se olvida ni se archiva.
+                 Protección de por vida independiente del nivel.
 
     Returns:
         Confirmación con el ID asignado.
@@ -652,6 +752,16 @@ async def save_hipocampo(
                 return dedup_warning
 
         embedding = _generar_embedding(content, "save_hipocampo")
+
+        contradiction_warnings = []
+        if not force and embedding:
+            contradictions = _detectar_contradicciones(content, embedding)
+            if contradictions:
+                for c in contradictions:
+                    contradiction_warnings.append(
+                        f"⚠️ Contradicción con #{c['id']} (conf={c['confidence']:.3f}): {c['contenido'][:80]}..."
+                    )
+
         metadatos = {
             "type": memory_type,
             "code": code or "",
@@ -660,6 +770,8 @@ async def save_hipocampo(
             "source": "mcp",
             "nivel": nivel,
         }
+        if critico:
+            metadatos["critico"] = True
         if nivel == "automatica":
             metadatos["review_count"] = 0
             metadatos["created_at"] = str(date.today())
@@ -723,12 +835,78 @@ async def save_hipocampo(
         msg = f"✅ Guardado en Hipocampo (id={row_id})"
         if links_created:
             msg += f" 🔗 {links_created} auto-enlace(s) creado(s)"
+        if contradiction_warnings:
+            msg += "\n" + "\n".join(contradiction_warnings)
+            for c in contradictions:
+                try:
+                    link_conn = _conn()
+                    link_cur = link_conn.cursor()
+                    link_cur.execute(
+                        """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
+                           VALUES (%s, %s, 'contradicts', %s)
+                           ON CONFLICT (source_id, target_id, relation_type) DO NOTHING""",
+                        (f"v{row_id}", f"v{c['id']}", c["confidence"]),
+                    )
+                    link_conn.commit()
+                    link_cur.close()
+                    link_conn.close()
+                except Exception:
+                    pass
         return msg
 
     try:
         return await asyncio.to_thread(_do)
     except Exception as e:
         return _tool_err("save_hipocampo", e)
+
+
+@mcp.tool()
+async def contradicciones_hipocampo(memory_id: int) -> str:
+    """
+    Detecta contradicciones semánticas de una memoria existente.
+
+    Usa negation-probe embedding: embedea "AFIRMACIÓN: {contenido} — ¿Esto es FALSO según: ..."
+    y compara con el embedding original. Si la distancia de la sonda de negación
+    es MENOR que la del contenido original → señal de contradicción.
+
+    Args:
+        memory_id: ID numérico de la memoria en memoria_vectorial.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT id, contenido, embedding FROM memoria_vectorial WHERE id = %s AND embedding IS NOT NULL",
+                (memory_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return f"❌ Memoria {memory_id} no encontrada o sin embedding."
+
+            _, contenido, embedding = row
+            contradictions = _detectar_contradicciones(contenido, embedding)
+
+            if not contradictions:
+                return f"✅ Sin contradicciones detectadas para memoria #{memory_id}."
+
+            lines = [f"⚠️ {len(contradictions)} contradicción(es) detectada(s) para #{memory_id}:"]
+            for c in contradictions:
+                lines.append(
+                    f"   #{c['id']} (conf={c['confidence']:.3f}, "
+                    f"sim_new={c['sim_new_old']:.3f}, sim_neg={c['sim_neg_old']:.3f}): "
+                    f"{c['contenido'][:100]}..."
+                )
+            return "\n".join(lines)
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("contradicciones_hipocampo", e)
 
 
 @mcp.tool()
@@ -1559,7 +1737,11 @@ async def hipocampo_maintenance() -> str:
     1. Health check → auto-repair si es necesario
     2. Dedup → fusiona duplicados
     3. Checkpoint → comprime memorias antiguas
-    4. Tune → ajusta thresholds según métricas
+    4. Purge → limpia access logs antiguos (>30d)
+    5. Tune → ajusta thresholds según métricas
+
+    Nota: hipocampo_budget y decay_hipocampo se ejecutan manualmente
+    o via cron separado (son destructivos y requieren dry_run previo).
 
     Returns:
         Reporte consolidado del mantenimiento.
@@ -1585,6 +1767,12 @@ async def hipocampo_maintenance() -> str:
             report_parts.append("📦 Checkpoint: ✅")
         except Exception:
             report_parts.append("📦 Checkpoint: ❌")
+
+        try:
+            _stats.purge_memory_access(max_age_days=30)
+            report_parts.append("🗑️ Purge access: ✅")
+        except Exception:
+            report_parts.append("🗑️ Purge access: ❌")
 
         try:
             _stats.tune_thresholds()
@@ -2289,15 +2477,21 @@ async def search_code(query: str, k: int = 5, language: str = "") -> str:
 
 
 @mcp.tool()
-async def decay_hipocampo(dry_run: bool = True) -> str:
+async def decay_hipocampo(dry_run: bool = True, min_age_days: int = 30) -> str:
     """
-    Aplica decaimiento temporal a los pesos de los enlaces del grafo.
+    Aplica decaimiento temporal a enlaces del grafo Y memorias antiguas.
 
-    Los enlaces pierden peso exponencialmente si no son accedidos.
-    Half-life: 90 días (el peso se reduce a la mitad cada 90 días sin acceso).
+    ENLACES: peso exponencial, half-life 90 días. Elimina enlaces < 0.01.
+    MEMORIAS: archiva episodica sin acceso ni protección a memoria_historica.
 
-    Con dry_run=True (default) solo muestra el estado actual sin modificar.
-    Con dry_run=False aplica el decaimiento y elimina enlaces con peso < 0.01.
+    Protecciones (nunca se archivan):
+      - nivel = automatica o semantica
+      - metadatos.critico = true
+      - con enlaces entrantes en memory_links
+
+    Args:
+        dry_run: True (default) = solo lectura. False = ejecuta cambios.
+        min_age_days: Edad mínima en días para considerar memoria candidata.
 
     Returns:
         Reporte del decaimiento aplicado.
@@ -2307,6 +2501,7 @@ async def decay_hipocampo(dry_run: bool = True) -> str:
         conn = _conn()
         cur = conn.cursor()
         try:
+            # === PART 1: Graph link decay ===
             cur.execute("""
                 SELECT id, source_id, target_id, relation_type, weight,
                        COALESCE(last_accessed, created_at) as effective_last,
@@ -2316,48 +2511,110 @@ async def decay_hipocampo(dry_run: bool = True) -> str:
             """)
             rows = cur.fetchall()
 
-            if not rows:
-                return "📊 No hay enlaces en el grafo."
-
-            total = len(rows)
-            decayed = 0
-            dead = 0
-            lines = [
-                "🧠 DECAIMIENTO DE ENLACES — Análisis del Grafo",
-                "   Half-life: 90 días",
-                f"   Total enlaces: {total}",
-                "",
-            ]
+            total_links = len(rows)
+            link_decayed = 0
+            link_dead = 0
 
             for link_id, src, tgt, rel, weight, last_acc, reinf in rows:
                 effective = _compute_effective_weight(weight, last_acc)
-
                 if effective < weight * 0.99:
                     if not dry_run:
                         cur.execute(
                             "UPDATE memory_links SET weight = %s WHERE id = %s",
                             (effective, link_id),
                         )
-                    decayed += 1
+                    link_decayed += 1
                     if effective < 0.01:
                         if not dry_run:
                             cur.execute(
                                 "DELETE FROM memory_links WHERE id = %s",
                                 (link_id,),
                             )
-                        dead += 1
+                        link_dead += 1
+
+            # === PART 2: Memory-level decay (olvido activo) ===
+
+            cur.execute("""
+                SELECT id, contenido, metadatos::text,
+                       COALESCE(
+                           (SELECT max(accessed_at) FROM memory_access
+                            WHERE memory_id = 'v' || mv.id),
+                           mv.metadatos->>'date'
+                       ) as last_access
+                FROM memoria_vectorial mv
+                WHERE (metadatos->>'nivel') = 'episodica'
+                  AND (metadatos->>'critico') IS DISTINCT FROM 'true'
+                  AND mv.id NOT IN (
+                      SELECT DISTINCT CAST(
+                          regexp_replace(source_id, '[^0-9]', '', 'g') AS bigint
+                      )
+                      FROM memory_links
+                      WHERE source_id ~ '^v?[0-9]+$'
+                      UNION
+                      SELECT DISTINCT CAST(
+                          regexp_replace(target_id, '[^0-9]', '', 'g') AS bigint
+                      )
+                      FROM memory_links
+                      WHERE target_id ~ '^v?[0-9]+$'
+                  )
+                ORDER BY last_access ASC NULLS FIRST
+            """)
+            memory_rows = cur.fetchall()
+
+            mem_candidates = 0
+            mem_archived = 0
+            mem_skipped_protected = 0
+
+            for mv_id, contenido, meta_text, last_acc in memory_rows:
+                meta = json.loads(meta_text) if meta_text else {}
+                nivel = meta.get("nivel", "episodica")
+
+                if nivel in ("automatica", "semantica"):
+                    mem_skipped_protected += 1
+                    continue
+
+                if meta.get("critico"):
+                    mem_skipped_protected += 1
+                    continue
+
+                mem_candidates += 1
+
+                if not dry_run and contenido:
+                    cur.execute(
+                        """INSERT INTO memoria_historica (contenido, tags, embedding)
+                           VALUES (%s, %s, %s)""",
+                        (
+                            contenido,
+                            json.dumps({"archived_from": "memoria_vectorial", "original_id": mv_id, **meta}),
+                            "",
+                        ),
+                    )
+                    cur.execute("DELETE FROM memoria_vectorial WHERE id = %s", (mv_id,))
+                    mem_archived += 1
 
             if not dry_run:
                 conn.commit()
 
-            lines.append(f"   Enlaces con decaimiento: {decayed}")
-            lines.append(f"   Enlaces muertos (peso < 0.01): {dead}")
-            lines.append("")
+            lines = [
+                "🧠 DECAIMIENTO HIPÓCAMPO — Enlaces + Memorias",
+                "",
+                "   === ENLACES ===",
+                f"   Total enlaces: {total_links}",
+                f"   Con decaimiento: {link_decayed}",
+                f"   Muertos (peso < 0.01): {link_dead}",
+                "",
+                f"   === MEMORIAS (cutoff: {min_age_days}d) ===",
+                f"   Candidatas (episódica sin protección): {mem_candidates}",
+                f"   Protegidas (auto/sem/critico/enlazadas): {mem_skipped_protected}",
+                f"   Archivadas a memoria_historica: {mem_archived}",
+            ]
 
             if dry_run:
+                lines.append("")
                 lines.append("🔍 Modo dry_run — no se modificaron datos.")
                 lines.append("   Usa dry_run=False para aplicar los cambios.")
             else:
+                lines.append("")
                 lines.append("✅ Decaimiento aplicado.")
 
             return "\n".join(lines)
@@ -2369,6 +2626,322 @@ async def decay_hipocampo(dry_run: bool = True) -> str:
         return await asyncio.to_thread(_do)
     except Exception as e:
         return _tool_err("decay_hipocampo", e)
+
+
+# ─── MEMORY BUDGET & TIERING — Tools ──────────────────────────────────────
+
+
+HOT_CAP = 5000
+WARN_RATIO = 0.9
+COLD_AGE_DAYS = 90
+
+
+@mcp.tool()
+async def hipocampo_budget(dry_run: bool = True) -> str:
+    """
+    Gestiona el presupuesto de memoria (budget + tiering automático).
+
+    3 tiers:
+      - HOT: embedding presente (memoria_vectorial con pgvector)
+      - WARM: embedding=NULL (excluido de HNSW, sigue buscable léxicamente)
+      - COLD: contenido movido a memoria_historica (fuera de búsqueda principal)
+
+    Protecciones: automatica/semantica/critico/enlazadas → exemptas.
+
+    Args:
+        dry_run: True (default) = solo análisis. False = ejecuta tiering.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT count(*) FROM memoria_vectorial WHERE embedding IS NOT NULL")
+            hot_count = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM memoria_vectorial WHERE embedding IS NULL AND code_snippet IS NULL")
+            warm_count = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM memoria_historica")
+            cold_count = cur.fetchone()[0]
+
+            cap_warn = int(HOT_CAP * WARN_RATIO)
+            over = hot_count - HOT_CAP
+
+            lines = [
+                "📊 MEMORY BUDGET — Estado actual",
+                f"   HOT  (con embedding):  {hot_count:>5} / {HOT_CAP} {'⚠️ WARN' if hot_count >= cap_warn else '✅'}",
+                f"   WARM (sin embedding):  {warm_count:>5}",
+                f"   COLD (historica):      {cold_count:>5}",
+                "",
+            ]
+
+            if over <= 0:
+                lines.append(f"   ✅ Hot tier dentro del presupuesto ({hot_count}/{HOT_CAP})")
+                if not dry_run:
+                    return "\n".join(lines)
+                return "\n".join(lines)
+
+            lines.append(f"   ⚠️ Hot tier excedido por {over} memorias")
+            lines.append("")
+
+            cur.execute(
+                """
+                SELECT mv.id, mv.contenido, mv.metadatos::text,
+                       COALESCE(
+                           (SELECT max(accessed_at) FROM memory_access
+                            WHERE memory_id = 'v' || mv.id),
+                           mv.metadatos->>'date'
+                       ) as last_access
+                FROM memoria_vectorial mv
+                WHERE mv.embedding IS NOT NULL
+                  AND (metadatos->>'nivel') = 'episodica'
+                  AND (metadatos->>'critico') IS DISTINCT FROM 'true'
+                  AND mv.id NOT IN (
+                      SELECT DISTINCT CAST(
+                          regexp_replace(source_id, '[^0-9]', '', 'g') AS bigint
+                      )
+                      FROM memory_links
+                      WHERE source_id ~ '^v?[0-9]+$'
+                      UNION
+                      SELECT DISTINCT CAST(
+                          regexp_replace(target_id, '[^0-9]', '', 'g') AS bigint
+                      )
+                      FROM memory_links
+                      WHERE target_id ~ '^v?[0-9]+$'
+                  )
+                ORDER BY last_access ASC NULLS FIRST
+                LIMIT %s
+            """,
+                (over + 50,),
+            )  # extra margin for cold tier
+            candidates = cur.fetchall()
+
+            if not candidates:
+                lines.append("   ℹ️ No hay candidatas para degradar (todas protegidas)")
+                return "\n".join(lines)
+
+            warm_tier = []
+            cold_tier = []
+            for mv_id, contenido, meta_text, last_acc in candidates:
+                meta = json.loads(meta_text) if meta_text else {}
+                nivel = meta.get("nivel", "episodica")
+                if nivel in ("automatica", "semantica") or meta.get("critico"):
+                    continue
+
+                if last_acc:
+                    age_days = (datetime.now() - (last_acc if isinstance(last_acc, datetime) else datetime.now())).days
+                else:
+                    age_days = 365
+
+                if age_days > COLD_AGE_DAYS:
+                    cold_tier.append((mv_id, contenido, meta, meta_text))
+                else:
+                    warm_tier.append((mv_id, meta))
+
+            lines.append(f"   Candidatas a WARM (sin acceso reciente): {len(warm_tier)}")
+            lines.append(f"   Candidatas a COLD (> {COLD_AGE_DAYS}d sin acceso): {len(cold_tier)}")
+            lines.append("")
+
+            if not dry_run:
+                for mv_id, meta in warm_tier:
+                    cur.execute(
+                        "UPDATE memoria_vectorial SET embedding = NULL WHERE id = %s",
+                        (mv_id,),
+                    )
+
+                for mv_id, contenido, meta, meta_text in cold_tier:
+                    cur.execute(
+                        """INSERT INTO memoria_historica (contenido, tags, embedding)
+                           VALUES (%s, %s, %s)""",
+                        (
+                            contenido,
+                            json.dumps({"archived_from": "memoria_vectorial", "original_id": mv_id, **meta}),
+                            "",
+                        ),
+                    )
+                    cur.execute("DELETE FROM memoria_vectorial WHERE id = %s", (mv_id,))
+
+                conn.commit()
+                lines.append(f"   ✅ WARM: {len(warm_tier)} memorias (embedding=NULL)")
+                lines.append(f"   ✅ COLD: {len(cold_tier)} memorias → memoria_historica")
+            else:
+                lines.append("🔍 Modo dry_run — no se modificaron datos.")
+                lines.append("   Usa dry_run=False para ejecutar el tiering.")
+
+            return "\n".join(lines)
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("hipocampo_budget", e)
+
+
+@mcp.tool()
+async def restaurar_historica(historica_id: int) -> str:
+    """
+    Restaura una memoria desde memoria_historica a memoria_vectorial.
+
+    Reconstruye embedding automáticamente. La memoria vuelve al tier HOT.
+
+    Args:
+        historica_id: ID de la memoria en memoria_historica.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT id, contenido, tags FROM memoria_historica WHERE id = %s",
+                (historica_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return f"❌ No se encontró memoria historica con id={historica_id}"
+
+            _, contenido, tags_raw = row
+            tags = json.loads(tags_raw) if tags_raw else {}
+            meta = {k: v for k, v in tags.items() if k != "archived_from" and k != "original_id"}
+            meta["nivel"] = meta.get("nivel", "episodica")
+            meta["restored_from"] = "memoria_historica"
+            meta["restored_at"] = str(date.today())
+
+            embedding = _generar_embedding(contenido, "restaurar_historica")
+
+            cur.execute(
+                """INSERT INTO memoria_vectorial (contenido, metadatos, embedding)
+                   VALUES (%s, %s, %s::vector(1024)) RETURNING id""",
+                (contenido, json.dumps(meta), embedding),
+            )
+            new_id = cur.fetchone()[0]
+            cur.execute("DELETE FROM memoria_historica WHERE id = %s", (historica_id,))
+            conn.commit()
+
+            return f"✅ Memoria restaurada: historica #{historica_id} → memoria_vectorial #{new_id}"
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("restaurar_historica", e)
+
+
+# ─── FILE WATCHER — Tools ─────────────────────────────────────────────────
+
+
+WATCH_CONFIG_PATH = os.path.expanduser("~/.hipocampo/watch_config.json")
+
+
+@mcp.tool()
+async def list_watch_dirs() -> str:
+    """Lista los directorios configurados para auto-reindexación."""
+    try:
+        if os.path.exists(WATCH_CONFIG_PATH):
+            with open(WATCH_CONFIG_PATH) as f:
+                config = json.load(f)
+            paths = config.get("paths", [])
+        else:
+            paths = []
+
+        if not paths:
+            return "📂 No hay directorios configurados para watch.\nUsa add_watch_dir(path) para agregar."
+
+        lines = [f"📂 Directorios watch ({len(paths)}):"]
+        for i, p in enumerate(paths, 1):
+            exists = "✅" if os.path.isdir(os.path.expanduser(p)) else "❌ no encontrado"
+            lines.append(f"   {i}. {p} {exists}")
+        return "\n".join(lines)
+    except Exception as e:
+        return _tool_err("list_watch_dirs", e)
+
+
+@mcp.tool()
+async def add_watch_dir(path: str) -> str:
+    """Agrega un directorio al watch list para auto-reindexación."""
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.isdir(path):
+            return f"❌ Directorio no encontrado: {path}"
+
+        config = {"paths": [], "interval_minutes": 10}
+        if os.path.exists(WATCH_CONFIG_PATH):
+            with open(WATCH_CONFIG_PATH) as f:
+                config = json.load(f)
+
+        if path in config["paths"]:
+            return f"ℹ️ {path} ya está en el watch list."
+
+        config["paths"].append(path)
+        os.makedirs(os.path.dirname(WATCH_CONFIG_PATH), exist_ok=True)
+        with open(WATCH_CONFIG_PATH, "w") as f:
+            json.dump(config, f, indent=2)
+
+        return f"✅ Agregado: {path}\nTotal: {len(config['paths'])} directorios"
+    except Exception as e:
+        return _tool_err("add_watch_dir", e)
+
+
+@mcp.tool()
+async def remove_watch_dir(path: str) -> str:
+    """Elimina un directorio del watch list."""
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.exists(WATCH_CONFIG_PATH):
+            return "ℹ️ No hay watch_config.json."
+
+        with open(WATCH_CONFIG_PATH) as f:
+            config = json.load(f)
+
+        if path not in config["paths"]:
+            return f"ℹ️ {path} no está en el watch list."
+
+        config["paths"].remove(path)
+        with open(WATCH_CONFIG_PATH, "w") as f:
+            json.dump(config, f, indent=2)
+
+        return f"✅ Eliminado: {path}\nTotal: {len(config['paths'])} directorios"
+    except Exception as e:
+        return _tool_err("remove_watch_dir", e)
+
+
+@mcp.tool()
+async def reindex_now(path: str = "") -> str:
+    """Fuerza reindexación inmediata de un directorio (o todos los watch)."""
+    try:
+        import hipocampo_index_project as indexer
+
+        if path:
+            path = os.path.expanduser(path)
+            if not os.path.isdir(path):
+                return f"❌ Directorio no encontrado: {path}"
+            stats = indexer.index_project(path)
+            return f"✅ Reindexado: {path}\n{json.dumps(stats, indent=2)}"
+
+        if not os.path.exists(WATCH_CONFIG_PATH):
+            return "ℹ️ No hay watch_config.json. Usa add_watch_dir primero."
+
+        with open(WATCH_CONFIG_PATH) as f:
+            config = json.load(f)
+
+        results = []
+        for p in config.get("paths", []):
+            p = os.path.expanduser(p)
+            if os.path.isdir(p):
+                try:
+                    stats = indexer.index_project(p)
+                    results.append(f"  ✅ {p}: {stats}")
+                except Exception as e:
+                    results.append(f"  ❌ {p}: {e}")
+            else:
+                results.append(f"  ⚠️ {p}: no encontrado")
+
+        return "🔄 Reindexación completa:\n" + "\n".join(results)
+    except Exception as e:
+        return _tool_err("reindex_now", e)
 
 
 if __name__ == "__main__":
@@ -2398,6 +2971,7 @@ if __name__ == "__main__":
             logger.warning("⚠️  Config: %s", err)
     _init_watches_table()
     _init_memory_links_table()
+    _init_memory_access_table()
     init_pool()
     _auto_checkpoint()
 
