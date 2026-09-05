@@ -28,6 +28,7 @@ import sys
 import os
 import time
 import json
+import threading
 from datetime import date, datetime
 
 import uuid
@@ -547,12 +548,16 @@ def _check_dedup(content: str, threshold: float = 0.9) -> str | None:
         return None
 
 
-def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5) -> list[dict]:
+def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5, max_probes: int | None = None) -> list[dict]:
     """Detect contradictions using negation-probe embeddings.
 
-    For each candidate (cosine sim 0.5-0.95 with new content):
+    For each candidate (cosine sim 0.35-0.70 with new content):
     - Embed a negation probe: "AFIRMACIÓN: {candidate} — ¿Esto es FALSO según: {new}?"
     - If sim(neg_probe, candidate) > sim(new, candidate) + margin → contradiction
+
+    max_probes: límite de candidatos a sondear (cada uno cuesta 2 embeddings).
+    None = sondear todos los candidatos (top_k). Para auditorías en background
+    usar un valor bajo (ej: 2) para acotar latencia/costo.
     """
     CONTRADICTION_MARGIN = 0.05
     SIM_MIN = 0.35  # cosine distance < 0.65 = similar enough
@@ -577,6 +582,9 @@ def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5) -> li
 
         if not candidates:
             return []
+
+        if max_probes is not None:
+            candidates = candidates[:max_probes]
 
         contradictions = []
         for cand_id, cand_content, cand_dist in candidates:
@@ -613,6 +621,47 @@ def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5) -> li
     except Exception as e:
         logger.warning("Contradiction detection failed: %s", e)
         return []
+
+
+def _audit_contradicciones_bg(row_id, content, embedding) -> None:
+    """Auditoría de contradicciones post-save (best-effort, en background).
+
+    Corre DESPUÉS del INSERT para no bloquear el save. Acotada a max_probes=2
+    candidatos (máx 4 embeddings). Si un embedding falla o es lento, se omite
+    el candidato y se continúa. Nunca lanza excepciones.
+
+    Al detectar contradicciones: loguea warning y crea enlaces 'contradicts'
+    en el grafo — sin bloquear ni afectar la respuesta del save.
+    """
+    try:
+        contradictions = _detectar_contradicciones(content, embedding, max_probes=2)
+    except Exception:
+        logger.warning("Auditoría de contradicciones (bg) falló para id=%s", row_id)
+        return
+    if not contradictions:
+        return
+    for c in contradictions:
+        logger.warning(
+            "⚠️ Contradicción con #%s (conf=%.3f) detectada en save id=%s: %s...",
+            c["id"],
+            c["confidence"],
+            row_id,
+            c["contenido"][:80],
+        )
+        try:
+            conn = _conn()
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
+                   VALUES (%s, %s, 'contradicts', %s)
+                   ON CONFLICT (source_id, target_id, relation_type) DO NOTHING""",
+                (f"v{row_id}", f"v{c['id']}", c["confidence"]),
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception:
+            logger.warning("No se pudo crear enlace 'contradicts' para save id=%s", row_id)
 
 
 def _generar_embedding(texto: str, tool_name: str = "unknown") -> list[float]:
@@ -753,15 +802,6 @@ async def save_hipocampo(
 
         embedding = _generar_embedding(content, "save_hipocampo")
 
-        contradiction_warnings = []
-        if not force and embedding:
-            contradictions = _detectar_contradicciones(content, embedding)
-            if contradictions:
-                for c in contradictions:
-                    contradiction_warnings.append(
-                        f"⚠️ Contradicción con #{c['id']} (conf={c['confidence']:.3f}): {c['contenido'][:80]}..."
-                    )
-
         metadatos = {
             "type": memory_type,
             "code": code or "",
@@ -791,6 +831,14 @@ async def save_hipocampo(
 
         _fire_webhooks("save", row_id, content, metadatos)
         _auto_summarize_session(session_id)
+
+        if embedding:
+            threading.Thread(
+                target=_audit_contradicciones_bg,
+                args=(row_id, content, embedding),
+                daemon=True,
+                name=f"contradicciones-bg-{row_id}",
+            ).start()
 
         links_created = 0
         if auto_link:
@@ -835,23 +883,8 @@ async def save_hipocampo(
         msg = f"✅ Guardado en Hipocampo (id={row_id})"
         if links_created:
             msg += f" 🔗 {links_created} auto-enlace(s) creado(s)"
-        if contradiction_warnings:
-            msg += "\n" + "\n".join(contradiction_warnings)
-            for c in contradictions:
-                try:
-                    link_conn = _conn()
-                    link_cur = link_conn.cursor()
-                    link_cur.execute(
-                        """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
-                           VALUES (%s, %s, 'contradicts', %s)
-                           ON CONFLICT (source_id, target_id, relation_type) DO NOTHING""",
-                        (f"v{row_id}", f"v{c['id']}", c["confidence"]),
-                    )
-                    link_conn.commit()
-                    link_cur.close()
-                    link_conn.close()
-                except Exception:
-                    pass
+        if embedding:
+            msg += "\n🔍 Auditoría de contradicciones enviada a background (no bloquea)."
         return msg
 
     try:

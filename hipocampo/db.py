@@ -156,7 +156,7 @@ def _get_client(api_key=None):
         _client_cache[api_key] = OpenAI(
             base_url=EMBED_BASE_URL,
             api_key=api_key,
-            timeout=30.0,
+            timeout=90.0,
         )
     return _client_cache[api_key]
 
