@@ -3,5 +3,6 @@ __pycache__/
 *.py[cod]
 *.log
 venv/
-*.egg-info/
+*.egg-info
 dist/
+scripts/hipocampo_hybrid_config.json

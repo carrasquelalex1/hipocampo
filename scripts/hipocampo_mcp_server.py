@@ -500,7 +500,7 @@ def hipocampo_info() -> str:
     return (
         "🧠 Hipocampo Protocol v4.0\n"
         "Sistema de memoria dual con SSC (Sparse-Semantic Clusters)\n"
-        "· Búsqueda vectorial 1024d (nvidia/nv-embedqa-e5-v5)\n"
+        "· Búsqueda vectorial 1024d (Ollama qwen3-embedding:0.6b local por defecto)\n"
         "· Búsqueda léxica expansiva (pg_trgm + GIN)\n"
         "· Re-ranking híbrido BIRE con auto-tagging\n"
         "· Compresión híbrida de prompts (extractiva + LLM)\n"

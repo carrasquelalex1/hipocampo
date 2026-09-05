@@ -27,7 +27,7 @@ hipocampo_db (PostgreSQL 17 + pgvector + pg_trgm + memory_links)
 └── 📎 watches — webhooks para eventos de memoria
 ```
 
-Embeddings: **1024d** (`nvidia/nv-embedqa-e5-v5`) via NVIDIA NIM.
+Embeddings: **1024d** (Ollama `qwen3-embedding:0.6b` local por defecto; NVIDIA NIM como fallback).
 
 ---
 
@@ -328,8 +328,8 @@ journalctl --user -u hipocampo-mcp.service -n 50
 3. **SSC preferido sobre ILIKE** para búsquedas. No usar psql ILIKE directo.
 4. **memory_items** es solo lectura vía MCP (no inserts directos).
 5. **PostgreSQL** usa socket Unix (`/var/run/postgresql`), usuario `alex`, sin contraseña.
-6. **Embeddings**: 1024d vía NVIDIA NIM.
-7. **API Keys**: `NVIDIA_API_KEY` en `.env` del repo.
+6. **Embeddings**: 1024d vía Ollama local (por defecto) o NVIDIA NIM.
+7. **API Keys**: `NVIDIA_API_KEY` solo si se usa NIM; con Ollama local no hace falta.
 8. **Dedup automático**: al guardar, si existe recuerdo con similitud >0.9 se bloquea (excepto con `force=True`).
 9. **Auto-checkpoint**: se ejecuta al iniciar el servidor MCP.
 10. **HNSW index**: si falta en health check, se auto-crea.
@@ -425,7 +425,7 @@ hipocampo_db (PostgreSQL 17 + pgvector + pg_trgm + memory_links)
 └── 📎 watches — webhooks for memory events
 ```
 
-Embeddings: **1024d** (`nvidia/nv-embedqa-e5-v5`) via NVIDIA NIM.
+Embeddings: **1024d** (Ollama `qwen3-embedding:0.6b` local por defecto; NVIDIA NIM como fallback).
 
 ---
 
@@ -726,8 +726,8 @@ journalctl --user -u hipocampo-mcp.service -n 50
 3. **SSC preferred over ILIKE** for searches. Do not use raw psql ILIKE.
 4. **memory_items** is read-only via MCP (no direct inserts).
 5. **PostgreSQL** uses Unix socket (`/var/run/postgresql`), user `alex`, no password.
-6. **Embeddings**: 1024d via NVIDIA NIM.
-7. **API Keys**: `NVIDIA_API_KEY` in the repo's `.env`.
+6. **Embeddings**: 1024d via Ollama local (default) or NVIDIA NIM.
+7. **API Keys**: `NVIDIA_API_KEY` only if using NIM; not needed with local Ollama.
 8. **Auto-dedup**: when saving, if a memory with similarity >0.9 exists, it's blocked (except with `force=True`).
 9. **Auto-checkpoint**: runs when the MCP server starts.
 10. **HNSW index**: if missing in health check, auto-created.
