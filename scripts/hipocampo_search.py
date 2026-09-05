@@ -896,6 +896,85 @@ def _record_access_batch(cur, results, query):
         pass
 
 
+def _es_query_trigger_pura(query):
+    """Detecta queries de solo-triggers (ej: 'trigger:sgv trigger:php trigger:csv').
+
+    Son matching exacto por categories en metadatos — el embedding agrega
+    poco (y en Ollama CPU cuesta 7-45s). Usadas por el protocolo del agente
+    en cada pre-edit: el early-exit aquí elimina ~10s por acción.
+    """
+    tokens = query.split()
+    return bool(tokens) and all(t.lower().startswith("trigger:") for t in tokens)
+
+
+def _buscar_por_categories(cur, triggers):
+    """Matching directo por metadatos->categories en ambas tablas (sin embedding)."""
+    triggers_clean = [t.lower() for t in triggers]
+    results = []
+
+    cur.execute(
+        """
+        SELECT id, contenido, metadatos::text, code_snippet,
+               (SELECT count(*) FROM jsonb_array_elements_text(metadatos->'categories') c
+                WHERE lower(c) = ANY(%s::text[])) AS n_matches
+        FROM memoria_vectorial
+        WHERE metadatos->'categories' ?| %s::text[]
+           OR contenido ILIKE ANY(%s::text[])
+        ORDER BY n_matches DESC,
+                 (metadatos->>'nivel') = 'automatica' DESC NULLS LAST,
+                 (metadatos->>'date') DESC NULLS LAST
+        LIMIT 60
+        """,
+        (triggers_clean, triggers_clean, [f"%{t}%" for t in triggers_clean]),
+    )
+    for row in cur.fetchall():
+        meta = json.loads(row[2])
+        cats = [c.lower() for c in (meta.get("categories") or [])]
+        n_match = sum(1 for t in triggers_clean if t in cats)
+        score = 100.0 if n_match == len(triggers_clean) else 60.0 * n_match / len(triggers_clean)
+        results.append(
+            {
+                "id": f"t{row[0]}",
+                "contenido": row[1],
+                "metadatos": meta,
+                "code_snippet": row[3],
+                "score": round(score, 1),
+                "score_raw": score / 100,
+                "source": "memoria_vectorial",
+                "method": "trigger_match",
+                "tabla": "memoria_vectorial",
+            }
+        )
+
+    cur.execute(
+        """
+        SELECT mi.id::text, mi.summary, mi.memory_type, mi.extra::text
+        FROM memory_items mi
+        WHERE mi.extra->'categories' ?| %s::text[]
+        LIMIT 20
+        """,
+        (triggers_clean,),
+    )
+    for row in cur.fetchall():
+        extra = json.loads(row[3]) if row[3] else {}
+        cats = [c.lower() for c in (extra.get("categories") or [])]
+        n_match = sum(1 for t in triggers_clean if t in cats)
+        score = 100.0 if n_match == len(triggers_clean) else 60.0 * n_match / len(triggers_clean)
+        results.append(
+            {
+                "id": f"mt{row[0]}",
+                "contenido": row[1],
+                "metadatos": {"memory_type": row[2], **extra},
+                "score": round(score, 1),
+                "score_raw": score / 100,
+                "source": "memory_items",
+                "method": "trigger_match",
+                "tabla": "memory_items",
+            }
+        )
+    return results
+
+
 def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
     conn = get_conn()
     cur = conn.cursor()
@@ -903,33 +982,40 @@ def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
     terms = expandir_consulta(query)
     patterns = generar_patrones_ILIKE(terms)
 
-    vectorial_mv = buscar_vectorial(cur, query)
-    vectorial_mi = buscar_vectorial_memory_items(cur, query)
-    lexico_mv = buscar_lexico_memoria_vectorial(cur, patterns, terms, query_original=query)
-    lexico_mi = buscar_lexico_memory_items(cur, patterns, terms, query_original=query)
-
-    fusionados = fusionar_resultados(vectorial_mv, lexico_mv + vectorial_mi, lexico_mi)
+    es_trigger = _es_query_trigger_pura(query)
+    if es_trigger:
+        # Early-exit: matching exacto por categories, sin embedding Ollama.
+        # El ranking por nivel+match ya es determinista; la expansión por
+        # tags solo añadiría ruido y aplanaría los scores.
+        fusionados = _buscar_por_categories(cur, query.split())
+    else:
+        vectorial_mv = buscar_vectorial(cur, query)
+        vectorial_mi = buscar_vectorial_memory_items(cur, query)
+        lexico_mv = buscar_lexico_memoria_vectorial(cur, patterns, terms, query_original=query)
+        lexico_mi = buscar_lexico_memory_items(cur, patterns, terms, query_original=query)
+        fusionados = fusionar_resultados(vectorial_mv, lexico_mv + vectorial_mi, lexico_mi)
 
     # Fatigue boost: recent access frequency
     fusionados = _aplicar_fatiga(fusionados, cur)
 
-    # Expansión por tags: combina tags de resultados + tags que coinciden con la consulta
-    contenidos_existentes = {r["contenido"][:120].lower() for r in fusionados}
-    tags_encontrados = extraer_tags_de_resultados(fusionados)
+    if not es_trigger:
+        # Expansión por tags: combina tags de resultados + tags que coinciden con la consulta
+        contenidos_existentes = {r["contenido"][:120].lower() for r in fusionados}
+        tags_encontrados = extraer_tags_de_resultados(fusionados)
 
-    # También buscar tags que coincidan directamente con los términos expandidos
-    todos_tags_db = obtener_todos_los_tags(cur)
-    tags_por_query = tags_coinciden_con_terminos(todos_tags_db, terms)
-    tags_encontrados.update(tags_por_query)
+        # También buscar tags que coincidan directamente con los términos expandidos
+        todos_tags_db = obtener_todos_los_tags(cur)
+        tags_por_query = tags_coinciden_con_terminos(todos_tags_db, terms)
+        tags_encontrados.update(tags_por_query)
 
-    if tags_encontrados:
-        por_tags = expandir_por_tags(cur, tags_encontrados, contenidos_existentes)
-        fusionados = fusionar_resultados(fusionados, por_tags, [])
+        if tags_encontrados:
+            por_tags = expandir_por_tags(cur, tags_encontrados, contenidos_existentes)
+            fusionados = fusionar_resultados(fusionados, por_tags, [])
 
-    diversity_config = load_diversity_config()
-    if diversity_config.get("enabled", True):
-        diversity_lambda = diversity_config.get("lambda", 0.7)
-        fusionados = aplicar_diversidad_mmr(fusionados, diversity_lambda)
+        diversity_config = load_diversity_config()
+        if diversity_config.get("enabled", True):
+            diversity_lambda = diversity_config.get("lambda", 0.7)
+            fusionados = aplicar_diversidad_mmr(fusionados, diversity_lambda)
 
     if rerank:
         fusionados = re_rank_results(fusionados, query, top_n=RE_RANK_TOP_N)

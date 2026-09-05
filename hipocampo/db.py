@@ -153,10 +153,16 @@ def _get_client(api_key=None):
     if api_key is None:
         api_key = os.getenv("NVIDIA_API_KEY") or "ollama"
     if api_key not in _client_cache:
+        # Timeout configurable: en Ollama CPU lento (i3, ~7-45s/embedding) conviene
+        # fallar temprano y degradar a búsqueda léxica (GIN) en vez de colgar la
+        # búsqueda completa. Default 90s para NIM; 25s para Ollama local.
+        base_local = EMBED_BASE_URL
+        is_local = "127.0.0.1" in base_local or "localhost" in base_local
+        timeout_s = float(os.getenv("EMBED_TIMEOUT_S", "25" if is_local else "90"))
         _client_cache[api_key] = OpenAI(
             base_url=EMBED_BASE_URL,
             api_key=api_key,
-            timeout=90.0,
+            timeout=timeout_s,
         )
     return _client_cache[api_key]
 
