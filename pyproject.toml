@@ -1,0 +1,8 @@
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+ignore = ["E402"]  # sys.path insert before imports is deliberate in this project
+
+[tool.ruff.format]
+line-ending = "auto"

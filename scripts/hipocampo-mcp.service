@@ -1,0 +1,13 @@
+[Unit]
+Description=Hipocampo MCP Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/alex/.gemini/mcp_venv/bin/python3 /home/alex/.hipocampo/scripts/hipocampo_mcp_server.py --http 8001
+WorkingDirectory=/home/alex
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

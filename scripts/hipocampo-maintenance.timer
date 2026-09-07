@@ -1,0 +1,14 @@
+[Unit]
+Description=Timer Semanal para Mantenimiento de Hipocampo (domingo 03:00)
+
+[Timer]
+# Todos los domingos a las 03:00 AM
+OnCalendar=Sun *-*-* 03:00:00
+# CLAVE: si la PC estaba apagada a la hora programada, systemd ejecuta la
+# tarea apenas enciende (catch-up), en lugar de perderse la semana entera.
+Persistent=true
+# Retardo aleatorio de hasta 3 min para no competir con el arranque
+RandomizedDelaySec=180
+
+[Install]
+WantedBy=timers.target

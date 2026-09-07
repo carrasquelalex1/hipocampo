@@ -1,0 +1,24 @@
+FROM pgvector/pgvector:pg17
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+COPY . .
+
+ENV DB_HOST=localhost
+ENV DB_USER=hipocampo
+ENV DB_NAME=hipocampo_db
+ENV DB_PASSWORD=hipocampo_pass
+ENV PGDATA=/var/lib/postgresql/data
+ENV PG_MAJOR=17
+
+EXPOSE 8001
+
+ENTRYPOINT ["bash", "docker-entrypoint.sh"]
+CMD ["python3", "scripts/hipocampo_mcp_server.py", "--http", "8001"]
