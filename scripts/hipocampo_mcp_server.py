@@ -3100,7 +3100,8 @@ def _build_http_app():
     from contextlib import asynccontextmanager
 
     from starlette.applications import Starlette
-    from starlette.responses import FileResponse
+    from starlette.requests import Request
+    from starlette.responses import FileResponse, JSONResponse
     from starlette.routing import Mount, Route
 
     playground_path = Path(__file__).resolve().parent.parent / "playground.html"
@@ -3108,17 +3109,40 @@ def _build_http_app():
     async def serve_playground(request):
         if playground_path.is_file():
             return FileResponse(playground_path, media_type="text/html")
-        from starlette.responses import JSONResponse
-
         return JSONResponse(
-            {
-                "service": "hipocampo-mcp",
-                "status": "ok",
-                "mcp_endpoint": "/mcp",
-                "detail": "playground.html no encontrado",
-            },
+            {"service": "hipocampo-mcp", "status": "ok", "mcp_endpoint": "/mcp"},
             status_code=200,
         )
+
+    async def handle_save(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "JSON inválido"}, status_code=400)
+        content = body.get("content", "").strip()
+        if not content:
+            return JSONResponse({"ok": False, "error": "Escribe contenido"}, status_code=400)
+        import re
+
+        msg = await save_hipocampo(
+            content=content,
+            memory_type=body.get("type", "event"),
+            code=body.get("code", ""),
+        )
+        m = re.search(r"id=(\d+)", msg)
+        rid = int(m.group(1)) if m else None
+        return JSONResponse({"ok": True, "id": rid, "message": msg})
+
+    async def handle_search(request: Request):
+        q = request.query_params.get("q", "").strip()
+        if not q:
+            return JSONResponse({"ok": False, "error": "Escribe una consulta"}, status_code=400)
+        result = await search_hipocampo(q)
+        return JSONResponse({"ok": True, "results": result})
+
+    async def handle_health(request: Request):
+        result = await hipocampo_health()
+        return JSONResponse({"ok": True, "output": result})
 
     from mcp.server.transport_security import TransportSecuritySettings
 
@@ -3137,7 +3161,11 @@ def _build_http_app():
 
     return Starlette(
         routes=[
+            Route("/api/save", handle_save, methods=["POST"]),
+            Route("/api/search", handle_search, methods=["GET"]),
+            Route("/api/health", handle_health, methods=["GET"]),
             Route("/", serve_playground, methods=["GET"]),
+            Route("/playground", serve_playground, methods=["GET"]),
             Mount("/", app=mcp_app),
         ],
         lifespan=_lifespan,
