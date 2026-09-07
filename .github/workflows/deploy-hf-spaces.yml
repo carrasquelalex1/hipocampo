@@ -13,5 +13,4 @@ jobs:
           fetch-depth: 0
       - name: Push to HF Spaces
         run: |
-          git remote add hf-spaces https://alexbell1:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/alexbell1/hipocampo-mcp
-          git push hf-spaces main --force
+          git push https://alexbell1:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/alexbell1/hipocampo-mcp main --force
