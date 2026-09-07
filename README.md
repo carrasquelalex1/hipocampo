@@ -54,6 +54,49 @@ URL: https://alexbell1-hipocampo-mcp.hf.space/mcp
 
 **Embedding model:** `sentence-transformers/all-MiniLM-L6-v2` (384 dims) via **Hugging Face Inference API** (free, no credit card required).
 
+## ⚡ Instalación Zero-Touch — Auto-Installer v6.0
+
+> **Una sola línea.** La terminal hace todo: PostgreSQL + pgvector, embeddings, base de datos, venv, clientes MCP, servicio systemd con timer de mantenimiento automático.
+
+### 🚀 Instalar en 10 segundos
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/carrasquelalex1/hipocampo/main/install.sh | bash
+```
+
+Máquinas sin interacción (VPS, contenedores):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/carrasquelalex1/hipocampo/main/install.sh | bash -s -- --unattended
+```
+
+### 🔄 Las 8 fases automáticas
+
+| Fase | Qué instala | 🕐 |
+|:----:|-------------|:--:|
+| ① | Diagnóstico: OS, gestor de paquetes, RAM, disco | ~2s |
+| ② | PostgreSQL 17 + pgvector (apt · dnf · pacman · brew) | ~15s |
+| ③ | Base de datos + esquema: 10 tablas, HNSW + GIN, ownership | ~3s |
+| ④ | Embeddings: Ollama local (`qwen3-embedding:0.6b`) o API externa | ~60s |
+| ⑤ | Python `.venv` + pip + archivo `.env` | ~10s |
+| ⑥ | **Clientes MCP**: OpenCode · Claude · Gemini/Antigravity · Cursor · VS Code · Windsurf | ~2s |
+| ⑦ | Servicio `systemd` + **timer semanal** de mantenimiento automático | ~1s |
+| ⑧ | Autodiagnóstico: health · save · search · cleanup | ~3s |
+
+### 🛡️ Características del instalador
+
+| | |
+|:---|:---|
+| ✅ **Idempotente** | Vuelve a ejecutarlo sin miedo — repara ownership, actualiza repo y configs |
+| ✅ **6 clientes MCP** | OpenCode, Claude, Gemini/Antigravity, Cursor, VS Code, Windsurf |
+| ✅ **Mantenimiento automático** | Timer semanal (domingo 03:00) con `Persistent=true` — catch-up si la PC estaba apagada |
+| ✅ **Sin root** | Todo en `~/.local/share/hipocampo` |
+| ✅ **Opciones** | `--unattended`, `--embed-api`, `--install-dir`, `--db-user`, `--no-clients`, `--no-timer`, `--no-ollama` |
+| ✅ **Desinstalación limpia** | `bash uninstall.sh` — para servicios, BD opcional, clientes, archivos |
+| ✅ **Compilación desde fuente** | Fallback si el paquete pgvector no está en el repositorio |
+
+---
+
 ---
 
 **Hipocampo** is an advanced dual-memory persistence architecture designed for autonomous AI agents. By maintaining both technical knowledge and user profiling data across sessions, Hipocampo provides a reliable, stateful context that enables agents to learn, adapt, and scale efficiently.
@@ -287,6 +330,15 @@ Restart OpenCode for the change to take effect.
 ---
 
 ## 🛠️ Quick Start
+
+
+> 💡 **¡Recomendado!** En vez de seguir los pasos manuales, ejecuta el instalador automático:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/carrasquelalex1/hipocampo/main/install.sh | bash
+> ```
+>
+> El instalador configura PostgreSQL + pgvector, embeddings, base de datos, venv, clientes MCP y el timer de mantenimiento. Ver [Auto-Installer v6.0](#⚡-instalación-zero-touch--auto-installer-v60) para más detalles.
 
 ### Prerequisites
 * **PostgreSQL 17+** (with `pgvector` and `pg_trgm` extensions enabled)
@@ -711,6 +763,50 @@ Hipocampo corre como **servidor MCP gratuito** en Hugging Face Spaces. Conéctat
 **🧪 Playground interactivo:** Prueba guardar y buscar recuerdos desde el navegador en [https://alexbell1-hipocampo-mcp.hf.space/](https://alexbell1-hipocampo-mcp.hf.space/) — sin registro ni cliente MCP.
 
 > **⚠️ Importante:** El tier gratuito de Hugging Face es **efímero** — los datos se pierden al reiniciar/desplegar. Esta instancia es solo para pruebas. Para persistencia real, ejecuta Hipocampo localmente o conecta una base externa.
+## ⚡ Instalación Zero-Touch — Auto-Installer v6.0
+
+> **Una sola línea.** La terminal hace todo: PostgreSQL + pgvector, embeddings, base de datos, venv, clientes MCP, servicio systemd con timer de mantenimiento automático.
+
+### 🚀 Instalar en 10 segundos
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/carrasquelalex1/hipocampo/main/install.sh | bash
+```
+
+Máquinas sin interacción (VPS, contenedores):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/carrasquelalex1/hipocampo/main/install.sh | bash -s -- --unattended
+```
+
+### 🔄 Las 8 fases automáticas
+
+| Fase | Qué instala | 🕐 |
+|:----:|-------------|:--:|
+| ① | Diagnóstico: OS, gestor de paquetes, RAM, disco | ~2s |
+| ② | PostgreSQL 17 + pgvector (apt · dnf · pacman · brew) | ~15s |
+| ③ | Base de datos + esquema: 10 tablas, HNSW + GIN, ownership | ~3s |
+| ④ | Embeddings: Ollama local (`qwen3-embedding:0.6b`) o API externa | ~60s |
+| ⑤ | Python `.venv` + pip + archivo `.env` | ~10s |
+| ⑥ | **Clientes MCP**: OpenCode · Claude · Gemini/Antigravity · Cursor · VS Code · Windsurf | ~2s |
+| ⑦ | Servicio `systemd` + **timer semanal** de mantenimiento automático | ~1s |
+| ⑧ | Autodiagnóstico: health · save · search · cleanup | ~3s |
+
+### 🛡️ Características del instalador
+
+| | |
+|:---|:---|
+| ✅ **Idempotente** | Vuelve a ejecutarlo sin miedo — repara ownership, actualiza repo y configs |
+| ✅ **6 clientes MCP** | OpenCode, Claude, Gemini/Antigravity, Cursor, VS Code, Windsurf |
+| ✅ **Mantenimiento automático** | Timer semanal (domingo 03:00) con `Persistent=true` — catch-up si la PC estaba apagada |
+| ✅ **Sin root** | Todo en `~/.local/share/hipocampo` |
+| ✅ **Opciones** | `--unattended`, `--embed-api`, `--install-dir`, `--db-user`, `--no-clients`, `--no-timer`, `--no-ollama` |
+| ✅ **Desinstalación limpia** | `bash uninstall.sh` — para servicios, BD opcional, clientes, archivos |
+| ✅ **Compilación desde fuente** | Fallback si el paquete pgvector no está en el repositorio |
+
+---
+
+
 
 **Hipocampo** es una arquitectura avanzada de persistencia de memoria dual diseñada para agentes de Inteligencia Artificial. Al mantener tanto el conocimiento técnico como los datos del perfil del usuario entre sesiones, Hipocampo proporciona un contexto con estado confiable que permite a los agentes aprender, adaptarse y escalar eficientemente.
 
