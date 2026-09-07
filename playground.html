@@ -78,7 +78,8 @@ const content=document.getElementById('content').value.trim();
 if(!content)return show('saveOut','✕ Escribe contenido');
 show('saveOut','⏳ Guardando...');
 const r=await api('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content,type:document.getElementById('type').value,code:document.getElementById('code').value})});
-show('saveOut',r.ok?'✅ Guardado (id: '+r.id+')':'✕ '+r.error)}
+if(r.dedup)return show('saveOut','⚠️ Ya existe (id: '+r.id+') — '+r.message);
+show('saveOut',r.ok?'✅ Guardado (id: '+r.id+')':'✕ '+(r.error||r.message))}
 
 async function search(){
 const q=document.getElementById('query').value.trim();

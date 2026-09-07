@@ -3129,9 +3129,15 @@ def _build_http_app():
             memory_type=body.get("type", "event"),
             code=body.get("code", ""),
         )
-        m = re.search(r"id=(\d+)", msg)
-        rid = int(m.group(1)) if m else None
-        return JSONResponse({"ok": True, "id": rid, "message": msg})
+        if msg.startswith("✅"):
+            m = re.search(r"id=(\d+)", msg)
+            rid = int(m.group(1)) if m else None
+            return JSONResponse({"ok": True, "id": rid, "message": msg})
+        if msg.startswith("⚠️"):
+            m = re.search(r"id=(\d+)", msg)
+            rid = int(m.group(1)) if m else None
+            return JSONResponse({"ok": True, "id": rid, "message": msg, "dedup": True})
+        return JSONResponse({"ok": False, "error": msg}, status_code=400)
 
     async def handle_search(request: Request):
         q = request.query_params.get("q", "").strip()
