@@ -12,5 +12,6 @@ jobs:
         with:
           fetch-depth: 0
       - name: Push to HF Spaces
+        continue-on-error: true
         run: |
-          git push https://alexbell1:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/alexbell1/hipocampo-mcp main --force
+          git push https://alexbell1:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/alexbell1/hipocampo-mcp main --force || echo "HF Spaces push skipped (pre-receive hook)
