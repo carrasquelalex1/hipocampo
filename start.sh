@@ -91,4 +91,6 @@ fi
 
 echo "=== Starting MCP server ==="
 export UVICORN_PROXY_HEADERS=1
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
 exec python3 /app/scripts/hipocampo_mcp_server.py --http 7860 --host 0.0.0.0
