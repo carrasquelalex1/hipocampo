@@ -30,6 +30,7 @@ import time
 import json
 import threading
 from datetime import date, datetime
+from pathlib import Path
 
 import uuid
 
@@ -3083,6 +3084,61 @@ async def reindex_now(path: str = "") -> str:
         return _tool_err("reindex_now", e)
 
 
+# ─── WRAPPER HTTP: PLAYGROUND + MCP EN UN SOLO PUERTO ──────────────────────────
+
+
+def _build_http_app():
+    """
+    Construye la app ASGI para modo HTTP:
+      - GET /        → playground.html (interactivo, sin cliente MCP)
+      - POST /mcp    → endpoint Streamable HTTP de FastMCP
+      - GET /mcp     → streamable-http estándar responde 405 (correcto)
+    Usa mcp.streamable_http_app() (disponible desde mcp 1.27) en lugar del
+    servidor custom eliminado en 18ccbf9. Si algo falla, el caller hace
+    fallback a mcp.run(transport='streamable-http').
+    """
+    from contextlib import asynccontextmanager
+
+    from starlette.applications import Starlette
+    from starlette.responses import FileResponse
+    from starlette.routing import Mount, Route
+
+    playground_path = Path(__file__).resolve().parent.parent / "playground.html"
+
+    async def serve_playground(request):
+        if playground_path.is_file():
+            return FileResponse(playground_path, media_type="text/html")
+        from starlette.responses import JSONResponse
+
+        return JSONResponse(
+            {
+                "service": "hipocampo-mcp",
+                "status": "ok",
+                "mcp_endpoint": "/mcp",
+                "detail": "playground.html no encontrado",
+            },
+            status_code=200,
+        )
+
+    mcp_app = mcp.streamable_http_app()
+
+    @asynccontextmanager
+    async def _lifespan(app):
+        # El session manager de streamable-http crea su task group vía
+        # session_manager.run() (context manager async). Sin esto, todo
+        # request a /mcp falla con "Task group is not initialized".
+        async with mcp.session_manager.run():
+            yield
+
+    return Starlette(
+        routes=[
+            Route("/", serve_playground, methods=["GET"]),
+            Mount("/", app=mcp_app),
+        ],
+        lifespan=_lifespan,
+    )
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -3137,7 +3193,18 @@ if __name__ == "__main__":
         logger.info("🔌 Iniciando Hipocampo MCP Server (Streamable HTTP) en %s:%d", host, port)
         mcp.settings.port = port
         mcp.settings.host = host
-        mcp.run(transport="streamable-http")
+        try:
+            app = _build_http_app()
+            import uvicorn
+
+            uvicorn.run(app, host=host, port=port, proxy_headers=True)
+        except Exception as _http_err:
+            logger.warning(
+                "⚠️  No se pudo construir el wrapper HTTP con playground (%s). "
+                "Fallback a mcp.run(transport='streamable-http').",
+                _http_err,
+            )
+            mcp.run(transport="streamable-http")
     elif sse_port:
         logger.warning("⚠️  --sse está deprecado desde spec MCP 2025-03-26. Usa --http en su lugar.")
         logger.info("🔌 Iniciando Hipocampo MCP Server (SSE) en puerto %d", sse_port)
