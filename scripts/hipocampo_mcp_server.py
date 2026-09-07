@@ -23,6 +23,7 @@ Ejemplos:
 """
 
 import asyncio
+import locale
 import logging
 import sys
 import os
@@ -3206,6 +3207,13 @@ if __name__ == "__main__":
     _init_watches_table()
     _init_memory_links_table()
     _init_memory_access_table()
+    try:
+        locale.setlocale(locale.LC_ALL, "C.UTF-8")
+    except locale.Error:
+        try:
+            locale.setlocale(locale.LC_ALL, "en_US.UTF-8")
+        except locale.Error:
+            pass
     init_pool()
     _auto_checkpoint()
 

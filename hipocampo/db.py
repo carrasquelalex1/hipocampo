@@ -82,6 +82,7 @@ def init_pool(minconn=1, maxconn=10):
                 user=cfg["DB_USER"],
                 dbname=cfg["DB_NAME"],
                 password=cfg["DB_PASSWORD"],
+                client_encoding="UTF8",
             )
         except psycopg2.Error as e:
             import logging
@@ -118,6 +119,7 @@ def get_conn(config=None):
         user=config["DB_USER"],
         dbname=config["DB_NAME"],
         password=config["DB_PASSWORD"],
+        client_encoding="UTF8",
     )
 
 
