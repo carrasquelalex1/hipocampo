@@ -3120,6 +3120,11 @@ def _build_http_app():
             status_code=200,
         )
 
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    )
     mcp_app = mcp.streamable_http_app()
 
     @asynccontextmanager
