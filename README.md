@@ -544,6 +544,63 @@ The MCP server now runs all 16 tools as **async Python coroutines** in HTTP mode
 
 ---
 
+## 🧹 Automatic Maintenance (v5.1)
+
+Unattended consolidation, decay, and pruning — the memory system now cleans itself. Three complementary mechanisms:
+
+### 1. Async Background Scheduler (server-side)
+
+The MCP server can run a maintenance loop every 24h (configurable). **Off by default** — activate with an environment variable:
+
+```bash
+HIPOCAMPO_AUTO_MAINTENANCE=true   # activates the scheduler on next restart
+```
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `HIPOCAMPO_AUTO_MAINTENANCE` | `false` | Enables the scheduler in the HTTP lifespan |
+| `HIPOCAMPO_AUTO_MAINT_INTERVAL_S` | `86400` | Seconds between maintenance cycles |
+| `HIPOCAMPO_MAINT_MIN_AGE_DAYS` | `7` | Min age to consolidate episódica → semántica |
+| `HIPOCAMPO_MAINT_DECAY_MIN_AGE_DAYS` | `60` | Min age to archive unaccessed episódica (active forgetting) |
+
+Each cycle runs: **consolidation** (episodic → semantic promotion), **decay** (link weight half-life 90d + active forgetting of unaccessed episodic memories), **dedup merge**, and **access-log purge** (>30d). All protections intact: `automatica`, `semantica`, `critico`, and linked memories are never archived.
+
+### 2. Save-Triggered Micro-Maintenance
+
+Every **50 saves** (configurable via `HIPOCAMPO_SAVE_TRIGGER_EVERY`, `0` disables), a background thread runs a lighter cycle: consolidation + decay + purge — **no dedup merge** (irreversible). The system cleans itself in proportion to how much it's used, no external services required.
+
+### 3. CLI + systemd Timer with `Persistent=true` (recommended for desktops)
+
+For machines that power off at night, cron loses scheduled runs. A **user-level systemd timer** with `Persistent=true` catches up on the missed run as soon as the PC boots:
+
+```bash
+# Dry-run first (read-only simulation — always do this)
+python3 scripts/run_maintenance.py
+
+# Apply real changes
+python3 scripts/run_maintenance.py --apply --min-age 7 --decay-min-age 60
+```
+
+Install the weekly timer (Sunday 03:00, catch-up on boot):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp scripts/hipocampo-maintenance.service scripts/hipocampo-maintenance.timer ~/.config/systemd/user/
+# Edit the .service file: set the correct python path and repo path
+systemctl --user daemon-reload
+systemctl --user enable --now hipocampo-maintenance.timer
+systemctl --user list-timers hipocampo-maintenance.timer   # verify next run
+```
+
+The CLI reuses `_run_maintenance_cycle()` from the MCP server — the exact same code path as the internal scheduler, zero logic duplication.
+
+### Bug fixes in this release
+
+- **`decay_hipocampo` never ran**: the memory-level query mixed `timestamptz` and `text` in a `COALESCE` (`COALESCE(max(accessed_at), metadatos->>'date')`) → PostgreSQL error `types timestamp with time zone and text cannot be matched`. Fixed by casting `(NULLIF(metadatos->>'date',''))::timestamptz`. Same bug fixed in `hipocampo_budget`.
+- **`min_age_days` was ignored**: `decay_hipocampo(dry_run=False, min_age_days=30)` accepted the parameter but Part 2 (active forgetting) had no age filter in SQL — it would archive episodic memories of *any* age. Now the age threshold is parameterized in the query.
+
+---
+
 ## ☕ Support / Donaciones
 
 If this project helps you, consider supporting its development:
@@ -1068,6 +1125,63 @@ El servidor MCP ahora ejecuta las 16 herramientas como **corutinas async** en mo
 - 105 tests totales, todos pasando
 
 **Impacto:** Mantenimiento cero tras `git pull`. Errores transitorios de la API de embeddings degradan gracefulmente. Carga de configuración determinista y segura. Operaciones vectoriales confiables. Tests siguen el protocolo MCP oficial.
+
+---
+
+## 🧹 Mantenimiento Automático (v5.1)
+
+Consolidación, decaimiento y poda desatendidos — el sistema de memoria ahora se limpia solo. Tres mecanismos complementarios:
+
+### 1. Scheduler en Segundo Plano (server)
+
+El servidor MCP puede ejecutar un ciclo de mantenimiento cada 24h (configurable). **Desactivado por defecto** — se activa con una variable de entorno:
+
+```bash
+HIPOCAMPO_AUTO_MAINTENANCE=true   # activa el scheduler al reiniciar
+```
+
+| Variable | Default | Función |
+|----------|---------|---------|
+| `HIPOCAMPO_AUTO_MAINTENANCE` | `false` | Activa el scheduler en el lifespan HTTP |
+| `HIPOCAMPO_AUTO_MAINT_INTERVAL_S` | `86400` | Segundos entre ciclos de mantenimiento |
+| `HIPOCAMPO_MAINT_MIN_AGE_DAYS` | `7` | Edad mínima para consolidar episódica → semántica |
+| `HIPOCAMPO_MAINT_DECAY_MIN_AGE_DAYS` | `60` | Edad mínima para archivar episódicas sin acceso (olvido activo) |
+
+Cada ciclo ejecuta: **consolidación** (episódica → semántica), **decay** (half-life 90d en enlaces + olvido activo de episódicas sin acceso), **dedup merge** y **purga de access logs** (>30d). Todas las protecciones intactas: `automatica`, `semantica`, `critico` y memorias enlazadas nunca se archivan.
+
+### 2. Micro-Mantenimiento por Conteo de Saves
+
+Cada **50 saves** (configurable con `HIPOCAMPO_SAVE_TRIGGER_EVERY`, `0` desactiva), un hilo en background ejecuta un ciclo liviano: consolidación + decay + purga — **sin dedup merge** (irreversible). El sistema se limpia solo en proporción a cuánto se usa, sin servicios externos.
+
+### 3. CLI + Timer de Systemd con `Persistent=true` (recomendado para PCs de escritorio)
+
+Para máquinas que se apagan de noche, cron pierde las ejecuciones programadas. Un **timer systemd de usuario** con `Persistent=true` recupera la tarea perdida apenas enciende la PC:
+
+```bash
+# Primero dry-run (simulación de solo lectura — hacer siempre)
+python3 scripts/run_maintenance.py
+
+# Aplicar cambios reales
+python3 scripts/run_maintenance.py --apply --min-age 7 --decay-min-age 60
+```
+
+Instalar el timer semanal (domingo 03:00, catch-up al encender):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp scripts/hipocampo-maintenance.service scripts/hipocampo-maintenance.timer ~/.config/systemd/user/
+# Editar el .service: setear la ruta de python y del repo correctas
+systemctl --user daemon-reload
+systemctl --user enable --now hipocampo-maintenance.timer
+systemctl --user list-timers hipocampo-maintenance.timer   # verificar próxima ejecución
+```
+
+El CLI reutiliza `_run_maintenance_cycle()` del servidor MCP — exactamente el mismo código que el scheduler interno, cero duplicación de lógica.
+
+### Bugs corregidos en esta versión
+
+- **`decay_hipocampo` nunca había corrido**: la query de nivel memoria mezclaba `timestamptz` y `text` en un `COALESCE` (`COALESCE(max(accessed_at), metadatos->>'date')`) → error de PostgreSQL `types timestamp with time zone and text cannot be matched`. Corregido casteando `(NULLIF(metadatos->>'date',''))::timestamptz`. Mismo bug corregido en `hipocampo_budget`.
+- **`min_age_days` era ignorado**: `decay_hipocampo(dry_run=False, min_age_days=30)` aceptaba el parámetro pero la Parte 2 (olvido activo) no tenía filtro de edad en el SQL — habría archivado episódicas de *cualquier* edad. Ahora el umbral de edad está parametrizado en la query.
 
 ---
 

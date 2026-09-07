@@ -23,6 +23,7 @@ Ejemplos:
 """
 
 import asyncio
+import contextlib
 import locale
 import logging
 import sys
@@ -325,6 +326,157 @@ def _auto_checkpoint():
             logger.info("📦 Auto-checkpoint result: %s", result[:200] if result else "OK")
     except Exception as e:
         logger.warning("Auto-checkpoint skipped: %s", e)
+
+
+# ─── MANTENIMIENTO AUTOMÁTICO (scheduler + trigger por saves) ────────────────
+
+# Ejecutar ciclo de mantenimiento cada N horas de uptime del scheduler
+_AUTO_MAINT_INTERVAL_S = int(os.getenv("HIPOCAMPO_AUTO_MAINT_INTERVAL_S", "86400"))
+# Micro-mantenimiento cada N saves (0 = desactivado)
+_SAVE_TRIGGER_EVERY = int(os.getenv("HIPOCAMPO_SAVE_TRIGGER_EVERY", "50"))
+# Edad mínima (días) para consolidar episódicas → semánticas
+_MAINT_MIN_AGE_DAYS = int(os.getenv("HIPOCAMPO_MAINT_MIN_AGE_DAYS", "7"))
+# Edad mínima (días) para archivar episódicas sin acceso (olvido activo)
+_MAINT_DECAY_MIN_AGE_DAYS = int(os.getenv("HIPOCAMPO_MAINT_DECAY_MIN_AGE_DAYS", "60"))
+
+_save_counter = {"count": 0}
+_maint_lock = threading.Lock()
+
+
+def _run_maintenance_cycle(reason: str = "scheduler", include_dedup: bool = True) -> dict:
+    """Ejecuta un ciclo completo de mantenimiento DESATENDIDO (dry_run=False).
+
+    Es destructivo por diseño: consolidación (episódica→semántica), decay de
+    enlaces + olvido activo (respeta protecciones: automatica/semántica/crítico/
+    enlazadas), dedup con merge (opcional) y purga de access logs.
+
+    Reutilizado por: scheduler async del server, trigger por conteo de saves
+    y scripts/run_maintenance.py --apply.
+
+    Args:
+        reason: etiqueta para logging (scheduler / save-trigger / cli).
+        include_dedup: si False omite el dedup merge (irreversible) — usado por
+            el save-trigger para limitarse a consolidate + decay, igual que la
+            propuesta original (sección C).
+
+    Returns:
+        dict con resultado por paso (ok/error + resumen corto).
+    """
+    results: dict = {}
+
+    # 1. Consolidación: episódicas > min_age_days → semánticas (no destructivo:
+    #    promueve, nunca borra)
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, metadatos::text FROM memoria_vectorial
+               WHERE metadatos->>'nivel' = 'episodica'
+                 OR metadatos->>'nivel' IS NULL"""
+        )
+        rows = cur.fetchall()
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        promoted = 0
+        for rid, meta_text in rows:
+            meta = json.loads(meta_text) if meta_text else {}
+            fecha_str = meta.get("date") or meta.get("fecha")
+            if not fecha_str:
+                continue
+            try:
+                fecha = datetime.fromisoformat(fecha_str)
+                if fecha.tzinfo is None:
+                    fecha = fecha.replace(tzinfo=timezone.utc)
+                if (now - fecha).days >= _MAINT_MIN_AGE_DAYS:
+                    meta["nivel"] = "semantica"
+                    meta["consolidated_at"] = str(date.today())
+                    cur.execute(
+                        "UPDATE memoria_vectorial SET metadatos = %s WHERE id = %s",
+                        (json.dumps(meta), rid),
+                    )
+                    promoted += 1
+            except (ValueError, TypeError):
+                continue
+        conn.commit()
+        cur.close()
+        conn.close()
+        results["consolidate"] = f"ok: {promoted} promovidas a semántica"
+    except Exception as e:
+        results["consolidate"] = f"error: {e}"
+
+    # 2. Decay de enlaces + olvido activo (destructivo, con protecciones)
+    try:
+        decay_result = asyncio.run(decay_hipocampo(dry_run=False, min_age_days=_MAINT_DECAY_MIN_AGE_DAYS))
+        results["decay"] = f"ok: {(decay_result or '')[:160]}"
+    except Exception as e:
+        results["decay"] = f"error: {e}"
+
+    # 3. Dedup con merge real (opcional: irreversible — omitido en save-trigger)
+    if include_dedup:
+        try:
+            results["dedup"] = f"ok: {(_dedup.full_dedup_merge() or '')[:160]}"
+        except Exception as e:
+            results["dedup"] = f"error: {e}"
+
+    # 4. Purga de access logs > 30d
+    try:
+        results["purge_access"] = f"ok: {(_stats.purge_memory_access(max_age_days=30) or '')[:160]}"
+    except Exception as e:
+        results["purge_access"] = f"error: {e}"
+
+    logger.info("🧹 Mantenimiento automático (%s): %s", reason, json.dumps(results, default=str))
+    return results
+
+
+def _maybe_trigger_maintenance_on_save():
+    """Dispara micro-mantenimiento en background cada N saves.
+
+    Auto-limpieza proporcional al uso: sin scheduler externo, el sistema
+    se mantiene solo en la medida en que se usa.
+    """
+    if _SAVE_TRIGGER_EVERY <= 0:
+        return
+    _save_counter["count"] += 1
+    if _save_counter["count"] % _SAVE_TRIGGER_EVERY != 0:
+        return
+
+    def _do():
+        if not _maint_lock.acquire(blocking=False):
+            logger.info("🧹 Micro-mantenimiento omitido: ya hay uno en curso")
+            return
+        try:
+            # Sin dedup merge (irreversible): solo consolidación + decay + purga,
+            # como la propuesta original (sección C).
+            _run_maintenance_cycle(reason=f"save-trigger #{_save_counter['count']}", include_dedup=False)
+        finally:
+            _maint_lock.release()
+
+    threading.Thread(target=_do, daemon=True, name="auto-maintenance").start()
+
+
+async def _auto_maintenance_loop():
+    """Scheduler async: ciclo de mantenimiento cada _AUTO_MAINT_INTERVAL_S.
+
+    Se activa con HIPOCAMPO_AUTO_MAINTENANCE=true (o "1"). Corre como tarea
+    del lifespan HTTP del servidor MCP; si el proceso muere, el lock es del
+    mismo proceso así que no hay condición de carrera entre scheduler y
+    save-trigger salvo el acquire no-bloqueante.
+    """
+    logger.info(
+        "🧹 Auto-mantenimiento activo: cada %ss (min_age=%dd, decay=%dd)",
+        _AUTO_MAINT_INTERVAL_S,
+        _MAINT_MIN_AGE_DAYS,
+        _MAINT_DECAY_MIN_AGE_DAYS,
+    )
+    while True:
+        await asyncio.sleep(_AUTO_MAINT_INTERVAL_S)
+        try:
+            await asyncio.to_thread(_run_maintenance_cycle, "scheduler")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("❌ Error en ciclo de auto-mantenimiento: %s", e)
 
 
 mcp = FastMCP("hipocampo")
@@ -979,6 +1131,7 @@ async def save_hipocampo(
 
         _fire_webhooks("save", row_id, content, metadatos)
         _auto_summarize_session(session_id)
+        _maybe_trigger_maintenance_on_save()
 
         threading.Thread(
             target=_finalize_save_bg,
@@ -2675,16 +2828,32 @@ async def decay_hipocampo(dry_run: bool = True, min_age_days: int = 30) -> str:
 
             # === PART 2: Memory-level decay (olvido activo) ===
 
-            cur.execute("""
+            # Filtro de edad sobre la fecha efectiva de último acceso:
+            # COALESCE(max(accessed_at), (metadatos->>'date')::date) — ambos lados
+            # tipo date para que el COALESCE compile (bug previo: timestamptz vs text).
+            cur.execute(
+                """
                 SELECT id, contenido, metadatos::text,
                        COALESCE(
                            (SELECT max(accessed_at) FROM memory_access
                             WHERE memory_id = 'v' || mv.id),
-                           mv.metadatos->>'date'
+                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
                        ) as last_access
                 FROM memoria_vectorial mv
                 WHERE (metadatos->>'nivel') = 'episodica'
                   AND (metadatos->>'critico') IS DISTINCT FROM 'true'
+                  AND (
+                       COALESCE(
+                           (SELECT max(accessed_at) FROM memory_access
+                            WHERE memory_id = 'v' || mv.id),
+                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
+                       ) IS NULL
+                       OR COALESCE(
+                           (SELECT max(accessed_at) FROM memory_access
+                            WHERE memory_id = 'v' || mv.id),
+                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
+                       ) < NOW() - (%s || ' days')::interval
+                  )
                   AND mv.id NOT IN (
                       SELECT DISTINCT CAST(
                           regexp_replace(source_id, '[^0-9]', '', 'g') AS bigint
@@ -2699,7 +2868,9 @@ async def decay_hipocampo(dry_run: bool = True, min_age_days: int = 30) -> str:
                       WHERE target_id ~ '^v?[0-9]+$'
                   )
                 ORDER BY last_access ASC NULLS FIRST
-            """)
+                """,
+                (min_age_days,),
+            )
             memory_rows = cur.fetchall()
 
             mem_candidates = 0
@@ -2830,7 +3001,7 @@ async def hipocampo_budget(dry_run: bool = True) -> str:
                        COALESCE(
                            (SELECT max(accessed_at) FROM memory_access
                             WHERE memory_id = 'v' || mv.id),
-                           mv.metadatos->>'date'
+                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
                        ) as last_access
                 FROM memoria_vectorial mv
                 WHERE mv.embedding IS NOT NULL
@@ -3163,8 +3334,15 @@ def _build_http_app():
         # El session manager de streamable-http crea su task group vía
         # session_manager.run() (context manager async). Sin esto, todo
         # request a /mcp falla con "Task group is not initialized".
+        maint_task = None
+        if os.getenv("HIPOCAMPO_AUTO_MAINTENANCE", "").lower() in ("true", "1", "yes"):
+            maint_task = asyncio.create_task(_auto_maintenance_loop())
         async with mcp.session_manager.run():
             yield
+        if maint_task:
+            maint_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await maint_task
 
     return Starlette(
         routes=[

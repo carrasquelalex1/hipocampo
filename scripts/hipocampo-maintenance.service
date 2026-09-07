@@ -1,0 +1,19 @@
+[Unit]
+Description=Hipocampo MCP - Mantenimiento, Consolidación y Poda Semanal
+# El CLI reutiliza _run_maintenance_cycle() del server MCP. NOTA: si también
+# activaste HIPOCAMPO_AUTO_MAINTENANCE=true en el servidor MCP, desactiva uno
+# de los dos mecanismos para no duplicar ciclos el mismo día.
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+# Ajusta las dos rutas a tu instalación:
+#   - python3: puede ser /usr/bin/python3 o el de un venv
+#   - repo: ruta al clone de este repositorio
+Environment=HIPOCAMPO_MAINT_MIN_AGE_DAYS=7
+Environment=HIPOCAMPO_MAINT_DECAY_MIN_AGE_DAYS=60
+ExecStart=/usr/bin/python3 %h/.hipocampo/scripts/run_maintenance.py --apply --quiet
+StandardOutput=journal
+StandardError=journal
+# Timeout holgado: el decay sobre ~1500 memorias con queries pesadas puede tardar
+TimeoutStartSec=600
