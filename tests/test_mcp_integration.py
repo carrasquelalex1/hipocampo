@@ -66,6 +66,8 @@ EXPECTED_TOOLS = {
     "add_watch_dir",
     "remove_watch_dir",
     "reindex_now",
+    "review_trade_knowledge",
+    "list_trade_knowledge",
 }
 
 TOOLS_WITH_SESSION_ID = {"search_hipocampo", "quick_hipocampo_search", "save_hipocampo"}
@@ -81,6 +83,8 @@ TOOLS_READ_ONLY = {
     "rollback_checkpoint",
     "contradicciones_hipocampo",
     "list_watch_dirs",
+    "review_trade_knowledge",
+    "list_trade_knowledge",
 }
 
 TOOLS_DESTRUCTIVE = {
@@ -139,7 +143,7 @@ def test_all_tools_registered():
     extra = tool_names - EXPECTED_TOOLS
     assert not missing, f"Faltan herramientas: {missing}"
     assert not extra, f"Herramientas extra no esperadas: {extra}"
-    assert len(tools) == 37
+    assert len(tools) == 39
 
 
 def test_tool_annotations():

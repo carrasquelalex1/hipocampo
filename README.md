@@ -145,7 +145,7 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 * **Context Budget Awareness**: `compress_hipocampo` auto-estimates token budget and adjusts k dynamically. `budget_ratio` parameter gives fine-grained control over output size.
 * **Auto-Linking**: `save_hipocampo(..., auto_link=True)` auto-discovers semantically similar memories (>0.75 cosine) and creates `similar` edges in the memory graph.
 * **HNSW Auto-Recovery**: `hipocampo_health()` checks the HNSW index on startup and auto-creates it if missing — no more manual `CREATE INDEX` commands.
-* **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 37 tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
+* **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 39 tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
 
 ---
 
@@ -432,7 +432,7 @@ An **SSC (Sparse Selective Caching)** pipeline is also available as an experimen
 
 Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to autonomously read and write memories.
 
-### Available MCP Tools (37 tools)
+### Available MCP Tools (39 tools)
 
 **Memory Operations:**
 * `search_hipocampo(query, session_id?)`: Unified semantic and lexical search (auto-records metrics). Optionally filter by session.
@@ -476,10 +476,14 @@ Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to
 * Scores of memories >7 days old automatically decay ~5% per week (floor at 30%), keeping recent knowledge at the top.
 
 **Active Forgetting & Tiering (v5.0):**
-* `decay_hipocampo(dry_run=True)`: Extended to archive old `episodica` memories to `memoria_historica` (cold storage). Protected: `automatica`, `semantica`, `critico`. Dry run shows what would be archived.
-* `hipocampo_budget(dry_run=True)`: Shows memory distribution across HOT/WARM/COLD tiers. Hot cap: 5000. When exceeded, oldest episodica are auto-demoted.
-* `restaurar_historica(id)`: Restore a cold memory from `memoria_historica` back to active `memoria_vectorial`.
-* `contradicciones_hipocampo(id=None)`: On-demand contradiction audit. With ID: checks one memory. Without: scans all memories for contradictions.
+ * `decay_hipocampo(dry_run=True)`: Extended to archive old `episodica` memories to `memoria_historica` (cold storage). Protected: `automatica`, `semantica`, `critico`. Dry run shows what would be archived.
+ * `hipocampo_budget(dry_run=True)`: Shows memory distribution across HOT/WARM/COLD tiers. Hot cap: 5000. When exceeded, oldest episodica are auto-demoted.
+ * `restaurar_historica(id)`: Restore a cold memory from `memoria_historica` back to active `memoria_vectorial`.
+ * `contradicciones_hipocampo(id=None)`: On-demand contradiction audit. With ID: checks one memory. Without: scans all memories for contradictions.
+
+**Trade Knowledge Preservation (v4.3):**
+ * `review_trade_knowledge(dry_run=True)`: Lists `infrastructure` memories approaching their decay limit (>150 days). Use to manually reinforce trade knowledge before it auto-decays.
+ * `list_trade_knowledge()`: Lists all memories tagged as `trade_knowledge=true` with their reusability and domain profile.
 
 **File Watcher (v5.0):**
 * `list_watch_dirs()`: List all directories being watched for auto-reindexing.
