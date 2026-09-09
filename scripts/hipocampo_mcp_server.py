@@ -1097,6 +1097,7 @@ async def save_hipocampo(
     auto_link: bool = False,
     nivel: str = "episodica",
     critico: bool = False,
+    snapshot_for: int | None = None,
 ) -> str:
     """
     Guarda un recuerdo en el Hipocampo (memoria_vectorial).
@@ -1131,6 +1132,11 @@ async def save_hipocampo(
                "automatica" — regla permanente, nunca se comprime.
         critico: Si True, la memoria NUNCA se olvida ni se archiva.
                  Protección de por vida independiente del nivel.
+        snapshot_for: Si se proporciona un ID de regla inmunológica,
+                      después de guardar se crea automáticamente un enlace
+                      "part_of" desde este recuerdo hacia esa regla.
+                      Esto permite que validate_immune_rule encuentre el
+                      snapshot pre-cambio vinculado.
 
     Returns:
         Confirmación con el ID asignado.
@@ -1188,6 +1194,22 @@ async def save_hipocampo(
         _fire_webhooks("save", row_id, content, metadatos)
         _auto_summarize_session(session_id)
         _maybe_trigger_maintenance_on_save()
+
+# Crear enlace part_of si snapshot_for fue proporcionado
+        if snapshot_for:
+            try:
+                link_conn = _conn()
+                link_cur = link_conn.cursor()
+                link_cur.execute(
+                    "INSERT INTO memory_links (source_id, target_id, relation_type) VALUES (%s, %s, 'part_of') ON CONFLICT DO NOTHING",
+                    (str(row_id), str(snapshot_for)),
+                )
+                link_conn.commit()
+                link_cur.close()
+                link_conn.close()
+                logger.info("🔗 Enlace part_of creado: memoria #%s → regla #%s", row_id, snapshot_for)
+            except Exception as e:
+                logger.warning("No se pudo crear enlace part_of para memoria #%s → regla #%s: %s", row_id, snapshot_for, e)
 
         threading.Thread(
             target=_finalize_save_bg,
