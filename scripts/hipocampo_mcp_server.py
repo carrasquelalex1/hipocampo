@@ -416,13 +416,17 @@ def _run_maintenance_cycle(reason: str = "scheduler", include_dedup: bool = True
     # 3. Dedup con merge real (opcional: irreversible — omitido en save-trigger)
     if include_dedup:
         try:
-            results["dedup"] = f"ok: {(_dedup.full_dedup_merge() or '')[:160]}"
+            dedup_result = _dedup.full_dedup_merge()
+            dedup_str = json.dumps(dedup_result, default=str)
+            results["dedup"] = f"ok: {dedup_str[:160]}"
         except Exception as e:
             results["dedup"] = f"error: {e}"
 
     # 4. Purga de access logs > 30d
     try:
-        results["purge_access"] = f"ok: {(_stats.purge_memory_access(max_age_days=30) or '')[:160]}"
+        purge_result = _stats.purge_memory_access(max_age_days=30)
+        purge_str = json.dumps(purge_result, default=str)
+        results["purge_access"] = f"ok: {purge_str[:160]}"
     except Exception as e:
         results["purge_access"] = f"error: {e}"
 
