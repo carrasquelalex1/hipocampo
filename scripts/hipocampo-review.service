@@ -1,0 +1,10 @@
+[Unit]
+Description=Servicio de Revisión Trimestral de Conocimiento del Oficio
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/alex/.hipocampo/repo/scripts/review_trade_knowledge_cli.py
+User=alex
+WorkingDirectory=/home/alex/.hipocampo/repo/scripts
+StandardOutput=journal
+StandardError=journal

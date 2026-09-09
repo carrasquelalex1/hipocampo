@@ -296,6 +296,12 @@ run_psql_as_admin -v ON_ERROR_STOP=1 -d "$DB_NAME" -f /tmp/hipocampo_setup_db.sq
 rm -f /tmp/hipocampo_setup_db.sql
 log_success "Esquema aplicado (tablas, índices HNSW, ownership → $DB_USER)"
 
+# ─── Trade Knowledge v4.3: Migración de memorias existentes ────
+if [[ -f "$INSTALL_DIR/scripts/migrate_trade_knowledge.py" ]]; then
+    log_info "Ejecutando migración Trade Knowledge..."
+    "$VENV_DIR/bin/python" "$INSTALL_DIR/scripts/migrate_trade_knowledge.py" || log_warn "Migración trade_knowledge falló (continúa igual)"
+fi
+
 # ════════════════════════════════════════════════════════════════════════════
 # FASE 4: Motor de embeddings
 # ════════════════════════════════════════════════════════════════════════════
@@ -406,6 +412,16 @@ SVC
         sed "s|^ExecStart=.*|ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/scripts/run_maintenance.py --apply --quiet|" \
             "$INSTALL_DIR/scripts/hipocampo-maintenance.service" > "$UDIR/hipocampo-maintenance.service"
         cp "$INSTALL_DIR/scripts/hipocampo-maintenance.timer" "$UDIR/"
+    fi
+
+    # Timer trimestral de revisión de Trade Knowledge v4.3
+    if [[ -f "$INSTALL_DIR/scripts/hipocampo-review.service" ]]; then
+        sed "s|^ExecStart=.*|ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/scripts/review_trade_knowledge_cli.py|" \
+            "$INSTALL_DIR/scripts/hipocampo-review.service" > "$UDIR/hipocampo-review.service"
+        cp "$INSTALL_DIR/scripts/hipocampo-review.timer" "$UDIR/"
+        systemctl --user daemon-reload
+        systemctl --user enable --now hipocampo-review.timer 2>/dev/null \
+            && log_success "Timer revisión Trade Knowledge ACTIVO (1ro de cada mes, trimestral)"
     fi
 
     systemctl --user daemon-reload

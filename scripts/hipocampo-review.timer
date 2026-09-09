@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer Trimestral para Revisión de Conocimiento del Oficio
+
+[Timer]
+# Cada 3 meses: 1ro de enero, abril, julio, octubre
+OnCalendar=*-*-01 04:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -60,6 +60,7 @@ import hipocampo_dedup as _dedup
 import hipocampo_checkpoint as _checkpoint
 import hipocampo_compress as _compress
 import hipocampo_index_project as _indexer
+import hipocampo_trade_knowledge as _tk
 
 # Ensure query_stats table exists (lazy — safe if DB not reachable)
 try:
@@ -407,7 +408,7 @@ def _run_maintenance_cycle(reason: str = "scheduler", include_dedup: bool = True
 
     # 2. Decay de enlaces + olvido activo (destructivo, con protecciones)
     try:
-        decay_result = asyncio.run(decay_hipocampo(dry_run=False, min_age_days=_MAINT_DECAY_MIN_AGE_DAYS))
+        decay_result = asyncio.run(decay_hipocampo(dry_run=False))
         results["decay"] = f"ok: {(decay_result or '')[:160]}"
     except Exception as e:
         results["decay"] = f"error: {e}"
@@ -545,12 +546,63 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
         except Exception as e:
             logger.warning("Stats record falló: %s", e)
 
+        # Capa 4: Reforzar memorias del oficio en resultados
+        try:
+            await asyncio.to_thread(_reinforce_trade_on_search, query)
+        except Exception:
+            pass
+
         return output
 
     except (psycopg2.Error, ValueError, TypeError) as e:
         return _tool_err("search_hipocampo", e)
     except Exception as e:
         return _tool_err("search_hipocampo", e)
+
+
+def _reinforce_trade_on_search(query: str) -> None:
+    """Refuerza memorias del oficio que coinciden con la búsqueda."""
+    try:
+        from hipocampo.db import get_conn
+        import hashlib
+
+        conn = get_conn()
+        cur = conn.cursor()
+        query_hash = hashlib.sha256(query.encode()).hexdigest()[:12]
+
+        cur.execute(
+            """
+            SELECT mv.id
+            FROM memoria_vectorial mv
+            WHERE (metadatos->>'trade_knowledge') = 'true'
+              AND (metadatos->>'nivel') = 'semantica'
+              AND (
+                   mv.contenido ILIKE %s
+                   OR mv.metadatos->>'categories' ILIKE %s
+              )
+            LIMIT 10
+        """,
+            (f"%{query}%", f"%{query}%"),
+        )
+
+        rows = cur.fetchall()
+        if not rows:
+            cur.close()
+            conn.close()
+            return
+
+        for (mv_id,) in rows:
+            cur.execute(
+                """INSERT INTO memory_access (memory_id, source, accessed_at, query_hash)
+                   VALUES (%s, 'search_trade_reinforce', NOW(), %s)
+                   ON CONFLICT DO NOTHING""",
+                (f"v{mv_id}", query_hash),
+            )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception:
+        pass
 
 
 @mcp.tool()
@@ -1117,6 +1169,10 @@ async def save_hipocampo(
             metadatos["created_at"] = str(date.today())
         if session_id:
             metadatos["session_id"] = session_id
+
+        # Capas 1+2: Clasificación de trade knowledge y reusabilidad
+        trade_meta = _tk.build_trade_knowledge_metadata(content, categories, metadatos)
+        metadatos.update(trade_meta)
         conn = _conn()
         cur = conn.cursor()
         cur.execute(
@@ -2827,13 +2883,12 @@ async def decay_hipocampo(dry_run: bool = True, min_age_days: int = 30) -> str:
                         link_dead += 1
 
             # === PART 2: Memory-level decay (olvido activo) ===
-
-            # Filtro de edad sobre la fecha efectiva de último acceso:
-            # COALESCE(max(accessed_at), (metadatos->>'date')::date) — ambos lados
-            # tipo date para que el COALESCE compile (bug previo: timestamptz vs text).
+            # Capa 3: Perfiles de decaimiento por dominio + Capa 1: trade_knowledge
             cur.execute(
                 """
                 SELECT id, contenido, metadatos::text,
+                       (metadatos->>'domain_profile') as domain_profile,
+                       (metadatos->>'trade_knowledge') as trade_knowledge,
                        COALESCE(
                            (SELECT max(accessed_at) FROM memory_access
                             WHERE memory_id = 'v' || mv.id),
@@ -2842,18 +2897,7 @@ async def decay_hipocampo(dry_run: bool = True, min_age_days: int = 30) -> str:
                 FROM memoria_vectorial mv
                 WHERE (metadatos->>'nivel') = 'episodica'
                   AND (metadatos->>'critico') IS DISTINCT FROM 'true'
-                  AND (
-                       COALESCE(
-                           (SELECT max(accessed_at) FROM memory_access
-                            WHERE memory_id = 'v' || mv.id),
-                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
-                       ) IS NULL
-                       OR COALESCE(
-                           (SELECT max(accessed_at) FROM memory_access
-                            WHERE memory_id = 'v' || mv.id),
-                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
-                       ) < NOW() - (%s || ' days')::interval
-                  )
+                  AND (metadatos->>'trade_knowledge') IS DISTINCT FROM 'true'
                   AND mv.id NOT IN (
                       SELECT DISTINCT CAST(
                           regexp_replace(source_id, '[^0-9]', '', 'g') AS bigint
@@ -2867,9 +2911,27 @@ async def decay_hipocampo(dry_run: bool = True, min_age_days: int = 30) -> str:
                       FROM memory_links
                       WHERE target_id ~ '^v?[0-9]+$'
                   )
+                  AND (
+                       COALESCE(
+                           (SELECT max(accessed_at) FROM memory_access
+                            WHERE memory_id = 'v' || mv.id),
+                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
+                       ) IS NULL
+                       OR COALESCE(
+                           (SELECT max(accessed_at) FROM memory_access
+                            WHERE memory_id = 'v' || mv.id),
+                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
+                       ) < NOW() - (
+                           CASE (metadatos->>'domain_profile')
+                               WHEN 'infrastructure' THEN '180 days'
+                               WHEN 'project_specific' THEN '90 days'
+                               WHEN 'temporary' THEN '14 days'
+                               ELSE '60 days'
+                           END
+                       )::interval
+                  )
                 ORDER BY last_access ASC NULLS FIRST
                 """,
-                (min_age_days,),
             )
             memory_rows = cur.fetchall()
 
@@ -2938,6 +3000,126 @@ async def decay_hipocampo(dry_run: bool = True, min_age_days: int = 30) -> str:
         return await asyncio.to_thread(_do)
     except Exception as e:
         return _tool_err("decay_hipocampo", e)
+
+
+# ─── TRADE KNOWLEDGE TOOLS ────────────────────────────────────────────
+
+
+@mcp.tool()
+async def review_trade_knowledge(dry_run: bool = True) -> str:
+    """Revisa memorias de conocimiento del oficio candidatas a decaer.
+
+    Presenta memorias con domain_profile='infrastructure' que están
+    cerca de su fecha límite de decay (150+ días sin acceso de los 180).
+    El agente puede:
+    - Refuerza (reinforce): resetea el contador de acceso
+    - Permite decay: la memoria sigue el ciclo normal
+
+    Ejecutar cada 3 meses via systemd timer o manualmente.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                SELECT mv.id, mv.contenido, mv.metadatos::text,
+                       COALESCE(
+                           (SELECT max(accessed_at) FROM memory_access
+                            WHERE memory_id = 'v' || mv.id),
+                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
+                       ) as last_access
+                FROM memoria_vectorial mv
+                WHERE (metadatos->>'domain_profile') = 'infrastructure'
+                  AND (metadatos->>'trade_knowledge') = 'true'
+                  AND (metadatos->>'critico') IS DISTINCT FROM 'true'
+                ORDER BY last_access ASC NULLS FIRST
+            """)
+            rows = cur.fetchall()
+            candidates = []
+
+            for mv_id, contenido, meta_text, last_acc in rows:
+                age_days = (date.today() - last_acc.date()).days if last_acc else 999
+                if age_days >= 150:
+                    candidates.append(
+                        {
+                            "id": mv_id,
+                            "content_preview": contenido[:200] if contenido else "",
+                            "days_without_access": age_days,
+                            "decay_limit": 180,
+                        }
+                    )
+
+            if not candidates:
+                return "✅ No hay memorias del oficio candidatas a decaer."
+
+            lines = [
+                f"📚 CONOCIMIENTO DEL OFICIO — {len(candidates)} memoria(s) candidatas a revisión",
+                "",
+            ]
+            for c in candidates[:20]:
+                remaining = c["decay_limit"] - c["days_without_access"]
+                lines.append(f"  [{c['id']}] ⏰ {c['days_without_access']}d sin acceso (quedan {remaining}d)")
+                lines.append(f"       {c['content_preview']}...")
+                lines.append("")
+            lines.append("💡 Usa reinforce en las que sigan siendo relevantes.")
+            lines.append("   Las no reforzadas decaerán automáticamente.")
+            return "\n".join(lines)
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("review_trade_knowledge", e)
+
+
+@mcp.tool()
+async def list_trade_knowledge() -> str:
+    """Lista todas las memorias marcadas como conocimiento del oficio.
+
+    Muestra id, preview, reusability, domain_profile y days since last access.
+    """
+
+    def _do():
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                SELECT mv.id, mv.contenido, mv.metadatos::text,
+                       COALESCE(
+                           (SELECT max(accessed_at) FROM memory_access
+                            WHERE memory_id = 'v' || mv.id),
+                           (SELECT NULLIF(mv.metadatos->>'date', '')::timestamptz)
+                       ) as last_access
+                FROM memoria_vectorial mv
+                WHERE (metadatos->>'trade_knowledge') = 'true'
+                ORDER BY mv.id DESC
+                LIMIT 50
+            """)
+            rows = cur.fetchall()
+            if not rows:
+                return "✅ No hay memorias de conocimiento del oficio registradas."
+
+            lines = [f"📚 CONOCIMIENTO DEL OFICIO — {len(rows)} memorias", ""]
+            for mv_id, contenido, meta_text, last_acc in rows:
+                meta = json.loads(meta_text) if meta_text else {}
+                age_days = (date.today() - last_acc.date()).days if last_acc else 999
+                lines.append(
+                    f"  [{mv_id}] {meta.get('reusability', '?')}/{meta.get('domain_profile', '?')} | {age_days}d sin acceso"
+                )
+                lines.append(f"       {(contenido or '')[:120]}...")
+                lines.append("")
+            return "\n".join(lines)
+        finally:
+            cur.close()
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("list_trade_knowledge", e)
 
 
 # ─── MEMORY BUDGET & TIERING — Tools ──────────────────────────────────────

@@ -231,3 +231,15 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO __DB_USER__;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO __DB_USER__;
 ALTER DEFAULT PRIVILEGES FOR ROLE __DB_USER__ IN SCHEMA public GRANT ALL ON TABLES TO __DB_USER__;
 ALTER DEFAULT PRIVILEGES FOR ROLE __DB_USER__ IN SCHEMA public GRANT ALL ON SEQUENCES TO __DB_USER__;
+
+-- ------------------------------------------------------------
+-- 14. Índices para Trade Knowledge v4.3
+-- ------------------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_mv_trade_knowledge ON memoria_vectorial ((metadatos->>'trade_knowledge'));
+CREATE INDEX IF NOT EXISTS idx_mv_reusability ON memoria_vectorial ((metadatos->>'reusability'));
+CREATE INDEX IF NOT EXISTS idx_mv_domain_profile ON memoria_vectorial ((metadatos->>'domain_profile'));
+
+-- ------------------------------------------------------------
+-- 15. Trade Knowledge Review Timer/Service
+-- ------------------------------------------------------------
+-- Archivos copiados por install.sh a ~/.config/systemd/user/
