@@ -2962,9 +2962,20 @@ async def decay_hipocampo(dry_run: bool = True, min_age_days: int = 30) -> str:
             mem_archived = 0
             mem_skipped_protected = 0
 
-            for mv_id, contenido, meta_text, last_acc in memory_rows:
+            for mv_id, contenido, meta_text, domain_profile, trade_knowledge, last_acc in memory_rows:
                 meta = json.loads(meta_text) if meta_text else {}
                 nivel = meta.get("nivel", "episodica")
+                domain = meta.get("domain_profile", domain_profile)
+
+                if nivel in ("automatica", "semantica"):
+                    mem_skipped_protected += 1
+                    continue
+
+                if meta.get("critico"):
+                    mem_skipped_protected += 1
+                    continue
+
+                mem_candidates += 1
 
                 if nivel in ("automatica", "semantica"):
                     mem_skipped_protected += 1
