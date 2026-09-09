@@ -69,13 +69,37 @@ Prevents repeating mistakes across sessions:
 ## 🛡️ Code Immune System — Regression Protection
 
 ```markdown
-1. SNAPSHOT: Before editing a fragile file, save what works and how to verify
+1. SNAPSHOT: Before editing a fragile file, save with snapshot_for=<rule_id>
 2. VERIFY: After editing, confirm the verification passes
 3. IMMUNIZE: If something broke, save a permanent `automatica` rule capturing cause, symptom, and fix
 ```
 
+The `snapshot_for=<rule_id>` parameter in `save_hipocampo` automatically creates
+a `part_of` link from the snapshot to the immune rule in the memory graph.
+This enables `validate_immune_rule` to find the pre-change snapshot.
+
+```
+# Step 1: Find or create the immune rule for this file
+search_hipocampo("trigger:regresion trigger:<filename> trigger:<project>")
+
+# If rule exists (e.g., id=425), save snapshot linked to it:
+save_hipocampo(
+    "PRE-CHANGE SNAPSHOT: <archivo> en <proyecto>.
+     Dependencias críticas: <requiere X para Y>.
+     Verificación: <pasos para confirmar que sigue funcionando>.",
+    code="snapshot_<filename>",
+    categories=["trigger:<project>", "trigger:regresion", "trigger:<filename>"],
+    nivel="episodica",
+    snapshot_for=425
+)
+
+# Step 2: Edit the file
+# Step 3: Verify — if OK, snapshot fades; if broke, proceed to Step 4
+# Step 4: Immunize — the snapshot_for link is already there
+```
+
 ### Fragile files (pre-loaded)
-Before touching: `search_hipocampo("trigger:regression trigger:<filename>")`
+Before touching: `search_hipocampo("trigger:regresion trigger:<filename>")`
 
 ## 🎯 Memory Evolution Strategies (Hipocampo v2)
 
