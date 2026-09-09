@@ -35,7 +35,7 @@ def _fmt_step(name: str, result: str) -> str:
     return f"  {'✅' if ok else '❌'} {name}: {result}"
 
 
-def run(dry_run: bool, min_age: int, decay_min_age: int, quiet: bool = False) -> int:
+def run(dry_run: bool, min_age: int, decay_min_age: int, quiet: bool = False, review_only: bool = False) -> int:
     mode = "DRY-RUN (simulación)" if dry_run else "APLICANDO CAMBIOS"
     if not quiet:
         print(f"🧠 HIPOCAMPO MAINTENANCE — Modo: {mode}")
@@ -43,6 +43,23 @@ def run(dry_run: bool, min_age: int, decay_min_age: int, quiet: bool = False) ->
 
     exit_code = 0
     t0 = time.monotonic()
+
+    if review_only:
+        try:
+            import asyncio
+            review_result = asyncio.run(srv.review_automatica(max_age_days=30, dry_run=False))
+            if not quiet:
+                print(f"  {'✅' if not review_result.startswith('error') else '❌'} review_automatica: {review_result}")
+            if review_result.startswith("error"):
+                exit_code = 1
+        except Exception as e:
+            if not quiet:
+                print(f"  ❌ review_automatica: {e}")
+            exit_code = 1
+        elapsed = time.monotonic() - t0
+        if not quiet:
+            print(f"🏁 review_automatica finalizado en {elapsed:.1f}s (exit={exit_code}).")
+        return exit_code
 
     if dry_run:
         # Simulación: usar las tools con dry_run=True (solo lectura)
@@ -53,8 +70,6 @@ def run(dry_run: bool, min_age: int, decay_min_age: int, quiet: bool = False) ->
         if not quiet:
             print(c)
             print(d)
-        print("🏁 DRY-RUN finalizado (ningún cambio aplicado).")
-        return 0
         print("🏁 DRY-RUN finalizado (ningún cambio aplicado).")
         return 0
 
@@ -68,6 +83,20 @@ def run(dry_run: bool, min_age: int, decay_min_age: int, quiet: bool = False) ->
             print(_fmt_step(name, res))
         if res.startswith("error"):
             exit_code = 1
+
+    # review_automatica: revisar reglas automatica sin revisión
+    # (ejecuta siempre, dry_run=False para actualizar review_count)
+    try:
+        import asyncio
+        review_result = asyncio.run(srv.review_automatica(max_age_days=30, dry_run=False))
+        if not quiet:
+            print(f"  {'✅' if not review_result.startswith('error') else '❌'} review_automatica: {review_result}")
+        if review_result.startswith("error"):
+            exit_code = 1
+    except Exception as e:
+        if not quiet:
+            print(f"  ❌ review_automatica: {e}")
+        exit_code = 1
 
     elapsed = time.monotonic() - t0
     if not quiet:
@@ -91,9 +120,10 @@ def main():
         help="Días mínimos para archivar episódicas sin acceso (default: 60)",
     )
     parser.add_argument("--quiet", action="store_true", help="Solo errores (para logs limpios de systemd)")
+    parser.add_argument("--review-only", action="store_true", help="Solo ejecuta review_automatica sin el ciclo completo")
     args = parser.parse_args()
 
-    sys.exit(run(dry_run=not args.apply, min_age=args.min_age, decay_min_age=args.decay_min_age, quiet=args.quiet))
+    sys.exit(run(dry_run=not args.apply, min_age=args.min_age, decay_min_age=args.decay_min_age, quiet=args.quiet, review_only=args.review_only))
 
 
 if __name__ == "__main__":

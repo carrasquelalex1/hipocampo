@@ -1,10 +1,15 @@
 [Unit]
-Description=Servicio de Revisión Trimestral de Conocimiento del Oficio
+Description=Hipocampo MCP - Revisión de Reglas Automáticas Cada 72h
+After=network.target postgresql.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /home/alex/.hipocampo/repo/scripts/review_trade_knowledge_cli.py
-User=alex
-WorkingDirectory=/home/alex/.hipocampo/repo/scripts
+Environment=HIPOCAMPO_MAINT_MIN_AGE_DAYS=7
+Environment=HIPOCAMPO_MAINT_DECAY_MIN_AGE_DAYS=60
+ExecStart=/usr/bin/python3 %h/.hipocampo/scripts/run_maintenance.py --apply --quiet --review-only
 StandardOutput=journal
 StandardError=journal
+TimeoutStartSec=300
+
+[Install]
+WantedBy=timers.target

@@ -1616,25 +1616,42 @@ async def review_automatica(max_age_days: int = 30, dry_run: bool = True) -> str
                ORDER BY id"""
         )
         rows = cur.fetchall()
+        reviewed = 0
+        degraded = 0
         candidates = []
         for row in rows:
             meta = json.loads(row[2])
             review_count = int(meta.get("review_count", 0))
             created_str = meta.get("created_at") or meta.get("date") or ""
+            is_candidate = False
             try:
                 created = datetime.fromisoformat(created_str)
                 if created.tzinfo is None:
                     created = created.replace(tzinfo=timezone.utc)
                 if created < cutoff and review_count == 0:
-                    candidates.append((row[0], row[1][:80], created_str, review_count))
+                    is_candidate = True
             except (ValueError, TypeError):
                 if review_count == 0:
-                    candidates.append((row[0], row[1][:80], created_str or "desconocida", review_count))
-        if not candidates:
-            cur.close()
-            conn.close()
-            return "✅ No hay reglas automatica pendientes de revisión."
+                    is_candidate = True
+            if dry_run:
+                if is_candidate:
+                    candidates.append((row[0], row[1][:80], created_str, review_count))
+                continue
+            meta["review_count"] = review_count + 1
+            reviewed += 1
+            if is_candidate:
+                meta["nivel"] = "semantica"
+                meta["degraded_at"] = str(date.today())
+                meta["degraded_reason"] = "auto_review_expired"
+            cur.execute("UPDATE memoria_vectorial SET metadatos=%s WHERE id=%s", (json.dumps(meta), row[0]))
+            if is_candidate:
+                degraded += 1
+        conn.commit()
+        cur.close()
+        conn.close()
         if dry_run:
+            if not candidates:
+                return "✅ No hay reglas automatica pendientes de revisión."
             lines = [
                 f"📋 Revisión de reglas automatica (dry-run, >{max_age_days}d, review_count=0):",
                 f"   {len(candidates)} candidatas a degradación → semantica",
@@ -1645,24 +1662,8 @@ async def review_automatica(max_age_days: int = 30, dry_run: bool = True) -> str
                 lines.append(f"       {content}...")
             if len(candidates) > 20:
                 lines.append(f"  ... y {len(candidates) - 20} más")
-            cur.close()
-            conn.close()
             return "\n".join(lines)
-        degraded = 0
-        for rid, _, _, _ in candidates:
-            cur.execute("SELECT metadatos FROM memoria_vectorial WHERE id=%s", (rid,))
-            row = cur.fetchone()
-            if row:
-                meta = (row[0] or {}).copy()
-                meta["nivel"] = "semantica"
-                meta["degraded_at"] = str(date.today())
-                meta["degraded_reason"] = "auto_review_expired"
-                cur.execute("UPDATE memoria_vectorial SET metadatos=%s WHERE id=%s", (json.dumps(meta), rid))
-                degraded += 1
-        conn.commit()
-        cur.close()
-        conn.close()
-        return f"✅ {degraded} reglas automatica degradadas a semantica por inactividad."
+        return f"✅ {degraded} reglas automatica degradadas a semantica por inactividad. {reviewed} reglas evaluadas (review_count actualizado)."
 
     try:
         return await asyncio.to_thread(_do)

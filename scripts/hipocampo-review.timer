@@ -1,10 +1,12 @@
 [Unit]
-Description=Timer Trimestral para Revisión de Conocimiento del Oficio
+Description=Timer para Revisión de Reglas Automáticas (cada 72h)
 
 [Timer]
-# Cada 3 meses: 1ro de enero, abril, julio, octubre
-OnCalendar=*-*-01 04:00:00
+# Cada 3 días a las 04:00 AM, 1 hora después del mantenimiento semanal
+OnCalendar=*-*-* 04:00:00/3
+# CLAVE: si la PC estaba apagada, systemd ejecuta apenas enciende (catch-up)
 Persistent=true
+# Retardo aleatorio de hasta 5 min para no competir con otros timers
 RandomizedDelaySec=300
 
 [Install]
