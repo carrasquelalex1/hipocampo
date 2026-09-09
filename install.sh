@@ -414,14 +414,13 @@ SVC
         cp "$INSTALL_DIR/scripts/hipocampo-maintenance.timer" "$UDIR/"
     fi
 
-    # Timer trimestral de revisión de Trade Knowledge v4.3
+    # Timer trimestral de revisión de reglas automatica (cada 72h)
     if [[ -f "$INSTALL_DIR/scripts/hipocampo-review.service" ]]; then
-        sed "s|^ExecStart=.*|ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/scripts/review_trade_knowledge_cli.py|" \
-            "$INSTALL_DIR/scripts/hipocampo-review.service" > "$UDIR/hipocampo-review.service"
+        cp "$INSTALL_DIR/scripts/hipocampo-review.service" "$UDIR/hipocampo-review.service"
         cp "$INSTALL_DIR/scripts/hipocampo-review.timer" "$UDIR/"
         systemctl --user daemon-reload
         systemctl --user enable --now hipocampo-review.timer 2>/dev/null \
-            && log_success "Timer revisión Trade Knowledge ACTIVO (1ro de cada mes, trimestral)"
+            && log_success "Timer revision automatica ACTIVO (cada 72h)"
     fi
 
     systemctl --user daemon-reload
