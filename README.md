@@ -61,6 +61,22 @@ URL: https://alexbell1-hipocampo-mcp.hf.space/mcp
 
 > **Una sola línea.** La terminal hace todo: PostgreSQL + pgvector, embeddings, base de datos, venv, clientes MCP, servicio systemd con timer de mantenimiento automático.
 
+> ### 🪟 ¿Usas Windows?
+> `install.sh` es un script de **Linux/macOS**. En Windows necesitas **WSL2** (Windows Subsystem for Linux):
+>
+> ```powershell
+> wsl --install
+> ```
+>
+> Abre la terminal de WSL (Ubuntu), **actualiza los paquetes** y vuelve a ejecutar el instalador:
+>
+> ```bash
+> sudo apt update && sudo apt install -y python3-venv python3-pip build-essential
+> curl -fsSL https://raw.githubusercontent.com/carrasquelalex1/hipocampo/main/install.sh | bash
+> ```
+>
+> **⚠️ En Windows puro (CMD/PowerShell) el instalador NO funciona.** Sin WSL2 verás errores como `Package 'python3-venv' has no installation candidate` o `apt: command not found`.
+
 ### 🚀 Instalar en 10 segundos
 
 ```bash
@@ -777,6 +793,22 @@ Hipocampo corre como **servidor MCP gratuito** en Hugging Face Spaces. Conéctat
 ## ⚡ Instalación Zero-Touch — Auto-Installer v6.0
 
 > **Una sola línea.** La terminal hace todo: PostgreSQL + pgvector, embeddings, base de datos, venv, clientes MCP, servicio systemd con timer de mantenimiento automático.
+
+> ### 🪟 ¿Usas Windows?
+> `install.sh` es un script de **Linux/macOS**. En Windows necesitas **WSL2** (Windows Subsystem for Linux):
+>
+> ```powershell
+> wsl --install
+> ```
+>
+> Abre la terminal de WSL (Ubuntu), **actualiza los paquetes** y vuelve a ejecutar el instalador:
+>
+> ```bash
+> sudo apt update && sudo apt install -y python3-venv python3-pip build-essential
+> curl -fsSL https://raw.githubusercontent.com/carrasquelalex1/hipocampo/main/install.sh | bash
+> ```
+>
+> **⚠️ En Windows puro (CMD/PowerShell) el instalador NO funciona.** Sin WSL2 verás errores como `Package 'python3-venv' has no installation candidate` o `apt: command not found`.
 
 ### 🚀 Instalar en 10 segundos
 
