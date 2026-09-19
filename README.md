@@ -192,6 +192,7 @@ When enabled (`HIPOCAMPO_TYPESAFE=1` + API key), it upgrades every semantic deci
 
 - **Graceful fallback**: if TypeSafe is off, fails, or times out (10s default), every path falls back to the local embedding heuristics — saves and searches never block.
 - **Config**: `HIPOCAMPO_TYPESAFE=1` in `~/.hipocampo/.env`; key via `TYPESAFE_API_KEY` or key file (`TYPESAFE_KEY_FILE`, default `~/.config/typesafe/api_key`). See [docs/TYPESAFE.md](docs/TYPESAFE.md).
+- **Measured impact**: [docs/BENCHMARK-CONTRADICCIONES.md](docs/BENCHMARK-CONTRADICCIONES.md) — 27-pair evaluation on a real memory base (methodology, results, caveats).
 - **Privacy note**: judge calls send the compared memory texts to TypeSafe's API (same trust model as the LLM compression endpoint).
 
 ---
@@ -953,6 +954,7 @@ Al activarlo (`HIPOCAMPO_TYPESAFE=1` + key), mejora todos los puntos de decisió
 
 - **Fallback garantizado**: si TypeSafe está apagado, falla o excede el timeout (10s por defecto), todas las rutas caen a las heurísticas locales — guardados y búsquedas nunca se bloquean.
 - **Config**: `HIPOCAMPO_TYPESAFE=1` en `~/.hipocampo/.env`; key vía `TYPESAFE_API_KEY` o archivo (`TYPESAFE_KEY_FILE`, default `~/.config/typesafe/api_key`). Ver [docs/TYPESAFE.md](docs/TYPESAFE.md).
+- **Impacto medido**: [docs/BENCHMARK-CONTRADICCIONES.md](docs/BENCHMARK-CONTRADICCIONES.md) — evaluación de 27 pares sobre una base real (metodología, resultados y salvedades).
 - **Privacidad**: las llamadas de juicio envían los textos comparados a la API de TypeSafe (mismo modelo de confianza que el endpoint de compresión LLM).
 
 ---
