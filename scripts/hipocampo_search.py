@@ -779,8 +779,14 @@ def formatear_resultados(resultados, query):
 
     alpha = cargar_config_hibrida()
     alpha_desc = f"⚖️  α={alpha:.1f}" if alpha != 0.5 else ""
+    has_ts_rerank = any(r.get("rel_typesafe") is not None for r in resultados) if resultados else False
     has_rerank = any(r.get("score_bire") is not None for r in resultados) if resultados else False
-    rerank_desc = "  🔄 re-rank AGENTE" if has_rerank else ""
+    if has_ts_rerank:
+        rerank_desc = "  🔄 re-rank TypeSafe"
+    elif has_rerank:
+        rerank_desc = "  🔄 re-rank AGENTE"
+    else:
+        rerank_desc = ""
 
     lines = [
         f"\n{'=' * 60}",
@@ -794,7 +800,9 @@ def formatear_resultados(resultados, query):
     mi_count = sum(1 for r in resultados if r["tabla"] == "memory_items")
     tag_count = sum(1 for r in resultados if r["method"] == "expansion_por_tags")
     lines.append(f"📊 memoria_vectorial: {mv_count}  |  memory_items: {mi_count}  |  por_tags: {tag_count}")
-    if has_rerank:
+    if has_ts_rerank:
+        lines.append("⚡ RE-RANK TYPESAFE aplicado: orden por relevancia calibrada (score × (0.5 + 0.5·noul)).")
+    elif has_rerank:
         lines.append("⚡ RE-RANK PENDIENTE: el agente activo (Claude) re-ordenará estos resultados tras leerlos.")
     lines.append("")
 
@@ -846,7 +854,7 @@ def search(query: str, session_id: str = "") -> str:
     return formatear_resultados(resultados, query)
 
 
-def search_with_stats(query: str, session_id: str = "") -> tuple[str, dict]:
+def search_with_stats(query: str, session_id: str = "", rerank_typesafe: bool = False) -> tuple[str, dict]:
     """Run BIRE search and return (formatted_text, stats_dict).
 
     Stats dict contains structured metrics for logging/recording:
@@ -855,7 +863,7 @@ def search_with_stats(query: str, session_id: str = "") -> tuple[str, dict]:
     - avg_score: score promedio
     - method: siempre 'bire'
     """
-    resultados = bire_search(query, session_id=session_id)
+    resultados = bire_search(query, session_id=session_id, rerank_typesafe=rerank_typesafe)
     text = formatear_resultados(resultados, query)
     stats = {
         "results_count": len(resultados),
@@ -975,7 +983,44 @@ def _buscar_por_categories(cur, triggers):
     return results
 
 
-def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
+def _rerank_typesafe(resultados, query, top_n=15):
+    """Re-ordena el top-N con TypeSafe (Noul de relevancia), UNA llamada.
+
+    Mezcla el juicio con el score: factor = 0.5 + 0.5·noul (nunca anula un
+    resultado, solo lo promueve/demota). Si TypeSafe está apagado o falla,
+    devuelve los resultados sin tocar.
+    """
+    if not resultados:
+        return resultados
+    try:
+        import typesafe_client as ts
+    except Exception:
+        return resultados
+    if not ts.enabled():
+        return resultados
+    top = resultados[:top_n]
+    if len(top) < 3:
+        return resultados
+    resto = resultados[top_n:]
+    pares = [(i, r.get("contenido", "")[:600]) for i, r in enumerate(top)]
+    try:
+        rel = ts.relevancia_batch(query, pares)
+    except Exception:
+        return resultados
+    if rel is None:
+        return resultados
+    for i, r in enumerate(top):
+        noul = rel.get(i)
+        if noul is None:
+            continue
+        r["score_bire"] = r["score"]
+        r["rel_typesafe"] = round(noul, 3)
+        r["score"] = round(r["score"] * (0.5 + 0.5 * noul), 3)
+    top.sort(key=lambda x: x["score"], reverse=True)
+    return top + resto
+
+
+def bire_search(query, umbral_minimo=10.0, rerank=False, session_id="", rerank_typesafe=False):
     conn = get_conn()
     cur = conn.cursor()
 
@@ -1019,6 +1064,9 @@ def bire_search(query, umbral_minimo=10.0, rerank=False, session_id=""):
 
     if rerank:
         fusionados = re_rank_results(fusionados, query, top_n=RE_RANK_TOP_N)
+
+    if rerank_typesafe:
+        fusionados = _rerank_typesafe(fusionados, query)
 
     filtrados = [r for r in fusionados if r["score"] >= umbral_minimo]
     if session_id:

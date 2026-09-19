@@ -177,13 +177,18 @@ Hipocampo can optionally delegate its semantic **judgments** (not text generatio
 - **Catches what embeddings miss**: contradictions between close paraphrases (cosine distance < 0.35, the dedup zone) that the embedding probe cannot see.
 - **Safer destructive operations**: `dedup(merge=True)` only merges groups TypeSafe confirms as the *same fact*.
 
-When enabled (`HIPOCAMPO_TYPESAFE=1` + API key), it upgrades three decision points:
+When enabled (`HIPOCAMPO_TYPESAFE=1` + API key), it upgrades every semantic decision point:
 
 | Decision | Without TypeSafe | With TypeSafe (`typesafe_client.py`) |
 |---|---|---|
 | Contradiction detection | Negation-probe embeddings (heuristic, 2 embeddings per candidate) | One Noul per candidate **in a single call** — calibrated probability; also catches contradictions between close paraphrases (cosine distance < 0.35) that the probe's window excludes |
+| Post-save audit (unified) | Dedup warning, `similar` auto-links and contradiction probe run separately | **One call per save** judges contradiction + relation + duplicate + suggested tag for up to 6 neighbors at once |
+| Auto-link typing | Every link above cosine 0.75 becomes `similar` | Choice per neighbor → `similar`, `follow_up` (the new memory updates the old one), or no link |
+| Tag suggestion | Tags only via regex rules | Primary tag chosen from the existing vocabulary → appended to `metadatos.tags` |
 | Semantic dedup (`dedup(merge=True)`) | Merges every group above the cosine threshold (destructive) | Embeddings propose, TypeSafe confirms (*same fact / related / different*) — unconfirmed groups are skipped |
 | Post-save dedup warning | Cosine > 0.9 only | TypeSafe confirms "same fact" before warning (fewer false positives) |
+| Profile merge (`profile_hipocampo`) | Merges profile entries above cosine 0.85 | TypeSafe confirms "same fact" before merging |
+| Search re-rank (opt-in) | Fixed hybrid ordering | `search_hipocampo(..., rerank=True)` re-orders the top-15 with a calibrated relevance judgment (one extra call) |
 
 - **Graceful fallback**: if TypeSafe is off, fails, or times out (10s default), every path falls back to the local embedding heuristics — saves and searches never block.
 - **Config**: `HIPOCAMPO_TYPESAFE=1` in `~/.hipocampo/.env`; key via `TYPESAFE_API_KEY` or key file (`TYPESAFE_KEY_FILE`, default `~/.config/typesafe/api_key`). See [docs/TYPESAFE.md](docs/TYPESAFE.md).
@@ -477,9 +482,9 @@ Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to
 ### Available MCP Tools (39 tools)
 
 **Memory Operations:**
-* `search_hipocampo(query, session_id?)`: Unified semantic and lexical search (auto-records metrics). Optionally filter by session.
-* `quick_hipocampo_search(query)`: Shorthand alias for rapid queries.
-* `preload_context(project_path, k=8)`: Extract keywords from project path, search relevant memories, return compressed summary. Ideal for session initialization.
+* `search_hipocampo(query, session_id?, rerank=False)`: Unified semantic and lexical search (auto-records metrics). Optionally filter by session. `rerank=True` re-orders top results with a TypeSafe relevance judgment when the integration is enabled.
+* `quick_hipocampo_search(query, rerank=False)`: Shorthand alias for rapid queries.
+* `preload_context(project_path, k=8, rerank=False)`: Extract keywords from project path, search relevant memories, return compressed summary. Ideal for session initialization.
 * `compress_hipocampo(query, k=5, method="hybrid", budget_ratio=1.0, include_metadata=False)`: Search + hybrid compression with context budget awareness. Auto-estimates tokens and adjusts k dynamically. Three methods: `"hybrid"` (recommended), `"extractive"` (fastest, no API cost), `"llm"` (highest quality).
 * `save_hipocampo(content, memory_type, code, categories, session_id?, force?, auto_link=False, nivel="episodica")`: Persist data into `memoria_vectorial`. Supports session isolation, auto-dedup, auto-linking, and hierarchical memory levels.
 * `profile_hipocampo(summary, extra, categories)`: Store personal or event-driven user data (`memory_items`).
@@ -933,13 +938,18 @@ Hipocampo puede delegar opcionalmente sus **juicios** semánticos (no la generac
 - **Detecta lo que los embeddings no ven**: contradicciones entre paráfrasis casi idénticas (distancia coseno < 0.35, zona de dedup) que la sonda de embeddings no puede separar.
 - **Operaciones destructivas más seguras**: `dedup(merge=True)` solo fusiona grupos que TypeSafe confirma como el *mismo hecho*.
 
-Al activarlo (`HIPOCAMPO_TYPESAFE=1` + key), mejora tres puntos de decisión:
+Al activarlo (`HIPOCAMPO_TYPESAFE=1` + key), mejora todos los puntos de decisión semántica:
 
 | Decisión | Sin TypeSafe | Con TypeSafe (`typesafe_client.py`) |
 |---|---|---|
 | Detección de contradicciones | Sonda de negación con embeddings (heurística, 2 embeddings por candidato) | Un Noul por candidato **en una sola llamada** — probabilidad calibrada; además detecta contradicciones entre paráfrasis casi idénticas (distancia coseno < 0.35) que la ventana de la sonda excluye |
+| Auditoría post-save (unificada) | Aviso de dedup, auto-enlaces `similar` y sonda de contradicciones por separado | **Una llamada por save** juzga contradicción + relación + duplicado + tag sugerido para hasta 6 vecinos a la vez |
+| Tipo de auto-enlace | Todo enlace sobre coseno 0.75 se vuelve `similar` | Choice por vecino → `similar`, `follow_up` (la nueva actualiza a la vieja) o sin enlace |
+| Sugerencia de tag | Tags solo por reglas regex | Tag principal elegido del vocabulario existente → se agrega a `metadatos.tags` |
 | Dedup semántico (`dedup(merge=True)`) | Fusiona todo grupo sobre el umbral coseno (destructivo) | El embedding propone, TypeSafe confirma (*mismo hecho / relacionado / distinto*) — los grupos no confirmados se omiten |
 | Aviso de duplicado post-save | Solo cosine > 0.9 | TypeSafe confirma "mismo hecho" antes de avisar (menos falsos positivos) |
+| Merge de perfiles (`profile_hipocampo`) | Fusiona perfiles sobre coseno 0.85 | TypeSafe confirma "mismo hecho" antes de fusionar |
+| Re-rank de búsqueda (opcional) | Orden híbrido fijo | `search_hipocampo(..., rerank=True)` re-ordena el top-15 con un juicio de relevancia calibrado (una llamada extra) |
 
 - **Fallback garantizado**: si TypeSafe está apagado, falla o excede el timeout (10s por defecto), todas las rutas caen a las heurísticas locales — guardados y búsquedas nunca se bloquean.
 - **Config**: `HIPOCAMPO_TYPESAFE=1` en `~/.hipocampo/.env`; key vía `TYPESAFE_API_KEY` o archivo (`TYPESAFE_KEY_FILE`, default `~/.config/typesafe/api_key`). Ver [docs/TYPESAFE.md](docs/TYPESAFE.md).

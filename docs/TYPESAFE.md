@@ -28,9 +28,20 @@ Hipocampo falls back to its local methods — saves and searches never block.
 
 | Code path | Without TypeSafe | With TypeSafe |
 |---|---|---|
+| `_semantic_audit_bg_ts()` — post-save audit (`hipocampo_mcp_server.py`) | Dedup check, `similar` auto-links and contradiction probe run as separate steps | **One call per save** (`juicio_lote`: one Noul + one Choice per neighbor, plus a tag question) judges contradiction, relation, duplicate and primary tag for up to 6 neighbors |
 | `_detectar_contradicciones()` (`hipocampo_mcp_server.py`) | Negation-probe embeddings: 2 embeddings per candidate + heuristic margin | One **Noul** per candidate in a single API call → calibrated contradiction probability (threshold `0.7`) |
 | `_check_dedup_semantic()` (`hipocampo_mcp_server.py`) | Cosine `> 0.9` warns "duplicate" | Same embedding proposes the candidate, then a **Choice** (*mismo / relacionado / distinto*) confirms before warning |
 | `full_dedup_merge()` (`hipocampo_dedup.py`) | Merges every group above the cosine threshold (destructive) | `_typesafe_confirma_grupo()` confirms each group first — unconfirmed groups are skipped |
+| `profile_hipocampo()` merge | Merges profile entries above cosine `0.85` | `mismo_hecho()` confirms "same fact" before merging |
+| `_rerank_typesafe()` — opt-in search re-rank (`hipocampo_search.py`) | Fixed hybrid ordering | `search_hipocampo(..., rerank=True)`, `quick_hipocampo_search(..., rerank=True)` and `preload_context(..., rerank=True)` re-order the top-15 with `relevancia_batch()` (one Noul per result); score blends as `score × (0.5 + 0.5·noul)` |
+
+Typed auto-links: with `auto_link=True`, each neighbor's **Choice** also decides the link
+type — `similar` (related/mismo) or `follow_up` (the new memory updates/replaces the old
+one). Contradictions always win and create a `contradicts` link instead.
+
+Tag suggestion: the same save call asks for the primary tag over the **existing tag
+vocabulary** (top 10 tags, plus "none"); the chosen tag is appended to
+`metadatos.tags` if not present.
 
 Additional details:
 
@@ -39,9 +50,11 @@ Additional details:
   semantic rather than threshold-based. This catches contradictions between close
   paraphrases of the same fact, which typically fall in the dedup zone.
 - The memory itself is always excluded from candidates (`exclude_id`).
-- Post-save audit is bounded: `max_probes=3` (one API call).
-- On TypeSafe failure mid-audit, the fallback probe runs with the **original
-  narrow window**, preserving the previous behavior exactly.
+- Post-save audit is unified: one API call judges up to 6 neighbors (contradiction +
+  relation + duplicate + tag). Auto-links are created only when `auto_link=True`.
+- On TypeSafe failure at any point, the local fallback runs: dedup check, `similar`
+  auto-link and the negation-probe contradiction audit (with the original narrow
+  window `0.35–0.70`).
 
 ## Configuration
 
@@ -71,8 +84,9 @@ Thresholds live in `scripts/typesafe_client.py`:
 ## Files
 
 - `scripts/typesafe_client.py` — minimal stdlib client (no dependencies):
-  `enabled()`, `ask()`, `contradicciones_batch()`, `relacion()`, `mismo_hecho()`.
-  Never raises to the caller; returns `None` on any failure.
+  `enabled()`, `ask()`, `juicio_lote()`, `contradicciones_batch()`, `relacion()`,
+  `mismo_hecho()`, `relevancia_batch()`. Never raises to the caller; returns `None`
+  on any failure.
 - `scripts/hipocampo_mcp_server.py` — imports it optionally (`_ts`), wires it into
   contradiction detection and semantic dedup.
 - `scripts/hipocampo_dedup.py` — merge gate for semantic groups.

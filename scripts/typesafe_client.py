@@ -184,3 +184,102 @@ def mismo_hecho(a: str, b: str, min_conf: float | None = None) -> bool | None:
     if r["choice"] == "mismo" and (r.get("confidence") or 0) >= min_conf:
         return True
     return False
+
+
+def juicio_lote(nuevo: str, candidatos: list[tuple[int, str]], tags: list[str] | None = None) -> dict | None:
+    """Juicio semántico unificado en UNA llamada: contradicción + relación (+ tag).
+
+    Por cada candidato se preguntan dos cosas en paralelo:
+      - `n{cid}`: Noul — ¿el candidato contradice al hecho nuevo?
+      - `r{cid}`: Choice — mismo / sigue / relacionado / distinto
+
+    Opcionalmente (si `tags` no es None) una pregunta extra `tag`: Choice del
+    tag temático principal sobre el vocabulario cerrado dado, o "ninguno".
+
+    Returns:
+        {"candidatos": {id: {"noul", "relacion", "rel_conf"}}, "tag": str|None}
+        o None si la API falló (usar fallback local).
+    """
+    bloques = [f"HECHO NUEVO:\n{nuevo[:MAX_TEXTO]}"]
+    preguntas: dict = {}
+    for cid, texto in candidatos:
+        bloques.append(f"[C{cid}] {texto[:MAX_TEXTO]}")
+        preguntas[f"n{cid}"] = {
+            "type": "noul",
+            "instructions": (
+                f"El hecho [C{cid}] contradice al HECHO NUEVO: no pueden ser "
+                "verdaderos a la vez porque afirman lo contrario sobre lo mismo. "
+                "Compartir tema o ser más específico NO es contradecir."
+            ),
+        }
+        preguntas[f"r{cid}"] = {
+            "type": "choice",
+            "instructions": f"¿Qué relación hay entre el HECHO NUEVO y [C{cid}]?",
+            "criteria": {
+                "mismo": "Describen exactamente el mismo hecho o dato (fusionables)",
+                "sigue": "El HECHO NUEVO continúa, actualiza o reemplaza a [C" + str(cid) + "]",
+                "relacionado": "Mismo tema pero datos distintos (no fusionar, solo enlazar)",
+                "distinto": "Sin relación sustantiva",
+            },
+        }
+
+    if tags:
+        criterios_tag = {t: f"Tema '{t}'" for t in tags}
+        criterios_tag["ninguno"] = "Ninguno aplica claramente"
+        preguntas["tag"] = {
+            "type": "choice",
+            "instructions": "¿Cuál es el tag temático principal del HECHO NUEVO?",
+            "criteria": criterios_tag,
+        }
+
+    answers = ask("\n\n".join(bloques), preguntas)
+    if answers is None:
+        return None
+
+    resultado: dict = {"candidatos": {}, "tag": None}
+    for cid, _texto in candidatos:
+        n = answers.get(f"n{cid}") or {}
+        r = answers.get(f"r{cid}") or {}
+        noul = n.get("noul")
+        resultado["candidatos"][int(cid)] = {
+            "noul": float(noul) if isinstance(noul, (int, float)) else None,
+            "relacion": r.get("choice"),
+            "rel_conf": r.get("confidence"),
+        }
+    if tags:
+        t = answers.get("tag") or {}
+        tag = t.get("choice")
+        if tag and tag != "ninguno":
+            resultado["tag"] = tag
+    return resultado
+
+
+def relevancia_batch(query: str, items: list[tuple[int, str]]) -> dict[int, float] | None:
+    """Un Noul por fragmento: ¿responde a la consulta? UNA sola llamada.
+
+    items: [(id, texto), ...]
+    Returns: {id: noul} (todos los ids con valor válido) o None si falla.
+    """
+    if not items:
+        return {}
+    bloques = [f"CONSULTA:\n{query[:600]}"]
+    preguntas: dict = {}
+    for iid, texto in items:
+        bloques.append(f"[C{iid}] {texto[:MAX_TEXTO]}")
+        preguntas[f"q{iid}"] = {
+            "type": "noul",
+            "instructions": (
+                f"El fragmento [C{iid}] contiene información relevante que "
+                "responde a la CONSULTA (aunque sea parcialmente)."
+            ),
+        }
+    answers = ask("\n\n".join(bloques), preguntas)
+    if answers is None:
+        return None
+    out: dict[int, float] = {}
+    for iid, _texto in items:
+        a = answers.get(f"q{iid}") or {}
+        v = a.get("noul")
+        if isinstance(v, (int, float)):
+            out[int(iid)] = float(v)
+    return out

@@ -494,7 +494,7 @@ mcp = FastMCP("hipocampo")
 
 
 @mcp.tool()
-async def search_hipocampo(query: str, session_id: str = "") -> str:
+async def search_hipocampo(query: str, session_id: str = "", rerank: bool = False) -> str:
     """
     Busca en el Hipocampo (memoria dual con SSC / BIRE v3.6).
 
@@ -516,6 +516,9 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
                Ejemplos: "proyecto contable", "perro", "planta medicinal",
                "API REST en Python", "gusta del té".
         session_id: Opcional. Filtra resultados a una sesión específica.
+        rerank: Opcional (TypeSafe). Re-ordena el top-15 de resultados con un
+                juicio de relevancia calibrado (una llamada extra, ~0.5-1s).
+                Úsalo en búsquedas donde la precisión importa más que la latencia.
 
     Returns:
         Resultados formateados del BIRE como texto plano.
@@ -531,7 +534,7 @@ async def search_hipocampo(query: str, session_id: str = "") -> str:
         return rate_err
 
     try:
-        output, stats = await asyncio.to_thread(_search.search_with_stats, query, session_id)
+        output, stats = await asyncio.to_thread(_search.search_with_stats, query, session_id, rerank_typesafe=rerank)
 
         latency_ms = int((time.time() - t0) * 1000)
         logger.info(
@@ -616,7 +619,7 @@ def _reinforce_trade_on_search(query: str) -> None:
 
 
 @mcp.tool()
-async def quick_hipocampo_search(query: str, session_id: str = "") -> str:
+async def quick_hipocampo_search(query: str, session_id: str = "", rerank: bool = False) -> str:
     """
     Búsqueda rápida en el Hipocampo (alias corto de search_hipocampo).
 
@@ -630,12 +633,14 @@ async def quick_hipocampo_search(query: str, session_id: str = "") -> str:
         query: Texto de búsqueda en lenguaje natural. Igual que
                search_hipocampo. Ej: "API REST en Python", "presupuesto".
         session_id: Opcional. Filtra resultados a una sesión específica.
+        rerank: Opcional (TypeSafe). Re-ordena el top-15 con un juicio de
+                relevancia calibrado (una llamada extra, ~0.5-1s).
 
     Returns:
         Mismo formato que search_hipocampo: resultados como texto plano
         con scores de relevancia y metadatos.
     """
-    return await search_hipocampo(query, session_id)
+    return await search_hipocampo(query, session_id, rerank)
 
 
 @mcp.tool()
@@ -885,9 +890,11 @@ def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_li
     """Finaliza un save de forma asíncrona (best-effort, nunca lanza).
 
     1. Genera el embedding y hace backfill a la fila (INSERT ya ocurrió con NULL).
-    2. Dedup semántico (solo loguea si hay duplicado).
-    3. Auto-link 'similar' si se solicitó.
-    4. Auditoría de contradicciones (acotada).
+    2. Con TypeSafe activo, `_semantic_audit_bg_ts` hace UNA llamada que juzga:
+       contradicciones, relación con cada vecino (enlaces tipados), duplicado
+       semántico y tag principal sugerido.
+    3. Fallback local: dedup semántico (loguea), auto-link 'similar' si se
+       solicitó, y auditoría de contradicciones por sonda de negación.
 
     Si el embedding falla o es lento, la memoria queda en tier WARM
     (embedding=NULL): recuperable por búsqueda de texto/trigram.
@@ -913,6 +920,12 @@ def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_li
         conn.close()
     except Exception as e:
         logger.warning("Backfill de embedding id=%s falló: %s", row_id, e)
+        return
+
+    # Vía TypeSafe (si está activa): una sola llamada juzga contradicción,
+    # relación, dedup y tag sugerido. Si falla, cae al pipeline local.
+    if _ts is not None and _ts.enabled():
+        _semantic_audit_bg_ts(row_id, content, embedding, auto_link)
         return
 
     dup_id = _check_dedup_semantic(row_id, content, embedding)
@@ -1098,6 +1111,145 @@ def _audit_contradicciones_bg(row_id, content, embedding) -> None:
             conn.close()
         except Exception:
             logger.warning("No se pudo crear enlace 'contradicts' para save id=%s", row_id)
+
+
+def _insert_mem_link(source_id: int, target_id: int, relation_type: str, weight: float) -> None:
+    """Inserta un enlace del grafo con ids numéricos (resolubles por graph_hipocampo)."""
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (source_id, target_id, relation_type) DO NOTHING""",
+            (str(source_id), str(target_id), relation_type, round(float(weight), 3)),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception:
+        logger.warning("No se pudo crear enlace %s #%s→#%s", relation_type, source_id, target_id)
+
+
+def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link: bool) -> None:
+    """Auditoría semántica unificada con TypeSafe: UNA sola llamada HTTP.
+
+    Un POST pregunta por hasta 6 vecinos (distancia <= 0.70):
+      - Noul de contradicción → enlaces 'contradicts'
+      - Choice de relación   → enlaces tipados 'similar'/'follow_up' (si auto_link)
+      - dedup: vecino casi idéntico (dist < 0.10) con relación 'mismo' → warning
+      - tag principal sugerido sobre el vocabulario existente → metadatos.tags
+
+    Si la API falla, delega al pipeline local (dedup + auto-link + sonda).
+    Nunca lanza excepciones.
+    """
+    candidatos: list[tuple] = []
+    tags: list[str] | None = None
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, contenido, (embedding <=> %s::vector(1024)) AS dist
+               FROM memoria_vectorial
+               WHERE embedding IS NOT NULL AND id != %s
+                 AND (embedding <=> %s::vector(1024)) <= 0.70
+               ORDER BY dist ASC LIMIT 6""",
+            (embedding, row_id, embedding),
+        )
+        candidatos = cur.fetchall()
+        try:
+            cur.execute(
+                """SELECT t.tag, COUNT(*) AS c FROM (
+                       SELECT jsonb_array_elements_text(metadatos->'tags') AS tag
+                       FROM memoria_vectorial
+                       WHERE metadatos->'tags' IS NOT NULL) t
+                   GROUP BY t.tag ORDER BY c DESC LIMIT 10"""
+            )
+            tags = [r[0] for r in cur.fetchall() if r[0] and len(r[0]) > 2]
+        except Exception:
+            tags = None
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning("Auditoría TS: consulta de vecinos falló (%s)", e)
+        return
+
+    pares = [(cid, ctext[:800]) for cid, ctext, _dist in candidatos]
+    if not pares and not tags:
+        return
+
+    try:
+        res = _ts.juicio_lote(content, pares, tags=tags)
+    except Exception as e:
+        logger.warning("TypeSafe juicio_lote falló (%s) — fallback local", e)
+        res = None
+
+    if res is None:
+        dup_id = _check_dedup_semantic(row_id, content, embedding)
+        if dup_id:
+            logger.warning(
+                "⚠️ Duplicado semántico post-save: id=%s es muy similar a #%s "
+                "(save async omite el bloqueo síncrono de dedup)",
+                row_id,
+                dup_id,
+            )
+        if auto_link:
+            _auto_link_similar(row_id, embedding)
+        _audit_contradicciones_bg(row_id, content, embedding)
+        return
+
+    cand_res = res.get("candidatos", {})
+    for cid, ctext, cdist in candidatos:
+        j = cand_res.get(int(cid)) or {}
+        noul = j.get("noul")
+        relacion = j.get("relacion")
+
+        if noul is not None and noul >= _ts.UMBRAL_CONTRADICCION:
+            logger.warning(
+                "⚠️ Contradicción con #%s (conf=%.3f, via=typesafe) detectada en save id=%s: %s...",
+                cid,
+                noul,
+                row_id,
+                ctext[:80],
+            )
+            _insert_mem_link(row_id, cid, "contradicts", noul)
+            continue
+
+        if cdist < 0.10 and relacion == "mismo" and (j.get("rel_conf") or 0) >= 0.6:
+            logger.warning(
+                "⚠️ Duplicado semántico post-save: id=%s es casi idéntico a #%s "
+                "(TypeSafe conf=%.2f) — save async omite el bloqueo síncrono de dedup",
+                row_id,
+                cid,
+                j.get("rel_conf") or 0,
+            )
+
+        if auto_link and relacion in ("mismo", "sigue", "relacionado"):
+            rel_type = "follow_up" if relacion == "sigue" else "similar"
+            _insert_mem_link(row_id, cid, rel_type, 1.0 - cdist)
+
+    tag = res.get("tag")
+    if tag:
+        try:
+            conn = _conn()
+            cur = conn.cursor()
+            cur.execute(
+                """UPDATE memoria_vectorial
+                   SET metadatos = jsonb_set(
+                       COALESCE(metadatos, '{}'::jsonb), '{tags}',
+                       CASE WHEN COALESCE(metadatos->'tags', '[]'::jsonb) ? %s
+                            THEN COALESCE(metadatos->'tags', '[]'::jsonb)
+                            ELSE COALESCE(metadatos->'tags', '[]'::jsonb) || to_jsonb(%s::text)
+                       END, true)
+                   WHERE id = %s""",
+                (tag, tag, row_id),
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+            logger.info("🏷️ Tag TypeSafe añadido a #%s: %s", row_id, tag)
+        except Exception:
+            logger.warning("No se pudo añadir tag TypeSafe a #%s", row_id)
 
 
 def _generar_embedding(texto: str, tool_name: str = "unknown") -> list[float]:
@@ -1410,6 +1562,7 @@ async def profile_hipocampo(
         best_sim = 0.0
 
         import math
+        import ast
 
         def _cosine_sim(a, b):
             if not a or not b:
@@ -1420,8 +1573,6 @@ async def profile_hipocampo(
             return dot / (na * nb) if na * nb > 0 else 0.0
 
         if isinstance(embedding, str):
-            import ast
-
             new_emb = ast.literal_eval(embedding)
         else:
             new_emb = embedding
@@ -1437,6 +1588,20 @@ async def profile_hipocampo(
                 if sim > best_sim and sim >= PROFILE_MERGE_THRESHOLD:
                     best_sim = sim
                     best_match = row
+            except Exception:
+                pass
+
+        if best_match and _ts is not None and _ts.enabled():
+            # Confirmación TypeSafe: el embedding propone, el juicio confirma.
+            try:
+                if _ts.mismo_hecho(summary, best_match[1]) is False:
+                    logger.info(
+                        "Perfil similar (id=%s, %.1f%%) NO confirmado como mismo dato "
+                        "(TypeSafe) — se guarda como entrada nueva",
+                        best_match[0],
+                        best_sim * 100,
+                    )
+                    best_match = None
             except Exception:
                 pass
 
@@ -2360,7 +2525,7 @@ async def list_watches() -> str:
 
 
 @mcp.tool()
-async def preload_context(project_path: str = "", k: int = 8) -> str:
+async def preload_context(project_path: str = "", k: int = 8, rerank: bool = False) -> str:
     """
     Pre-load context for a project or workspace. Extracts relevant memories
     from the project path and returns them as a compressed summary.
@@ -2371,6 +2536,8 @@ async def preload_context(project_path: str = "", k: int = 8) -> str:
         project_path: Absolute path to the project or workspace.
                       If empty, uses current working directory.
         k: Number of relevant memories to retrieve (default 8, max 20).
+        rerank: Opcional (TypeSafe). Re-ordena los resultados antes de
+                comprimir, con un juicio de relevancia calibrado.
 
     Returns:
         Compressed context summary with project-relevant memories.
@@ -2385,7 +2552,7 @@ async def preload_context(project_path: str = "", k: int = 8) -> str:
     query = f"proyecto {dirname} " + " ".join(keywords)
 
     try:
-        output, stats = await asyncio.to_thread(_search.search_with_stats, query, session_id="")
+        output, stats = await asyncio.to_thread(_search.search_with_stats, query, session_id="", rerank_typesafe=rerank)
     except Exception as e:
         return f"Search failed for project context: {e}"
 
