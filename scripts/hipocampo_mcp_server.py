@@ -1091,7 +1091,7 @@ def _audit_contradicciones_bg(row_id, content, embedding) -> None:
                 """INSERT INTO memory_links (source_id, target_id, relation_type, weight)
                    VALUES (%s, %s, 'contradicts', %s)
                    ON CONFLICT (source_id, target_id, relation_type) DO NOTHING""",
-                (f"v{row_id}", f"v{c['id']}", c["confidence"]),
+                (str(row_id), str(c["id"]), c["confidence"]),
             )
             conn.commit()
             cur.close()
