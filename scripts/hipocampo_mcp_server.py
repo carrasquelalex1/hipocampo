@@ -62,6 +62,12 @@ import hipocampo_compress as _compress
 import hipocampo_index_project as _indexer
 import hipocampo_trade_knowledge as _tk
 
+try:  # Integración opcional TypeSafe (System One) — nunca debe romper el server
+    import typesafe_client as _ts
+except Exception:
+    _ts = None
+    logger.warning("typesafe_client no disponible; integración TypeSafe deshabilitada")
+
 # Ensure query_stats table exists (lazy — safe if DB not reachable)
 try:
     _stats.ensure_stats_table()
@@ -793,12 +799,16 @@ def _check_dedup_trigram(content: str, threshold: float = 0.85) -> str | None:
 
 def _check_dedup_semantic(row_id: int, content: str, embedding: list, threshold: float = 0.9) -> int | None:
     """Dedup semántico best-effort (usa embedding ya generado). Devuelve el id
-    del duplicado existente, o None. Solo loguea — el guardado ya ocurrió."""
+    del duplicado existente, o None. Solo loguea — el guardado ya ocurrió.
+
+    Con TypeSafe activo, el embedding propone el candidato y TypeSafe confirma
+    si realmente es el mismo hecho (Choice con confianza). Si dice que no,
+    se omite la alerta de duplicado (menos falsos positivos)."""
     try:
         conn = _conn()
         cur = conn.cursor()
         cur.execute(
-            """SELECT id FROM memoria_vectorial
+            """SELECT id, contenido FROM memoria_vectorial
                WHERE id != %s AND (embedding <=> %s::vector(1024)) < %s
                ORDER BY (embedding <=> %s::vector(1024))
                LIMIT 1""",
@@ -807,7 +817,24 @@ def _check_dedup_semantic(row_id: int, content: str, embedding: list, threshold:
         row = cur.fetchone()
         cur.close()
         conn.close()
-        return row[0] if row else None
+        if not row:
+            return None
+        dup_id, dup_content = row
+
+        # Refinamiento TypeSafe: el embedding propone, la decisión confirma.
+        if _ts is not None and _ts.enabled():
+            try:
+                if _ts.mismo_hecho(content, dup_content) is False:
+                    logger.info(
+                        "Dedup semántico: #%s y #%s no son el mismo hecho (TypeSafe) — se omite la alerta de duplicado",
+                        row_id,
+                        dup_id,
+                    )
+                    return None
+            except Exception as e:
+                logger.warning("TypeSafe mismo_hecho falló (%s) — comportamiento original", e)
+
+        return dup_id
     except Exception as e:
         logger.warning("Dedup semántico bg falló: %s", e)
         return None
@@ -903,8 +930,18 @@ def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_li
     _audit_contradicciones_bg(row_id, content, embedding)
 
 
-def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5, max_probes: int | None = None) -> list[dict]:
-    """Detect contradictions using negation-probe embeddings.
+def _detectar_contradicciones(
+    content: str,
+    new_emb: list,
+    top_k: int = 5,
+    max_probes: int | None = None,
+    exclude_id: int | None = None,
+) -> list[dict]:
+    """Detect contradictions using negation-probe embeddings (o TypeSafe si está activo).
+
+    Vía TypeSafe (HIPOCAMPO_TYPESAFE=1): una sola llamada con un Noul por
+    candidato → probabilidad calibrada de contradicción (umbral 0.7).
+    Fallback: negation-probe embeddings (comportamiento original).
 
     For each candidate (cosine sim 0.35-0.70 with new content):
     - Embed a negation probe: "AFIRMACIÓN: {candidate} — ¿Esto es FALSO según: {new}?"
@@ -918,18 +955,29 @@ def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5, max_p
     SIM_MIN = 0.35  # cosine distance < 0.65 = similar enough
     SIM_MAX = 0.70  # cosine distance > 0.30 = not too similar (that's dedup)
 
+    # Con TypeSafe la decisión es semántica, no por umbral de embedding: se amplía
+    # la ventana para incluir la zona de casi-duplicados (dist < 0.35), donde
+    # suelen vivir las contradicciones entre paráfrasis del mismo hecho.
+    ts_activo = _ts is not None and _ts.enabled()
+    DIST_MIN = 0.0 if ts_activo else SIM_MIN
+
     try:
         conn = _conn()
         cur = conn.cursor()
+        excl_sql = " AND id != %s" if exclude_id is not None else ""
+        params: list = [new_emb, new_emb, DIST_MIN, SIM_MAX]
+        if exclude_id is not None:
+            params.append(exclude_id)
+        params.append(top_k)
         cur.execute(
-            """SELECT id, contenido,
+            f"""SELECT id, contenido,
                       (embedding <=> %s::vector(1024)) AS dist
                FROM memoria_vectorial
                WHERE embedding IS NOT NULL
-                 AND (embedding <=> %s::vector(1024)) BETWEEN %s AND %s
+                 AND (embedding <=> %s::vector(1024)) BETWEEN %s AND %s{excl_sql}
                ORDER BY dist ASC
                LIMIT %s""",
-            (new_emb, new_emb, SIM_MIN, SIM_MAX, top_k),
+            tuple(params),
         )
         candidates = cur.fetchall()
         cur.close()
@@ -941,6 +989,38 @@ def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5, max_p
         if max_probes is not None:
             candidates = candidates[:max_probes]
 
+        # ── Vía TypeSafe (opcional): una sola llamada, un Noul por candidato ──
+        if ts_activo:
+            try:
+                pares = [(cid, ctext[:800]) for cid, ctext, _dist in candidates]
+                nouls = _ts.contradicciones_batch(content, pares)
+                if nouls is not None:
+                    detectadas = []
+                    for cand_id, cand_content, cand_dist in candidates:
+                        noul = nouls.get(int(cand_id))
+                        if noul is None:
+                            continue
+                        detectadas.append(
+                            {
+                                "id": cand_id,
+                                "contenido": cand_content[:200],
+                                "sim_new_old": round(1.0 - cand_dist, 3),
+                                "sim_neg_old": round(noul, 3),
+                                "confidence": round(noul, 3),
+                                "via": "typesafe",
+                            }
+                        )
+                    return detectadas
+            except Exception as e:
+                logger.warning("TypeSafe contradicciones falló (%s) — fallback negation-probe", e)
+
+            # Sin veredicto TypeSafe (API caída): el fallback local trabaja con
+            # la ventana original de la heurística, no con la ampliada.
+            candidates = [c for c in candidates if SIM_MIN <= c[2] <= SIM_MAX]
+            if not candidates:
+                return []
+
+        # ── Fallback: negation-probe embeddings (comportamiento original) ──
         contradictions = []
         for cand_id, cand_content, cand_dist in candidates:
             cand_emb = get_embedding(cand_content[:2000])
@@ -981,15 +1061,16 @@ def _detectar_contradicciones(content: str, new_emb: list, top_k: int = 5, max_p
 def _audit_contradicciones_bg(row_id, content, embedding) -> None:
     """Auditoría de contradicciones post-save (best-effort, en background).
 
-    Corre DESPUÉS del INSERT para no bloquear el save. Acotada a max_probes=2
-    candidatos (máx 4 embeddings). Si un embedding falla o es lento, se omite
-    el candidato y se continúa. Nunca lanza excepciones.
+    Corre DESPUÉS del INSERT para no bloquear el save. Acotada a max_probes=3
+    candidatos (con TypeSafe: una sola llamada con 3 Nouls; fallback: máx 6
+    embeddings). Si un embedding falla o es lento, se omite el candidato y se
+    continúa. Nunca lanza excepciones.
 
     Al detectar contradicciones: loguea warning y crea enlaces 'contradicts'
     en el grafo — sin bloquear ni afectar la respuesta del save.
     """
     try:
-        contradictions = _detectar_contradicciones(content, embedding, max_probes=2)
+        contradictions = _detectar_contradicciones(content, embedding, max_probes=3, exclude_id=row_id)
     except Exception:
         logger.warning("Auditoría de contradicciones (bg) falló para id=%s", row_id)
         return
@@ -1199,7 +1280,7 @@ async def save_hipocampo(
         _auto_summarize_session(session_id)
         _maybe_trigger_maintenance_on_save()
 
-# Crear enlace part_of si snapshot_for fue proporcionado
+        # Crear enlace part_of si snapshot_for fue proporcionado
         if snapshot_for:
             try:
                 link_conn = _conn()
@@ -1213,7 +1294,9 @@ async def save_hipocampo(
                 link_conn.close()
                 logger.info("🔗 Enlace part_of creado: memoria #%s → regla #%s", row_id, snapshot_for)
             except Exception as e:
-                logger.warning("No se pudo crear enlace part_of para memoria #%s → regla #%s: %s", row_id, snapshot_for, e)
+                logger.warning(
+                    "No se pudo crear enlace part_of para memoria #%s → regla #%s: %s", row_id, snapshot_for, e
+                )
 
         threading.Thread(
             target=_finalize_save_bg,
@@ -1241,7 +1324,9 @@ async def contradicciones_hipocampo(memory_id: int) -> str:
     """
     Detecta contradicciones semánticas de una memoria existente.
 
-    Usa negation-probe embedding: embedea "AFIRMACIÓN: {contenido} — ¿Esto es FALSO según: ..."
+    Con TypeSafe activo (HIPOCAMPO_TYPESAFE=1): un Noul por candidato en una
+    sola llamada, con probabilidad calibrada (umbral 0.7).
+    Fallback: negation-probe embedding: embedea "AFIRMACIÓN: {contenido} — ¿Esto es FALSO según: ..."
     y compara con el embedding original. Si la distancia de la sonda de negación
     es MENOR que la del contenido original → señal de contradicción.
 
@@ -1262,7 +1347,7 @@ async def contradicciones_hipocampo(memory_id: int) -> str:
                 return f"❌ Memoria {memory_id} no encontrada o sin embedding."
 
             _, contenido, embedding = row
-            contradictions = _detectar_contradicciones(contenido, embedding)
+            contradictions = _detectar_contradicciones(contenido, embedding, exclude_id=memory_id)
 
             if not contradictions:
                 return f"✅ Sin contradicciones detectadas para memoria #{memory_id}."
@@ -1270,7 +1355,7 @@ async def contradicciones_hipocampo(memory_id: int) -> str:
             lines = [f"⚠️ {len(contradictions)} contradicción(es) detectada(s) para #{memory_id}:"]
             for c in contradictions:
                 lines.append(
-                    f"   #{c['id']} (conf={c['confidence']:.3f}, "
+                    f"   #{c['id']} (conf={c['confidence']:.3f}, via={c.get('via', 'probe')}, "
                     f"sim_new={c['sim_new_old']:.3f}, sim_neg={c['sim_neg_old']:.3f}): "
                     f"{c['contenido'][:100]}..."
                 )
@@ -2969,7 +3054,16 @@ async def decay_hipocampo(dry_run: bool = True, min_age_days: int = 30) -> str:
             for mv_id, contenido, meta_text, domain_profile, trade_knowledge, last_acc in memory_rows:
                 meta = json.loads(meta_text) if meta_text else {}
                 nivel = meta.get("nivel", "episodica")
-                domain = meta.get("domain_profile", domain_profile)
+
+                if nivel in ("automatica", "semantica"):
+                    mem_skipped_protected += 1
+                    continue
+
+                if meta.get("critico"):
+                    mem_skipped_protected += 1
+                    continue
+
+                mem_candidates += 1
 
                 if nivel in ("automatica", "semantica"):
                     mem_skipped_protected += 1

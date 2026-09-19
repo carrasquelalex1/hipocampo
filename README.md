@@ -153,7 +153,7 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 * **Active Forgetting with Archive Tiers** (v5.0): `decay_hipocampo` now archives old `episodica` memories to `memoria_historica` (cold storage) when they exceed age thresholds. Protected levels: `automatica`, `semantica`, `critico` — never archived. New `critico` parameter on `save_hipocampo` for mission-critical memories. `restaurar_historica(id)` restores cold memories back to active tier.
 * **Memory Fatigue Boost** (v5.0): New `memory_access` table tracks per-record access frequency. BIRE search applies a fatigue boost: `boost = min(15, 5·log1p(accesses_7d))·e^(-age_hours/168)`. Frequently accessed memories naturally rank higher — mimicking how the human brain strengthens neural pathways through repeated recall.
 * **Memory Budget & Tiering** (v5.0): `hipocampo_budget(dry_run)` manages three storage tiers — HOT (embedding present, full semantic search), WARM (embedding=NULL, text-only search), COLD (`memoria_historica` archive). Hot tier cap: 5000 records. When the cap is exceeded, oldest episodica memories are automatically demoted to WARM. `restaurar_historica(id)` restores any cold memory back to active.
-* **Contradiction Detection** (v5.0): `save_hipocampo` runs `_detectar_contradicciones()` using negation-probe embeddings to detect factual contradictions with existing memories. When detected: logs a warning and creates a `contradicts` link — never blocks the save. `contradicciones_hipocampo(id)` performs on-demand contradiction audits across the memory graph.
+* **Contradiction Detection** (v5.0): `save_hipocampo` runs `_detectar_contradicciones()` using negation-probe embeddings to detect factual contradictions with existing memories. When detected: logs a warning and creates a `contradicts` link — never blocks the save. `contradicciones_hipocampo(id)` performs on-demand contradiction audits across the memory graph. With the optional **TypeSafe** integration enabled, one batched Noul call replaces the embedding probe (see *Optional: TypeSafe* below).
 * **File Watcher with Systemd** (v5.0): `hipocampo_watch.py` watches configured directories for file changes and auto-reindexes modified files via `index_project`. Managed by `hipocampo-watch.timer` (10-minute interval). MCP tools: `list_watch_dirs`, `add_watch_dir(path, patterns)`, `remove_watch_dir(path)`, `reindex_now(path?)`.
 * **Link Weight Decay** (v4.3): Exponential weight decay on memory graph links (half-life 90 days). Links that aren't traversed lose strength over time; links <0.01 are pruned. `graph_hipocampo()` and `path_hipocampo()` auto-reinforce traversed links. New `decay_hipocampo(dry_run)` tool for graph maintenance. Columns: `last_accessed`, `reinforced_at`.
 * **Preservación de Conocimiento Latente** (v4.3): 🧠 4 capas automáticas protegen el conocimiento del oficio: categorización `trade_knowledge` (nunca se decae), clasificación automática de reusabilidad (high→promoción a semántica), perfiles de decaimiento por dominio (infra 180d, proyecto 90d, temporal 14d), y recordatorio trimestral con `review_trade_knowledge()`. 266 memorias clasificadas en migración automática.
@@ -163,6 +163,31 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 * **Auto-Linking**: `save_hipocampo(..., auto_link=True)` auto-discovers semantically similar memories (>0.75 cosine) and creates `similar` edges in the memory graph.
 * **HNSW Auto-Recovery**: `hipocampo_health()` checks the HNSW index on startup and auto-creates it if missing — no more manual `CREATE INDEX` commands.
 * **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 39 tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
+
+### 🔬 Optional: TypeSafe (System One) — Calibrated Semantic Decisions
+
+> **Bring your own API key.** TypeSafe is in early access — if you already have an API key (or get one later), plug it in and Hipocampo upgrades its semantic judgments. Without a key the integration stays dormant and everything keeps working with the local embedding heuristics.
+
+Hipocampo can optionally delegate its semantic **judgments** (not text generation) to [TypeSafe](https://docs.typesafe.ai/) — a System One model that answers typed questions (*Choice / Score / Noul*) with calibrated probabilities, many questions batched into a single parallel call with sub-second latency.
+
+**Why it's powerful:**
+
+- **Calibrated, not thresholded**: a contradiction comes back as a probability (e.g. `0.96`) — your code decides with `confidence` instead of magic cosine cutoffs.
+- **One call, many questions**: a whole post-save audit (3 candidates) or an entire dedup group is judged in a single sub-second request — cheaper and faster than 2 embeddings per candidate.
+- **Catches what embeddings miss**: contradictions between close paraphrases (cosine distance < 0.35, the dedup zone) that the embedding probe cannot see.
+- **Safer destructive operations**: `dedup(merge=True)` only merges groups TypeSafe confirms as the *same fact*.
+
+When enabled (`HIPOCAMPO_TYPESAFE=1` + API key), it upgrades three decision points:
+
+| Decision | Without TypeSafe | With TypeSafe (`typesafe_client.py`) |
+|---|---|---|
+| Contradiction detection | Negation-probe embeddings (heuristic, 2 embeddings per candidate) | One Noul per candidate **in a single call** — calibrated probability; also catches contradictions between close paraphrases (cosine distance < 0.35) that the probe's window excludes |
+| Semantic dedup (`dedup(merge=True)`) | Merges every group above the cosine threshold (destructive) | Embeddings propose, TypeSafe confirms (*same fact / related / different*) — unconfirmed groups are skipped |
+| Post-save dedup warning | Cosine > 0.9 only | TypeSafe confirms "same fact" before warning (fewer false positives) |
+
+- **Graceful fallback**: if TypeSafe is off, fails, or times out (10s default), every path falls back to the local embedding heuristics — saves and searches never block.
+- **Config**: `HIPOCAMPO_TYPESAFE=1` in `~/.hipocampo/.env`; key via `TYPESAFE_API_KEY` or key file (`TYPESAFE_KEY_FILE`, default `~/.config/typesafe/api_key`). See [docs/TYPESAFE.md](docs/TYPESAFE.md).
+- **Privacy note**: judge calls send the compared memory texts to TypeSafe's API (same trust model as the LLM compression endpoint).
 
 ---
 
@@ -885,7 +910,7 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 * **Olvido Activo con Tiers de Archivo** (v5.0): `decay_hipocampo` ahora archiva memorias `episodica` antiguas en `memoria_historica` (almacenamiento frío) al superar umbrales de edad. Niveles protegidos: `automatica`, `semantica`, `critico` — nunca se archivan. Nuevo parámetro `critico` en `save_hipocampo` para memorias críticas. `restaurar_historica(id)` restaura memorias frías al tier activo.
 * **Boost de Fatiga de Memoria** (v5.0): Nueva tabla `memory_access` rastrea frecuencia de acceso por registro. BIRE aplica un boost de fatiga: `boost = min(15, 5·log1p(accesos_7d))·e^(-edad_horas/168)`. Las memorias accedidas con frecuencia en una ventana de 7 días suben naturalmente en el ranking — imitando cómo el cerebro fortalece vías neuronales mediante la recuperación repetida.
 * **Presupuesto de Memoria y Tiering** (v5.0): `hipocampo_budget(dry_run)` gestiona tres tiers — HOT (embedding presente, búsqueda semántica completa), WARM (embedding=NULL, búsqueda solo por texto), COLD (`memoria_historica` archivo). Cap del tier hot: 5000 registros. `restaurar_historica(id)` restaura memorias frías al tier activo.
-* **Detección de Contradicciones** (v5.0): `save_hipocampo` ejecuta `_detectar_contradicciones()` usando embeddings de sonda de negación para detectar contradicciones factuales. Cuando detecta: registra warning y crea enlace `contradicts` — nunca bloquea el guardado. `contradicciones_hipocampo(id)` realiza auditorías de contradicción bajo demanda.
+* **Detección de Contradicciones** (v5.0): `save_hipocampo` ejecuta `_detectar_contradicciones()` usando embeddings de sonda de negación para detectar contradicciones factuales. Cuando detecta: registra warning y crea enlace `contradicts` — nunca bloquea el guardado. `contradicciones_hipocampo(id)` realiza auditorías de contradicción bajo demanda. Con la integración opcional **TypeSafe** activa, una sola llamada Noul por lote reemplaza la sonda de embeddings (ver *Opcional: TypeSafe* abajo).
 * **Watcher de Archivos con Systemd** (v5.0): `hipocampo_watch.py` monitorea directorios configurados y auto-reindexa archivos modificados via `index_project`. Gestionado por `hipocampo-watch.timer` (intervalo 10 minutos). Tools MCP: `list_watch_dirs`, `add_watch_dir(path, patterns)`, `remove_watch_dir(path)`, `reindex_now(path?)`.
 * **Decaimiento de Pesos en Enlaces** (v4.3): Decaimiento exponencial en enlaces del grafo con half-life de 90 días. Los enlaces no recorridos pierden fuerza; enlaces <0.01 se podan. `graph_hipocampo()` y `path_hipocampo()` refuerzan automáticamente los enlaces atravesados. Nueva tool `decay_hipocampo(dry_run)` para mantenimiento del grafo. Columnas: `last_accessed`, `reinforced_at`.
 * **Memoria por Sesión y Auto-resumen**: Búsqueda/guardado aislado por sesión. Cada 20 guardados, Hipocampo genera un resumen consolidado de fondo.
@@ -894,6 +919,31 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 * **Auto-Enlace**: `save_hipocampo(..., auto_link=True)` descubre recuerdos semánticamente similares (>0.75 cosine) y crea aristas `similar` en el grafo.
 * **Recuperación Automática de HNSW**: `hipocampo_health()` verifica el índice HNSW al arrancar y lo crea si falta — sin comandos `CREATE INDEX` manuales.
 * **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante servidor FastMCP con 37 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
+
+### 🔬 Opcional: TypeSafe (System One) — Decisiones Semánticas Calibradas
+
+> **Trae tu propia API key.** TypeSafe está en acceso anticipado — si ya tienes una API key (o la consigues después), conéctala y Hipocampo mejora sus juicios semánticos. Sin key, la integración queda dormida y todo sigue funcionando con las heurísticas locales de embeddings.
+
+Hipocampo puede delegar opcionalmente sus **juicios** semánticos (no la generación de texto) a [TypeSafe](https://docs.typesafe.ai/) — un modelo System One que responde preguntas tipadas (*Choice / Score / Noul*) con probabilidades calibradas, muchas preguntas agrupadas en una sola llamada paralela con latencia sub-segundo.
+
+**Por qué es potente:**
+
+- **Calibrado, no umbralado**: una contradicción vuelve como probabilidad (ej. `0.96`) — tu código decide con `confidence` en vez de cortes coseno mágicos.
+- **Una llamada, muchas preguntas**: toda una auditoría post-save (3 candidatos) o un grupo de dedup completo se juzga en una sola petición sub-segundo — más barato y rápido que 2 embeddings por candidato.
+- **Detecta lo que los embeddings no ven**: contradicciones entre paráfrasis casi idénticas (distancia coseno < 0.35, zona de dedup) que la sonda de embeddings no puede separar.
+- **Operaciones destructivas más seguras**: `dedup(merge=True)` solo fusiona grupos que TypeSafe confirma como el *mismo hecho*.
+
+Al activarlo (`HIPOCAMPO_TYPESAFE=1` + key), mejora tres puntos de decisión:
+
+| Decisión | Sin TypeSafe | Con TypeSafe (`typesafe_client.py`) |
+|---|---|---|
+| Detección de contradicciones | Sonda de negación con embeddings (heurística, 2 embeddings por candidato) | Un Noul por candidato **en una sola llamada** — probabilidad calibrada; además detecta contradicciones entre paráfrasis casi idénticas (distancia coseno < 0.35) que la ventana de la sonda excluye |
+| Dedup semántico (`dedup(merge=True)`) | Fusiona todo grupo sobre el umbral coseno (destructivo) | El embedding propone, TypeSafe confirma (*mismo hecho / relacionado / distinto*) — los grupos no confirmados se omiten |
+| Aviso de duplicado post-save | Solo cosine > 0.9 | TypeSafe confirma "mismo hecho" antes de avisar (menos falsos positivos) |
+
+- **Fallback garantizado**: si TypeSafe está apagado, falla o excede el timeout (10s por defecto), todas las rutas caen a las heurísticas locales — guardados y búsquedas nunca se bloquean.
+- **Config**: `HIPOCAMPO_TYPESAFE=1` en `~/.hipocampo/.env`; key vía `TYPESAFE_API_KEY` o archivo (`TYPESAFE_KEY_FILE`, default `~/.config/typesafe/api_key`). Ver [docs/TYPESAFE.md](docs/TYPESAFE.md).
+- **Privacidad**: las llamadas de juicio envían los textos comparados a la API de TypeSafe (mismo modelo de confianza que el endpoint de compresión LLM).
 
 ---
 

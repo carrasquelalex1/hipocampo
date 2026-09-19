@@ -47,6 +47,7 @@ def run(dry_run: bool, min_age: int, decay_min_age: int, quiet: bool = False, re
     if review_only:
         try:
             import asyncio
+
             review_result = asyncio.run(srv.review_automatica(max_age_days=30, dry_run=False))
             if not quiet:
                 print(f"  {'✅' if not review_result.startswith('error') else '❌'} review_automatica: {review_result}")
@@ -88,6 +89,7 @@ def run(dry_run: bool, min_age: int, decay_min_age: int, quiet: bool = False, re
     # (ejecuta siempre, dry_run=False para actualizar review_count)
     try:
         import asyncio
+
         review_result = asyncio.run(srv.review_automatica(max_age_days=30, dry_run=False))
         if not quiet:
             print(f"  {'✅' if not review_result.startswith('error') else '❌'} review_automatica: {review_result}")
@@ -120,10 +122,20 @@ def main():
         help="Días mínimos para archivar episódicas sin acceso (default: 60)",
     )
     parser.add_argument("--quiet", action="store_true", help="Solo errores (para logs limpios de systemd)")
-    parser.add_argument("--review-only", action="store_true", help="Solo ejecuta review_automatica sin el ciclo completo")
+    parser.add_argument(
+        "--review-only", action="store_true", help="Solo ejecuta review_automatica sin el ciclo completo"
+    )
     args = parser.parse_args()
 
-    sys.exit(run(dry_run=not args.apply, min_age=args.min_age, decay_min_age=args.decay_min_age, quiet=args.quiet, review_only=args.review_only))
+    sys.exit(
+        run(
+            dry_run=not args.apply,
+            min_age=args.min_age,
+            decay_min_age=args.decay_min_age,
+            quiet=args.quiet,
+            review_only=args.review_only,
+        )
+    )
 
 
 if __name__ == "__main__":

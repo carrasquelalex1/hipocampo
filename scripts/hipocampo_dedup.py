@@ -204,6 +204,41 @@ def full_dedup_analysis(threshold=SIMILARITY_THRESHOLD):
     return results
 
 
+def _typesafe_confirma_grupo(group):
+    """Gate opcional con TypeSafe: confirma que un grupo semántico es el mismo hecho.
+
+    Devuelve:
+        True  → confirmado, fusionar
+        False → NO confirmado (son 'relacionado'/'distinto'), omitir grupo
+        None  → sin veredicto (TypeSafe apagado o API caída) → flujo normal
+    """
+    try:
+        import typesafe_client as ts
+    except Exception:
+        return None
+    if not ts.enabled():
+        return None
+    try:
+        best = max(group, key=lambda x: len(x["text"]))
+        for other in group:
+            if other["id"] == best["id"]:
+                continue
+            veredicto = ts.mismo_hecho(best["text"], other["text"])
+            if veredicto is None:
+                return None  # API falló a mitad → flujo normal
+            if not veredicto:
+                logger.warning(
+                    "Dedup: TypeSafe NO confirma la fusión (#%s vs #%s) — grupo omitido",
+                    best["id"],
+                    other["id"],
+                )
+                return False
+        return True
+    except Exception as e:
+        logger.warning("Gate TypeSafe dedup falló (%s) — flujo normal", e)
+        return None
+
+
 def full_dedup_merge(threshold=SIMILARITY_THRESHOLD):
     """Ejecuta fusión completa de duplicados."""
     load_config()
@@ -217,7 +252,20 @@ def full_dedup_merge(threshold=SIMILARITY_THRESHOLD):
 
         semantic = find_semantic_duplicates(table, text_col, thr)
         if semantic:
-            report["semantic"][table] = merge_semantic_duplicates(table, text_col, semantic, dry_run=False)
+            # Gate TypeSafe: solo fusionar grupos que la API confirme como mismo hecho.
+            confirmados = []
+            for grupo in semantic:
+                if _typesafe_confirma_grupo(grupo) is False:
+                    continue
+                confirmados.append(grupo)
+            omitidos = len(semantic) - len(confirmados)
+            if omitidos:
+                logger.warning(
+                    "Dedup: %d grupo(s) semántico(s) omitido(s) por el gate TypeSafe",
+                    omitidos,
+                )
+            if confirmados:
+                report["semantic"][table] = merge_semantic_duplicates(table, text_col, confirmados, dry_run=False)
 
     return report
 
