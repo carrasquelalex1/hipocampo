@@ -984,29 +984,45 @@ def _buscar_por_categories(cur, triggers):
 
 
 def _rerank_typesafe(resultados, query, top_n=15):
-    """Re-ordena el top-N con TypeSafe (Noul de relevancia), UNA llamada.
+    """Re-ordena el top-N con juicio semántico (UNA llamada batch).
 
+    Cadena: TypeSafe Noul (Tier 1) → classifier.dev P(relevant) (Tier 2).
     Mezcla el juicio con el score: factor = 0.5 + 0.5·noul (nunca anula un
-    resultado, solo lo promueve/demota). Si TypeSafe está apagado o falla,
+    resultado, solo lo promueve/demota). Si ambos fallan o están apagados,
     devuelve los resultados sin tocar.
     """
     if not resultados:
         return resultados
-    try:
-        import typesafe_client as ts
-    except Exception:
-        return resultados
-    if not ts.enabled():
+    if len(resultados) < 3:
         return resultados
     top = resultados[:top_n]
-    if len(top) < 3:
-        return resultados
     resto = resultados[top_n:]
     pares = [(i, r.get("contenido", "")[:600]) for i, r in enumerate(top)]
+    rel = None
+    via = None
     try:
-        rel = ts.relevancia_batch(query, pares)
+        import typesafe_client as ts
+
+        if ts.enabled():
+            try:
+                rel = ts.relevancia_batch(query, pares)
+                via = "typesafe"
+            except Exception:
+                rel = None
     except Exception:
-        return resultados
+        rel = None
+    if rel is None:
+        try:
+            import classifier_client as cl
+
+            if cl.enabled():
+                try:
+                    rel = cl.relevancia_batch(query, pares)
+                    via = "classifier"
+                except Exception:
+                    rel = None
+        except Exception:
+            rel = None
     if rel is None:
         return resultados
     for i, r in enumerate(top):
@@ -1015,6 +1031,8 @@ def _rerank_typesafe(resultados, query, top_n=15):
             continue
         r["score_bire"] = r["score"]
         r["rel_typesafe"] = round(noul, 3)
+        if via and via != "typesafe":
+            r["rel_via"] = via
         r["score"] = round(r["score"] * (0.5 + 0.5 * noul), 3)
     top.sort(key=lambda x: x["score"], reverse=True)
     return top + resto

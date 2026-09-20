@@ -53,7 +53,7 @@ DB_HOST=/var/run/postgresql
 
 # === API NVIDIA (para embeddings con nv-embedqa-e5-v5) ===
 # === API NVIDIA (para embeddings) ===
-NVIDIA_API_KEY=nvapi-TuClaveAqui
+NVIDIA_API_KEY=nvapi-<tu-clave>
 ```
 
 > ⚠️ **Nota:** Si usas **NVIDIA NIM** para embeddings (recomendado), la `NVIDIA_API_KEY` es **obligatoria**.
@@ -163,7 +163,7 @@ Si el servidor **no muestra errores**, está listo para ser usado por OpenCode.
 - Asegúrate de que el archivo `.env` exista (ej. en `~/.env` o `/home/usuario/scripts/.env`) **y contenga** `NVIDIA_API_KEY`.
 - O define la variable directamente en el sistema:
   ```bash
-  echo 'export NVIDIA_API_KEY="nvapi-TuClaveAqui"' >> ~/.bashrc
+  echo 'export NVIDIA_API_KEY="nvapi-<tu-clave>"' >> ~/.bashrc
   source ~/.bashrc
   ```
 
@@ -193,7 +193,7 @@ DB_PASSWORD=  # Vacío si usas autenticación por socket
 DB_HOST=/var/run/postgresql
 
 # === NVIDIA NIM (Embeddings) ===
-NVIDIA_API_KEY=nvapi-TU_CLAVE_AQUI
+NVIDIA_API_KEY=nvapi-<tu-clave>
 
 # === OpenAI (Opcional, para compatibilidad) ===
 OPENAI_API_KEY=sk-...

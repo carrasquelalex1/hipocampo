@@ -60,6 +60,7 @@ import hipocampo_dedup as _dedup
 import hipocampo_checkpoint as _checkpoint
 import hipocampo_compress as _compress
 import hipocampo_index_project as _indexer
+import hipocampo_semantic as _sem
 import hipocampo_trade_knowledge as _tk
 
 try:  # Integración opcional TypeSafe (System One) — nunca debe romper el server
@@ -67,6 +68,12 @@ try:  # Integración opcional TypeSafe (System One) — nunca debe romper el ser
 except Exception:
     _ts = None
     logger.warning("typesafe_client no disponible; integración TypeSafe deshabilitada")
+
+try:  # Fallback Tier 2 vía classifier.dev (Jev, sin key) — tampoco debe romper
+    import classifier_client as _cl
+except Exception:
+    _cl = None
+    logger.warning("classifier_client no disponible; Tier 2 deshabilitado")
 
 # Ensure query_stats table exists (lazy — safe if DB not reachable)
 try:
@@ -809,40 +816,7 @@ def _check_dedup_semantic(row_id: int, content: str, embedding: list, threshold:
     Con TypeSafe activo, el embedding propone el candidato y TypeSafe confirma
     si realmente es el mismo hecho (Choice con confianza). Si dice que no,
     se omite la alerta de duplicado (menos falsos positivos)."""
-    try:
-        conn = _conn()
-        cur = conn.cursor()
-        cur.execute(
-            """SELECT id, contenido FROM memoria_vectorial
-               WHERE id != %s AND (embedding <=> %s::vector(1024)) < %s
-               ORDER BY (embedding <=> %s::vector(1024))
-               LIMIT 1""",
-            (row_id, embedding, 1 - threshold, embedding),
-        )
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        if not row:
-            return None
-        dup_id, dup_content = row
-
-        # Refinamiento TypeSafe: el embedding propone, la decisión confirma.
-        if _ts is not None and _ts.enabled():
-            try:
-                if _ts.mismo_hecho(content, dup_content) is False:
-                    logger.info(
-                        "Dedup semántico: #%s y #%s no son el mismo hecho (TypeSafe) — se omite la alerta de duplicado",
-                        row_id,
-                        dup_id,
-                    )
-                    return None
-            except Exception as e:
-                logger.warning("TypeSafe mismo_hecho falló (%s) — comportamiento original", e)
-
-        return dup_id
-    except Exception as e:
-        logger.warning("Dedup semántico bg falló: %s", e)
-        return None
+    return _sem.check_dedup_semantic(row_id, content, embedding, threshold, conn_fn=_conn, ts=_ts, cl=_cl)
 
 
 def _auto_link_similar(row_id: int, embedding: list) -> int:
@@ -963,112 +937,21 @@ def _detectar_contradicciones(
     max_probes: límite de candidatos a sondear (cada uno cuesta 2 embeddings).
     None = sondear todos los candidatos (top_k). Para auditorías en background
     usar un valor bajo (ej: 2) para acotar latencia/costo.
+
+    Lógica en hipocampo_semantic.detectar_contradicciones (inyectada); aquí
+    solo el wrapper con los globales del server.
     """
-    CONTRADICTION_MARGIN = 0.05
-    SIM_MIN = 0.35  # cosine distance < 0.65 = similar enough
-    SIM_MAX = 0.70  # cosine distance > 0.30 = not too similar (that's dedup)
-
-    # Con TypeSafe la decisión es semántica, no por umbral de embedding: se amplía
-    # la ventana para incluir la zona de casi-duplicados (dist < 0.35), donde
-    # suelen vivir las contradicciones entre paráfrasis del mismo hecho.
-    ts_activo = _ts is not None and _ts.enabled()
-    DIST_MIN = 0.0 if ts_activo else SIM_MIN
-
-    try:
-        conn = _conn()
-        cur = conn.cursor()
-        excl_sql = " AND id != %s" if exclude_id is not None else ""
-        params: list = [new_emb, new_emb, DIST_MIN, SIM_MAX]
-        if exclude_id is not None:
-            params.append(exclude_id)
-        params.append(top_k)
-        cur.execute(
-            f"""SELECT id, contenido,
-                      (embedding <=> %s::vector(1024)) AS dist
-               FROM memoria_vectorial
-               WHERE embedding IS NOT NULL
-                 AND (embedding <=> %s::vector(1024)) BETWEEN %s AND %s{excl_sql}
-               ORDER BY dist ASC
-               LIMIT %s""",
-            tuple(params),
-        )
-        candidates = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        if not candidates:
-            return []
-
-        if max_probes is not None:
-            candidates = candidates[:max_probes]
-
-        # ── Vía TypeSafe (opcional): una sola llamada, un Noul por candidato ──
-        if ts_activo:
-            try:
-                pares = [(cid, ctext[:800]) for cid, ctext, _dist in candidates]
-                nouls = _ts.contradicciones_batch(content, pares)
-                if nouls is not None:
-                    detectadas = []
-                    for cand_id, cand_content, cand_dist in candidates:
-                        noul = nouls.get(int(cand_id))
-                        if noul is None:
-                            continue
-                        detectadas.append(
-                            {
-                                "id": cand_id,
-                                "contenido": cand_content[:200],
-                                "sim_new_old": round(1.0 - cand_dist, 3),
-                                "sim_neg_old": round(noul, 3),
-                                "confidence": round(noul, 3),
-                                "via": "typesafe",
-                            }
-                        )
-                    return detectadas
-            except Exception as e:
-                logger.warning("TypeSafe contradicciones falló (%s) — fallback negation-probe", e)
-
-            # Sin veredicto TypeSafe (API caída): el fallback local trabaja con
-            # la ventana original de la heurística, no con la ampliada.
-            candidates = [c for c in candidates if SIM_MIN <= c[2] <= SIM_MAX]
-            if not candidates:
-                return []
-
-        # ── Fallback: negation-probe embeddings (comportamiento original) ──
-        contradictions = []
-        for cand_id, cand_content, cand_dist in candidates:
-            cand_emb = get_embedding(cand_content[:2000])
-            if cand_emb is None:
-                continue
-
-            neg_probe_text = f"AFIRMACIÓN: {cand_content[:300]} — ¿Esto es FALSO según: {content[:300]}?"
-            neg_probe_emb = get_embedding(neg_probe_text[:2000])
-            if neg_probe_emb is None:
-                continue
-
-            import math as _m
-
-            sim_new_old = 1.0 - cand_dist
-            norm_a = _m.sqrt(sum(x * x for x in neg_probe_emb))
-            norm_b = _m.sqrt(sum(x * x for x in cand_emb))
-            if norm_a == 0 or norm_b == 0:
-                continue
-            sim_neg_old = sum(x * y for x, y in zip(neg_probe_emb, cand_emb)) / (norm_a * norm_b)
-
-            if sim_neg_old > sim_new_old + CONTRADICTION_MARGIN:
-                contradictions.append(
-                    {
-                        "id": cand_id,
-                        "contenido": cand_content[:200],
-                        "sim_new_old": round(sim_new_old, 3),
-                        "sim_neg_old": round(sim_neg_old, 3),
-                        "confidence": round(sim_neg_old - sim_new_old, 3),
-                    }
-                )
-
-        return contradictions
-    except Exception as e:
-        logger.warning("Contradiction detection failed: %s", e)
-        return []
+    return _sem.detectar_contradicciones(
+        content,
+        new_emb,
+        top_k,
+        max_probes,
+        exclude_id,
+        conn_fn=_conn,
+        embed_fn=get_embedding,
+        ts=_ts,
+        cl=_cl,
+    )
 
 
 def _audit_contradicciones_bg(row_id, content, embedding) -> None:
@@ -1178,11 +1061,22 @@ def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link:
     if not pares and not tags:
         return
 
-    try:
-        res = _ts.juicio_lote(content, pares, tags=tags)
-    except Exception as e:
-        logger.warning("TypeSafe juicio_lote falló (%s) — fallback local", e)
-        res = None
+    res = None
+    res_via = "typesafe"
+    if _ts is not None:
+        try:
+            res = _ts.juicio_lote(content, pares, tags=tags)
+        except Exception as e:
+            logger.warning("TypeSafe juicio_lote falló (%s) — Tier 2 classifier", e)
+            res = None
+
+    if res is None and _cl is not None and _cl.enabled():
+        try:
+            res = _cl.juicio_lote(content, pares, tags=tags)
+            res_via = "classifier"
+        except Exception as e:
+            logger.warning("classifier.dev juicio_lote falló (%s) — fallback local", e)
+            res = None
 
     if res is None:
         dup_id = _check_dedup_semantic(row_id, content, embedding)
@@ -1199,16 +1093,20 @@ def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link:
         return
 
     cand_res = res.get("candidatos", {})
+    _umbral_contra = (
+        _ts.UMBRAL_CONTRADICCION if _ts is not None else _cl.UMBRAL_CONTRADICCION if _cl is not None else 0.7
+    )
     for cid, ctext, cdist in candidatos:
         j = cand_res.get(int(cid)) or {}
         noul = j.get("noul")
         relacion = j.get("relacion")
 
-        if noul is not None and noul >= _ts.UMBRAL_CONTRADICCION:
+        if noul is not None and noul >= _umbral_contra:
             logger.warning(
-                "⚠️ Contradicción con #%s (conf=%.3f, via=typesafe) detectada en save id=%s: %s...",
+                "⚠️ Contradicción con #%s (conf=%.3f, via=%s) detectada en save id=%s: %s...",
                 cid,
                 noul,
+                res_via,
                 row_id,
                 ctext[:80],
             )
@@ -1218,9 +1116,10 @@ def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link:
         if cdist < 0.10 and relacion == "mismo" and (j.get("rel_conf") or 0) >= 0.6:
             logger.warning(
                 "⚠️ Duplicado semántico post-save: id=%s es casi idéntico a #%s "
-                "(TypeSafe conf=%.2f) — save async omite el bloqueo síncrono de dedup",
+                "(%s conf=%.2f) — save async omite el bloqueo síncrono de dedup",
                 row_id,
                 cid,
+                res_via,
                 j.get("rel_conf") or 0,
             )
 
@@ -1247,9 +1146,9 @@ def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link:
             conn.commit()
             cur.close()
             conn.close()
-            logger.info("🏷️ Tag TypeSafe añadido a #%s: %s", row_id, tag)
+            logger.info("🏷️ Tag %s añadido a #%s: %s", res_via, row_id, tag)
         except Exception:
-            logger.warning("No se pudo añadir tag TypeSafe a #%s", row_id)
+            logger.warning("No se pudo añadir tag %s a #%s", res_via, row_id)
 
 
 def _generar_embedding(texto: str, tool_name: str = "unknown") -> list[float]:
@@ -1591,19 +1490,28 @@ async def profile_hipocampo(
             except Exception:
                 pass
 
-        if best_match and _ts is not None and _ts.enabled():
-            # Confirmación TypeSafe: el embedding propone, el juicio confirma.
-            try:
-                if _ts.mismo_hecho(summary, best_match[1]) is False:
-                    logger.info(
-                        "Perfil similar (id=%s, %.1f%%) NO confirmado como mismo dato "
-                        "(TypeSafe) — se guarda como entrada nueva",
-                        best_match[0],
-                        best_sim * 100,
-                    )
-                    best_match = None
-            except Exception:
-                pass
+        if best_match and ((_ts is not None and _ts.enabled()) or (_cl is not None and _cl.enabled())):
+            # Confirmación semántica: el embedding propone, el juicio confirma.
+            # Cadena: TypeSafe (Tier 1) → classifier.dev (Tier 2).
+            _veredicto_perfil = None
+            if _ts is not None and _ts.enabled():
+                try:
+                    _veredicto_perfil = _ts.mismo_hecho(summary, best_match[1])
+                except Exception:
+                    _veredicto_perfil = None
+            if _veredicto_perfil is None and _cl is not None and _cl.enabled():
+                try:
+                    _veredicto_perfil = _cl.mismo_hecho(summary, best_match[1])
+                except Exception:
+                    pass
+            if _veredicto_perfil is False:
+                logger.info(
+                    "Perfil similar (id=%s, %.1f%%) NO confirmado como mismo dato "
+                    "(semántico) — se guarda como entrada nueva",
+                    best_match[0],
+                    best_sim * 100,
+                )
+                best_match = None
 
         if best_match:
             existing_id = best_match[0]

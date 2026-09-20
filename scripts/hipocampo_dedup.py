@@ -205,37 +205,66 @@ def full_dedup_analysis(threshold=SIMILARITY_THRESHOLD):
 
 
 def _typesafe_confirma_grupo(group):
-    """Gate opcional con TypeSafe: confirma que un grupo semántico es el mismo hecho.
+    """Gate opcional semántico: confirma que un grupo semántico es el mismo hecho.
+
+    Cadena: TypeSafe (Tier 1) → classifier.dev (Tier 2) → flujo normal.
 
     Devuelve:
         True  → confirmado, fusionar
         False → NO confirmado (son 'relacionado'/'distinto'), omitir grupo
-        None  → sin veredicto (TypeSafe apagado o API caída) → flujo normal
+        None  → sin veredicto (ambos apagados o caídos) → flujo normal
     """
+    veredicto_impl = None
     try:
         import typesafe_client as ts
+
+        if ts.enabled():
+            veredicto_impl = ("typesafe", ts.mismo_hecho)
     except Exception:
+        veredicto_impl = None
+    if veredicto_impl is None:
+        try:
+            import classifier_client as cl
+
+            if cl.enabled():
+                veredicto_impl = ("classifier", cl.mismo_hecho)
+        except Exception:
+            veredicto_impl = None
+    if veredicto_impl is None:
         return None
-    if not ts.enabled():
-        return None
+    nombre, mismo_hecho = veredicto_impl
+    try:
+        import classifier_client as _cl_fb
+
+        _cl_fb_on = _cl_fb.enabled()
+    except Exception:
+        _cl_fb = None
+        _cl_fb_on = False
     try:
         best = max(group, key=lambda x: len(x["text"]))
         for other in group:
             if other["id"] == best["id"]:
                 continue
-            veredicto = ts.mismo_hecho(best["text"], other["text"])
+            veredicto = mismo_hecho(best["text"], other["text"])
+            if veredicto is None and _cl_fb_on and nombre != "classifier":
+                # Tier 1 sin veredicto → intentar Tier 2 en este par
+                try:
+                    veredicto = _cl_fb.mismo_hecho(best["text"], other["text"])
+                except Exception:
+                    veredicto = None
             if veredicto is None:
-                return None  # API falló a mitad → flujo normal
+                return None  # ambas APIs sin veredicto → flujo normal
             if not veredicto:
                 logger.warning(
-                    "Dedup: TypeSafe NO confirma la fusión (#%s vs #%s) — grupo omitido",
+                    "Dedup: %s NO confirma la fusión (#%s vs #%s) — grupo omitido",
+                    nombre,
                     best["id"],
                     other["id"],
                 )
                 return False
         return True
     except Exception as e:
-        logger.warning("Gate TypeSafe dedup falló (%s) — flujo normal", e)
+        logger.warning("Gate semántico dedup falló (%s) — flujo normal", e)
         return None
 
 
