@@ -1068,6 +1068,11 @@ def bire_search(query, umbral_minimo=10.0, rerank=False, session_id="", rerank_t
     if rerank_typesafe:
         fusionados = _rerank_typesafe(fusionados, query)
 
+    # FIX 2026-10-10 (ranking plano 42.0): los resultados REALES (vectorial/léxico)
+    # siempre por encima de la expansión por tags, que es RESPALDO (score plano 70->42
+    # en el híbrido empataba el top y enterraba los relevantes).
+    fusionados.sort(key=lambda r: (r.get("method") == "expansion_por_tags", -r.get("score", 0)))
+
     filtrados = [r for r in fusionados if r["score"] >= umbral_minimo]
     if session_id:
         filtrados = [r for r in filtrados if r.get("metadatos", {}).get("session_id") == session_id]
