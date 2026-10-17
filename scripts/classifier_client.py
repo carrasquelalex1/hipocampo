@@ -31,6 +31,11 @@ try:  # Redacción de secretos antes de la salida HTTP (opcional, nunca debe rom
 except Exception:  # pragma: no cover
     _scrub = None
 
+try:  # Cache persistente de juicios (pieza 4; opcional, nunca debe romper)
+    import hipocampo_jcache as _jcache
+except Exception:  # pragma: no cover
+    _jcache = None
+
 logger = logging.getLogger("classifier_client")
 
 API_URL = os.environ.get("CLASSIFIER_API_URL", "https://classifier.dev/")
@@ -69,6 +74,18 @@ def _post(inputs: list[str], labels: list[str], instructions: str = "", timeout:
         if n_in or n_ins:
             logger.info("scrub: %d secreto(s) redactado(s) antes de classifier.dev", n_in + n_ins)
     tier = os.environ.get("CLASSIFIER_TIER", "fast")
+    cache_payload = {
+        "inputs": inputs,
+        "labels": labels,
+        "instructions": instructions,
+        "tier": tier,
+    }
+    if _jcache is not None:
+        cached = _jcache.get("classifier", cache_payload)
+        if cached is not None:
+            results_cache = cached.get("results")
+            if isinstance(results_cache, list):
+                return results_cache
     cuerpo = json.dumps(
         {
             "inputs": inputs,
@@ -88,6 +105,8 @@ def _post(inputs: list[str], labels: list[str], instructions: str = "", timeout:
         results = data.get("results")
         if not isinstance(results, list):
             return None
+        if _jcache is not None:
+            _jcache.put("classifier", cache_payload, {"results": results})
         return results
     except urllib.error.HTTPError as e:
         try:

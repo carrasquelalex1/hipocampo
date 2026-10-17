@@ -35,6 +35,11 @@ try:  # Redacción de secretos antes de la salida HTTP (opcional, nunca debe rom
 except Exception:  # pragma: no cover
     _scrub = None
 
+try:  # Cache persistente de juicios (pieza 4; opcional, nunca debe romper)
+    import hipocampo_jcache as _jcache
+except Exception:  # pragma: no cover
+    _jcache = None
+
 logger = logging.getLogger("typesafe_client")
 
 API_URL = os.environ.get("TYPESAFE_API_URL", "https://api.typesafe.ai/v1/systemone")
@@ -84,6 +89,11 @@ def ask(state: str, questions: dict, timeout: float | None = None) -> dict | Non
         questions, n_q = _scrub.redactar_estructura(questions)
         if n_s or n_q:
             logger.info("scrub: %d secreto(s) redactado(s) antes de TypeSafe", n_s + n_q)
+    cache_payload = {"state": state, "questions": questions, "model": MODEL}
+    if _jcache is not None:
+        cached = _jcache.get("typesafe", cache_payload)
+        if cached is not None:
+            return cached.get("answers") or {}
     cuerpo = json.dumps({"state": state, "model": MODEL, "questions": questions}).encode("utf-8")
     req = urllib.request.Request(
         API_URL,
@@ -96,7 +106,10 @@ def ask(state: str, questions: dict, timeout: float | None = None) -> dict | Non
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        return data.get("answers") or {}
+        respuestas = data.get("answers") or {}
+        if _jcache is not None:
+            _jcache.put("typesafe", cache_payload, {"answers": respuestas})
+        return respuestas
     except urllib.error.HTTPError as e:
         detalle = e.read().decode(errors="replace")[:200]
         logger.warning("TypeSafe HTTP %s: %s", e.code, detalle)
