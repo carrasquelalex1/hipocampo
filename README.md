@@ -1418,6 +1418,36 @@ systemctl --user list-timers hipocampo-maintenance.timer   # verificar próxima 
 
 El CLI reutiliza `_run_maintenance_cycle()` del servidor MCP — exactamente el mismo código que el scheduler interno, cero duplicación de lógica.
 
+### 4. Auto-reparación de Embeddings (firma md5 + barredor)
+
+Cada escritura de embedding (jobs de fondo de save/update, barredor, backfills) guarda también una **firma de sincronía** — `metadatos.embedding_src_md5`, el MD5 del texto exacto truncado del que se generó. Los jobs de fondo reintentan con espera creciente (5s/30s/120s). Un barredor periódico repara cualquier fila atrasada: `embedding IS NULL` (salvo WARM intencional) o firma desincronizada — incluye apagones, cortes de red, crashes y ediciones directas por SQL, porque el estado «pendiente» vive en PostgreSQL, no en la memoria de un proceso.
+
+```bash
+python3 scripts/hipocampo_embed_sweeper.py --dry-run      # listar pendientes (solo lectura)
+python3 scripts/hipocampo_embed_sweeper.py --max-rows 20  # reparar, dosificada para no ahogar el Ollama local
+
+# Una única vez sobre una BD existente (asume embeddings actuales coincidentes):
+python3 scripts/hipocampo_embed_sweeper.py --marcar-al-dia
+```
+
+Lo ejecuta la unidad de usuario `hipocampo-embed-sweeper.timer` cada 15 min (`OnBootSec=3min` alcanza el choque tras un apagón). `hipocampo_health()` reporta `embeddings_pendientes` (0 = todo en sincornía). Las filas degradadas a WARM por `hipocampo_budget` (con `warm_since`) se respetan, no se re-embebeen.
+
+### 5. Capa de Fuente (autoría, huella de lectura, repetición)
+
+La recuperación ahora le dice al agente **de dónde viene un recuerdo y si ya lo había leído antes** — la distinción entre *reencontrar* (memoria epíódica propia), *reconocer* (ya recuperado en esta conversación) y *consultar* (búsqueda de referencia). Cada resultado trae una línea advisory:
+
+```
+🔖 fuente: lo escribí yo (agente) (2026-10-17) | ↻ ya traído hace 40s (2 lecturas) | episodio
+```
+
+Tres señales, todas advisory:
+
+- **Autoría** — `metadatos.autor`: `agente` (escrito por una sesión de agente; default del `save_hipocampo`, que acepta el parámetro `autor`), `usuario` (dictado por el humano — la interfaz web lo estampa) o `catalogo` (documentos indexados en bloque). Los recuerdos guardados antes de la capa leen `sin procedencia registrada (pre-capa)`.
+- **Huella de lectura** — cada búsqueda registra las filas físicas que devolvió en `memory_access` (`source='search_bire'`, top-10, ids normalizados a la fila: `v<N>` / `vmi<uid>`, de modo que alias como `t55`/`l55`/`tv55` cuentan como la misma memoria). La lectura anotada ocurre **antes** de registrar la lectura en curso: «ya traído hace Ns» siempre señala una recuperación *anterior* — frescura = el mismo recuerdo volvió a aparecer en esta conversación.
+- **Madurez** — `nivel`: `episodio` / `consolidado [×N]` / `regla permanente`, directo de la jerárquia de memoria existente.
+
+Bonus arreglado en el mismo commit: `_record_access_batch` nunca persistió (su INSERT corría en una transacción sin commit) y fatiga/decay ignoraban ids con alias — ambos funcionan ya.
+
 ### Bugs corregidos en esta versión
 
 - **`decay_hipocampo` nunca había corrido**: la query de nivel memoria mezclaba `timestamptz` y `text` en un `COALESCE` (`COALESCE(max(accessed_at), metadatos->>'date')`) → error de PostgreSQL `types timestamp with time zone and text cannot be matched`. Corregido casteando `(NULLIF(metadatos->>'date',''))::timestamptz`. Mismo bug corregido en `hipocampo_budget`.
