@@ -107,7 +107,7 @@ def ask(state: str, questions: dict, timeout: float | None = None) -> dict | Non
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         respuestas = data.get("answers") or {}
-        if _jcache is not None:
+        if _jcache is not None and respuestas:
             _jcache.put("typesafe", cache_payload, {"answers": respuestas})
         return respuestas
     except urllib.error.HTTPError as e:

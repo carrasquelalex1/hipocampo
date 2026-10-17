@@ -875,8 +875,9 @@ def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_li
        solicitó, y auditoría de contradicciones por sonda de negación.
 
     Antes de juzgar (pasos 2/3), pre-filtro local (pieza 4): si ya existe un
-    gemelo casi idéntico (mismo contenido o distancia <= 0.02) se omite el
-    juicio del modelo (HIPOCAMPO_PREFILTRO=0 lo apaga).
+    gemelo REAL (contenido idéntico normalizado a espacios) se omite el juicio
+    del modelo (HIPOCAMPO_PREFILTRO=0 lo apaga). No se usa distancia coseno:
+    qwen3-0.6b comprime distancias y da falsos positivos (verificado 2026-10-17).
 
     Si el embedding falla o es lento, la memoria queda en tier WARM
     (embedding=NULL): recuperable por búsqueda de texto/trigram.
@@ -906,7 +907,8 @@ def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_li
         logger.warning("Backfill de embedding id=%s falló: %s", row_id, e)
         return
 
-    # Pre-filtro local (pieza 4): gemelo casi idéntico ⇒ sin juicio del modelo.
+    # Pre-filtro local (pieza 4): gemelo REAL (contenido idéntico) ⇒ sin juicio
+    # del modelo. El criterio es el contenido, no la distancia (ver helper).
     if str(os.environ.get("HIPOCAMPO_PREFILTRO", "1")).strip().lower() not in {
         "0",
         "false",
@@ -1118,10 +1120,14 @@ def _screening_inyeccion_regex(row_id: int, content: str) -> None:
 
 
 def _buscar_casi_duplicado(row_id: int, content: str, embedding) -> int | None:
-    """Pre-filtro pieza 4: id de un gemelo casi idéntico, o None.
+    """Pre-filtro pieza 4: id de un gemelo REAL (re-save), o None.
 
-    Criterio: mismo contenido exacto, o distancia coseno <= 0.02 (prácticamente
-    el mismo texto embebido). Best-effort: si la BD falla, devuelve None.
+    OJO: con qwen3-embedding:0.6b la distancia coseno NO separa duplicados de
+    pares parecidos — hay contenidos DISTINTOS con dist ≈ 0 (verificado
+    2026-10-17: 8 de 11 pares con dist ≤ 0.02 eran textos diferentes). Por eso
+    el criterio es igualdad de contenido normalizado (solo espacios), nunca la
+    distancia. El KNN (índice HNSW) sirve únicamente para traer el vecino más
+    cercano barato. Best-effort: si la BD falla, devuelve None.
     """
     conn = None
     cur = None
@@ -1129,16 +1135,19 @@ def _buscar_casi_duplicado(row_id: int, content: str, embedding) -> int | None:
         conn = _conn()
         cur = conn.cursor()
         cur.execute(
-            """SELECT id FROM memoria_vectorial
-               WHERE id != %s AND (
-                   contenido = %s
-                   OR (embedding IS NOT NULL AND (embedding <=> %s::vector(1024)) <= 0.02)
-               )
+            """SELECT id, contenido FROM memoria_vectorial
+               WHERE id != %s AND embedding IS NOT NULL
+               ORDER BY embedding <=> %s::vector(1024)
                LIMIT 1""",
-            (row_id, content, embedding),
+            (row_id, embedding),
         )
         row = cur.fetchone()
-        return int(row[0]) if row else None
+        if not row:
+            return None
+        normal = " ".join(content.split())
+        if " ".join((row[1] or "").split()) == normal:
+            return int(row[0])
+        return None
     except Exception:
         return None
     finally:

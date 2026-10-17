@@ -84,7 +84,6 @@ def _clave(kind: str, payload: dict) -> str:
 
 def _asegurar_tabla(cur) -> None:
     """CREATE TABLE IF NOT EXISTS (una vez por proceso; para entornos nuevos)."""
-    global _tabla_verificada
     if _tabla_verificada:
         return
     cur.execute(
@@ -97,7 +96,6 @@ def _asegurar_tabla(cur) -> None:
            )"""
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_judgment_cache_created ON judgment_cache (created_at DESC)")
-    _tabla_verificada = True
 
 
 def get(kind: str, payload: dict):
@@ -144,6 +142,7 @@ def get(kind: str, payload: dict):
 
 def put(kind: str, payload: dict, resultado) -> None:
     """Guarda un resultado (upsert, best-effort). Nunca lanza."""
+    global _tabla_verificada
     if resultado is None or _off(os.environ.get("HIPOCAMPO_JCACHE", "1")):
         return
     conn_fn = _get_conn()
@@ -164,6 +163,7 @@ def put(kind: str, payload: dict, resultado) -> None:
             (key, kind, json.dumps(resultado, ensure_ascii=False, default=str)),
         )
         conn.commit()
+        _tabla_verificada = True
     except Exception:
         try:
             if conn is not None:

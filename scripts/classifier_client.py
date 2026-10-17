@@ -105,7 +105,7 @@ def _post(inputs: list[str], labels: list[str], instructions: str = "", timeout:
         results = data.get("results")
         if not isinstance(results, list):
             return None
-        if _jcache is not None:
+        if _jcache is not None and results:
             _jcache.put("classifier", cache_payload, {"results": results})
         return results
     except urllib.error.HTTPError as e:
