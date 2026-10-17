@@ -94,6 +94,24 @@ class TestRerankSearch:
         assert out[-1]["contenido"] == "receta de cocina"
         assert out[-1]["score"] == 24.0  # 48 * (0.5 + 0.5*0)
 
+    def test_typesafe_falla_usa_classifier(self, monkeypatch):
+        import hipocampo_search as s
+        import typesafe_client as ts
+
+        monkeypatch.setenv("HIPOCAMPO_TYPESAFE", "1")
+        monkeypatch.setenv("HIPOCAMPO_CLASSIFIER", "1")
+        monkeypatch.setattr(ts, "enabled", lambda: True)
+
+        def _typesafe_caido(q, items):
+            raise RuntimeError("typesafe caido")
+
+        monkeypatch.setattr(ts, "relevancia_batch", _typesafe_caido)
+        monkeypatch.setattr(cl, "relevancia_batch", lambda q, items: {0: 0.0, 1: 1.0, 2: 1.0})
+        out = s._rerank_typesafe(self._fakes(), "malaria", top_n=3)
+        assert out[0]["contenido"] == "caso de malaria"
+        assert out[-1]["contenido"] == "receta de cocina"
+        assert out[-1]["score"] == 24.0  # 48 * (0.5 + 0.5*0)
+
     def test_sin_tiers_devuelve_intacto(self, monkeypatch):
         import hipocampo_search as s
 
