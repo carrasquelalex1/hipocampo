@@ -100,7 +100,7 @@ def check_postgresql():
     return results
 
 
-def check_nvidia_api():
+def check_embeddings():
     """Verifica que la API de embeddings (Ollama local o NVIDIA NIM) sea funcional."""
     results = {"status": "ok", "checks": {}}
     try:
@@ -178,7 +178,7 @@ def full_health_check():
     }
     checks = {
         "postgresql": check_postgresql(),
-        "nvidia_api": check_nvidia_api(),
+        "embeddings": check_embeddings(),
         "disk_space": check_disk_space(),
         "extensions": check_extensions(),
     }
@@ -247,11 +247,11 @@ def auto_repair():
             except Exception as e:
                 report["failed"].append(f"index_hnsw_{table}: {e}")
 
-    nv = check_nvidia_api()
+    nv = check_embeddings()
     if nv["status"] == "error":
-        report["failed"].append("nvidia_api_key_check_env")
+        report["failed"].append("embeddings_key_check_env")
     else:
-        report["skipped"].append("nvidia_api_ok")
+        report["skipped"].append("embeddings_ok")
 
     return report
 

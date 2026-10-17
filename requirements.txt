@@ -1,5 +1,6 @@
 psycopg2-binary>=2.9
 pgvector>=0.4
+numpy>=1.26
 python-dotenv>=1.0
 lxml>=5.0
 mcp>=1.0.0,<2.0.0

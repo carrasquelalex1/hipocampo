@@ -861,6 +861,18 @@ def _auto_link_similar(row_id: int, embedding: list) -> int:
     return links_created
 
 
+# Timeout paciente para embeddings en BACKGROUND: saves/updates grandes (ej.
+# snapshot de ~28K chars) tardan MINUTOS en Ollama CPU (~5-6 min medidos);
+# nadie espera ese path, así que el background usa 900s por defecto
+# (override: EMBED_TIMEOUT_BG_S). El path interactivo conserva EMBED_TIMEOUT_S
+# (25s local / 90s remoto).
+try:
+    BG_EMBED_TIMEOUT_S = float(os.environ.get("EMBED_TIMEOUT_BG_S", "900"))
+except ValueError:  # env inválida no debe tumbar el arranque del server
+    logger.warning("EMBED_TIMEOUT_BG_S inválida; usando 900s")
+    BG_EMBED_TIMEOUT_S = 900.0
+
+
 def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_link: bool) -> None:
     """Finaliza un save de forma asíncrona (best-effort, nunca lanza).
 
@@ -885,7 +897,7 @@ def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_li
     _screening_inyeccion_regex(row_id, content)
 
     try:
-        embedding = get_embedding(content)
+        embedding = get_embedding(content, timeout_s=BG_EMBED_TIMEOUT_S)
     except Exception as e:
         logger.warning("Embedding falló para id=%s (queda WARM): %s", row_id, e)
         return
@@ -944,6 +956,45 @@ def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_li
         _auto_link_similar(row_id, embedding)
 
     _audit_contradicciones_bg(row_id, content, embedding)
+
+
+def _finalize_update_bg(row_id: int, content: str) -> None:
+    """Regenera en background el embedding de un update (best-effort, nunca lanza).
+
+    Lanzado por update_hipocampo cuando cambia el `contenido`: usa un timeout
+    paciente (BG_EMBED_TIMEOUT_S) porque nadie espera este resultado. Mientras
+    corre, la fila conserva su embedding anterior (la búsqueda sigue OK). Solo
+    escribe si el contenido guardado sigue siendo el mismo — evita pisar con un
+    embedding obsoleto si entró otro update más reciente.
+    """
+    try:
+        embedding = get_embedding(content, timeout_s=BG_EMBED_TIMEOUT_S)
+    except Exception as e:
+        logger.warning("Embedding de update falló para id=%s (queda el anterior): %s", row_id, e)
+        return
+    if embedding is None:
+        logger.warning("Embedding no disponible en update id=%s (queda el anterior)", row_id)
+        return
+
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE memoria_vectorial SET embedding = %s::vector(1024) WHERE id = %s AND contenido = %s",
+            (embedding, row_id, content),
+        )
+        aplicado = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning("Backfill de embedding (update) id=%s falló: %s", row_id, e)
+        return
+
+    if aplicado:
+        logger.info("🔄 Embedding regenerado en background para id=%s", row_id)
+    else:
+        logger.info("⏭️ Embedding de id=%s descartado (el contenido cambió de nuevo)", row_id)
 
 
 def _detectar_contradicciones(
@@ -1736,19 +1787,27 @@ async def update_hipocampo(
     memory_type: str | None = None,
     code: str | None = None,
     categories: list[str] | None = None,
+    meta_patch: dict | None = None,
 ) -> str:
     """
     Actualiza un recuerdo existente en el Hipocampo (memoria_vectorial).
 
-    Si se proporciona content, se regenera el embedding automáticamente.
-    Los campos no proporcionados no se modifican.
+    Si se proporciona content, el embedding se regenera en BACKGROUND (no
+    bloquea la llamada, igual que save_hipocampo): la fila conserva su
+    embedding anterior hasta el backfill y la búsqueda semántica pasa al
+    nuevo en cuanto esté listo. Los campos no proporcionados no se modifican.
 
     Args:
         id: ID numérico del recuerdo a actualizar.
-        content: Nuevo texto del recuerdo (opcional). Si se provee, se regenera el embedding.
+        content: Nuevo texto del recuerdo (opcional). Si se provee, el embedding
+                 se regenera en background.
         memory_type: Nuevo tipo de memoria (opcional). Ej: "event", "decision".
         code: Código o etiqueta corta (opcional).
         categories: Nueva lista de categorías (opcional).
+        meta_patch: Dict opcional que se FUSIONA sobre metadatos (sobrescribe
+                    solo las claves incluidas; el resto se conserva). Pensado
+                    para sincronizar md5/bytes sin escribir SQL a mano.
+                    Ej: {"md5": "6dbe9bdb...", "bytes": 52790}
 
     Returns:
         Confirmación de la actualización.
@@ -1770,6 +1829,8 @@ async def update_hipocampo(
         current_content, current_metadatos = row
         new_content = content if content is not None else current_content
         new_metadatos = (current_metadatos or {}).copy()
+        if meta_patch:
+            new_metadatos.update(meta_patch)
         new_metadatos["updated_at"] = str(date.today())
 
         if memory_type is not None:
@@ -1780,18 +1841,37 @@ async def update_hipocampo(
             new_metadatos["categories"] = categories
 
         if content is not None:
-            embedding = _generar_embedding(content, "update_hipocampo")
+            # Async (2026-10-17): UPDATE inmediato SIN esperar el embedding — la
+            # fila conserva el anterior (ligeramente desfasado) y el nuevo llega
+            # por _finalize_update_bg con timeout paciente (el snapshot de ~28K
+            # chars tarda ~5-6 min en Ollama CPU; antes bloqueaba al caller).
             cur.execute(
-                """UPDATE memoria_vectorial SET contenido=%s, metadatos=%s, embedding=%s::vector(1024)
-                   WHERE id=%s""",
-                (new_content, json.dumps(new_metadatos), embedding, id),
+                "UPDATE memoria_vectorial SET contenido=%s, metadatos=%s WHERE id=%s",
+                (new_content, json.dumps(new_metadatos), id),
             )
-        else:
-            cur.execute(
-                "UPDATE memoria_vectorial SET metadatos=%s WHERE id=%s",
-                (json.dumps(new_metadatos), id),
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            threading.Thread(
+                target=_finalize_update_bg,
+                args=(id, content),
+                daemon=True,
+                name=f"finalize-update-{id}",
+            ).start()
+
+            _fire_webhooks("update", id, new_content, new_metadatos)
+
+            logger.info("✅ Actualizado id=%s (embedding en background)", id)
+            return (
+                f"✅ Actualizado recuerdo id={id} — el embedding se regenera en "
+                "background (segundos–minutos según el tamaño)."
             )
 
+        cur.execute(
+            "UPDATE memoria_vectorial SET metadatos=%s WHERE id=%s",
+            (json.dumps(new_metadatos), id),
+        )
         conn.commit()
         cur.close()
         conn.close()

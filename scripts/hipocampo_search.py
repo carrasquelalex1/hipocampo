@@ -215,14 +215,26 @@ def set_trgm_threshold(cur, threshold=0.2):
         pass
 
 
+def _patrones_indexables(patterns, min_chars=3):
+    """Separa patrones '%x%' en indexables por trigramas (>=min_chars) y débiles.
+
+    pg_trgm no acelera patrones con menos de 3 caracteres; mezclarlos en la
+    consulta condena el plan a Seq Scan completo. La discovery SQL usa solo
+    los indexables (los débiles siguen contando en el scoring Python).
+    """
+    strong, weak = [], []
+    for p in patterns:
+        term = p.strip("%")
+        (strong if len(term) >= min_chars else weak).append(p)
+    return strong, weak
+
+
 def buscar_lexico_memoria_vectorial(cur, patterns, query_tokens, query_original=None):
     if not patterns:
         return []
 
     set_trgm_threshold(cur, TRGM_SIMILARITY_THRESHOLD)
     query_text = query_original or " ".join(query_tokens)
-    # Usar ILIKE con índice GIN (pg_trgm acelera ILIKE con gin_trgm_ops)
-    # y ORDER BY similitud trigramática descendente para mejor ranking
     placeholders = ",".join(["%s"] * len(patterns))
     sql = f"""
         SELECT id, contenido, metadatos::text, code_snippet,
@@ -231,8 +243,54 @@ def buscar_lexico_memoria_vectorial(cur, patterns, query_tokens, query_original=
         WHERE contenido ILIKE ANY (ARRAY[{placeholders}])
         ORDER BY trgm_sim DESC, LENGTH(contenido) ASC
     """
-    cur.execute(sql, [query_text] + patterns)
-    rows = cur.fetchall()
+    sql_args = [query_text] + patterns
+
+    # Ruta GIN (2026-10-17, medido): ILIKE ANY sobre TODOS los patrones fuerza
+    # Seq Scan evaluando 7-8 LIKEs por fila (~1s en 2K filas / i3). Los
+    # patrones de <3 chars no pueden usar trigramas (pg_trgm) y envenenarían
+    # el plan, así que la ruta indexada usa solo los indexables. Cambio de
+    # recall DELIBERADO (verificado adversarialmente): los fragmentos débiles
+    # ("de", "md"...) ya no descubren filas por sí solos — su ILIKE casaba
+    # ~90% del corpus e inyectaba ruido de stopword al ranking (caso medido:
+    # filas cuyo único match era "de" en el top-5). Los términos débiles
+    # siguen pesando en el scoring de las filas que entran por patrones
+    # fuertes. Con los fuertes + enable_seqscan=off el plan es BitmapOr sobre
+    # idx_memoria_vectorial_contenido_gin (~260ms medido) y escala sublineal.
+    # Override: HIPOCAMPO_LEXICO_GIN=0 restaura el comportamiento anterior.
+    rows = None
+    gin_env = os.environ.get("HIPOCAMPO_LEXICO_GIN", "1").strip().lower()
+    strong, _weak = _patrones_indexables(patterns)
+    if gin_env not in {"0", "false", "no", "off"} and strong:
+        ph_fuerte = ",".join(["%s"] * len(strong))
+        sql_gin = f"""
+            SELECT id, contenido, metadatos::text, code_snippet,
+                   similarity(contenido, %s) AS trgm_sim
+            FROM memoria_vectorial
+            WHERE contenido ILIKE ANY (ARRAY[{ph_fuerte}])
+            ORDER BY trgm_sim DESC, LENGTH(contenido) ASC
+        """
+        try:
+            cur.execute("SET enable_seqscan = off")
+            try:
+                cur.execute(sql_gin, [query_text] + strong)
+                rows = cur.fetchall()
+            finally:
+                try:
+                    cur.execute("RESET enable_seqscan")
+                except Exception:
+                    pass
+        except Exception:
+            # Si el error abortó la transacción, el fallback clásico también
+            # fallaría (InFailedSqlTransaction): rollback primero (aquí solo
+            # hay lecturas y SETs — seguro) y caer a la ruta clásica de abajo.
+            rows = None
+            try:
+                cur.connection.rollback()
+            except Exception:
+                pass
+    if rows is None:
+        cur.execute(sql, sql_args)
+        rows = cur.fetchall()
     if not rows:
         return []
 
@@ -652,15 +710,100 @@ def fusionar_resultados(vectorial, lexico_mv, lexico_mi, alpha=None, hoy=None):
     return fusionados
 
 
+def _mmr_seleccionar(candidates, embeddings, diversity_lambda):
+    """Selección MMR pura (math) sobre vectores ya cargados — testable sin BD.
+
+    Réplica de la semántica original: en cada paso elige el candidato CON
+    vector de mayor mmr_score = λ·rel − (1−λ)·max_cos contra los ya elegidos;
+    los candidatos sin vector nunca se seleccionan y se conservan (en su
+    orden) en el grupo restante. Devuelve (selected, restantes).
+
+    Ruta rápida numpy: unitarios por L2 y coseno = producto punto (~25ms vs
+    ~1s del bucle Python con normas recalculadas por par, medido 2026-10-17).
+    Fallback puro sin numpy (unitarios precalculados). Con float64 la
+    selección coincide con la original en todos los regímenes realistas
+    (fuzz adversarial: 7.560 casos, 0 divergencias con scores a resolución
+    0.1); solo puede diferir en empates sub-1e-7 donde el coseno por par y
+    el de unitarios redondean distinto — irrelevante con scores reales, el
+    orden final del ranking no cambia.
+    """
+    if not candidates:
+        return [], []
+    selected = [candidates[0]]
+    pool = list(candidates[1:])
+
+    def _vec(c):
+        nid, _ = _extract_numeric_id(c["id"])
+        return embeddings.get(nid) if nid is not None else None
+
+    v0 = _vec(candidates[0])
+    valid_idx = [i for i, c in enumerate(pool) if _vec(c) is not None]
+    if not valid_idx:
+        return selected, pool
+
+    elegidos = set()
+    try:
+        import numpy as np
+
+        def _unit_np(v):
+            a = np.asarray(v, dtype=np.float64)
+            n = float(np.linalg.norm(a))
+            return a / n if n > 0 else a
+
+        unit_pool = {i: _unit_np(_vec(pool[i])) for i in valid_idx}
+        sel_unit = [_unit_np(v0)] if v0 is not None else []
+        rel = {i: pool[i]["score"] / 100.0 for i in valid_idx}
+
+        pendientes = list(valid_idx)
+        while pendientes:
+            if sel_unit:
+                S = np.vstack(sel_unit)
+                sims = np.asarray([unit_pool[i] for i in pendientes], dtype=np.float32) @ S.T
+                max_cos = sims.max(axis=1)
+            else:
+                max_cos = np.zeros(len(pendientes), dtype=np.float32)
+            scores = (
+                diversity_lambda * np.asarray([rel[i] for i in pendientes], dtype=np.float32)
+                - (1 - diversity_lambda) * max_cos
+            )
+            i = pendientes.pop(int(np.argmax(scores)))
+            elegidos.add(i)
+            selected.append(pool[i])
+            sel_unit.append(unit_pool[i])
+    except ImportError:
+
+        def _dot(a, b):
+            return sum(x * y for x, y in zip(a, b))
+
+        def _unit(v):
+            n = math.sqrt(sum(x * x for x in v))
+            return tuple(x / n for x in v) if n > 0 else tuple(v)
+
+        unit_pool = {i: _unit(_vec(pool[i])) for i in valid_idx}
+        sel_unit = [_unit(v0)] if v0 is not None else []
+        pendientes = list(valid_idx)
+        while pendientes:
+            best_i, best_m = None, -float("inf")
+            for i in pendientes:
+                max_cos = max((_dot(unit_pool[i], s) for s in sel_unit), default=0.0)
+                m = diversity_lambda * (pool[i]["score"] / 100.0) - (1 - diversity_lambda) * max_cos
+                if m > best_m:
+                    best_m, best_i = m, i
+            pendientes.remove(best_i)
+            elegidos.add(best_i)
+            selected.append(pool[best_i])
+            sel_unit.append(unit_pool[best_i])
+
+    restantes = [c for i, c in enumerate(pool) if i not in elegidos]
+    return selected, restantes
+
+
 def aplicar_diversidad_mmr(resultados, diversity_lambda=0.7, max_diverse=30):
     if len(resultados) <= 3 or diversity_lambda >= 1.0:
         return resultados
 
     candidates = resultados[:max_diverse]
     rest = resultados[max_diverse:]
-
-    selected = [candidates[0]]
-    pool = candidates[1:]
 
     id_to_prefix = {}
     for r in candidates:
@@ -706,40 +849,8 @@ def aplicar_diversidad_mmr(resultados, diversity_lambda=0.7, max_diverse=30):
     if not embeddings:
         return resultados
 
-    first_numeric, _ = _extract_numeric_id(selected[0]["id"])
-    selected_vectors = []
-    if first_numeric is not None and first_numeric in embeddings:
-        selected_vectors.append(embeddings[first_numeric])
-
-    while pool:
-        best_candidate = None
-        best_score = -float("inf")
-
-        for cand in pool:
-            numeric_id, _ = _extract_numeric_id(cand["id"])
-            if numeric_id is None or numeric_id not in embeddings:
-                continue
-
-            cand_vec = embeddings[numeric_id]
-            relevance = cand["score"] / 100.0
-            max_cos = max((_cosine_similarity(cand_vec, sv) for sv in selected_vectors), default=0.0)
-            mmr_score = diversity_lambda * relevance - (1 - diversity_lambda) * max_cos
-
-            if mmr_score > best_score:
-                best_score = mmr_score
-                best_candidate = cand
-
-        if best_candidate is None:
-            break
-
-        selected.append(best_candidate)
-        pool.remove(best_candidate)
-
-        best_numeric, _ = _extract_numeric_id(best_candidate["id"])
-        if best_numeric is not None and best_numeric in embeddings:
-            selected_vectors.append(embeddings[best_numeric])
-
-    return selected + pool + rest
+    selected, restantes = _mmr_seleccionar(candidates, embeddings, diversity_lambda)
+    return selected + restantes + rest
 
 
 # ─── FASE 6: RE-RANKING POR EL AGENTE ACTIVO ─────────────────────────────────

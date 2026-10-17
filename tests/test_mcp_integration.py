@@ -181,6 +181,13 @@ def test_required_parameters():
             assert param in required, f"{name} debería requerir '{param}', required={required}"
 
 
+def test_update_meta_patch_parameter():
+    """update_hipocampo debe exponer meta_patch (sync de metadatos sin SQL a mano)."""
+    tools = _tools_map()
+    props = tools["update_hipocampo"].parameters.get("properties", {})
+    assert "meta_patch" in props, f"update_hipocampo debería aceptar 'meta_patch', tiene: {list(props.keys())}"
+
+
 def test_resource_info():
     """The hipocampo://info resource must be registered."""
     mod = _get_server_module()

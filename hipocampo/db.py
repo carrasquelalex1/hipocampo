@@ -129,9 +129,9 @@ def _get_active_embed_model() -> str:
 
 
 @functools.lru_cache(maxsize=128)
-def _cached_embedding(text: str, api_key: str, model: str) -> tuple:
-    """LRU-cached embedding: same text + api_key + model skip API call."""
-    client = _get_client(api_key)
+def _cached_embedding(text: str, api_key: str, model: str, timeout_s: float | None = None) -> tuple:
+    """LRU-cached embedding: same text + api_key + model (+ timeout) skip API call."""
+    client = _get_client(api_key, timeout_s)
     resp = client.embeddings.create(
         input=text,
         model=model,
@@ -151,29 +151,36 @@ def get_embedding_last_error():
 _client_cache = {}
 
 
-def _get_client(api_key=None):
+def _get_client(api_key=None, timeout_s=None):
     if api_key is None:
         api_key = os.getenv("NVIDIA_API_KEY") or "ollama"
-    if api_key not in _client_cache:
+    if timeout_s is None:
         # Timeout configurable: en Ollama CPU lento (i3, ~7-45s/embedding) conviene
         # fallar temprano y degradar a búsqueda léxica (GIN) en vez de colgar la
         # búsqueda completa. Default 90s para NIM; 25s para Ollama local.
         base_local = EMBED_BASE_URL
         is_local = "127.0.0.1" in base_local or "localhost" in base_local
         timeout_s = float(os.getenv("EMBED_TIMEOUT_S", "25" if is_local else "90"))
-        _client_cache[api_key] = OpenAI(
+    cache_key = (api_key, timeout_s)
+    if cache_key not in _client_cache:
+        _client_cache[cache_key] = OpenAI(
             base_url=EMBED_BASE_URL,
             api_key=api_key,
             timeout=timeout_s,
         )
-    return _client_cache[api_key]
+    return _client_cache[cache_key]
 
 
-def get_embedding(text, dims=1024, api_key=None):
+def get_embedding(text, dims=1024, api_key=None, timeout_s=None):
     """Generate a 1024-dim embedding via Ollama local (qwen3-embedding:0.6b).
 
     Uses LRU cache (128 entries) — repeated queries for the same text
     skip the API call entirely. Returns ``None`` on failure.
+
+    timeout_s: override opcional del timeout del cliente HTTP (None = default
+    del entorno: 25s local / 90s remoto). Los jobs en BACKGROUND (backfill de
+    saves/updates grandes) pasan p.ej. 900s para no abortar embeddings lentos
+    sin afectar al path interactivo.
     """
     global _embedding_last_error
     if api_key is None:
@@ -188,7 +195,7 @@ def get_embedding(text, dims=1024, api_key=None):
     try:
         model = _get_active_embed_model()
         _t0 = time.monotonic()
-        result = _cached_embedding(text, api_key, model)
+        result = _cached_embedding(text, api_key, model, timeout_s)
         _latency = time.monotonic() - _t0
         if _latency > 1.0:
             logger.info("embedding %s generado en %.2fs (chars=%d)", model, _latency, len(text))

@@ -10,6 +10,8 @@ from hipocampo_search import (
     generar_patrones_ILIKE,
     fusionar_resultados,
     _aplicar_decaimiento_temporal,
+    _mmr_seleccionar,
+    _patrones_indexables,
     formatear_resultados,
     cargar_config_hibrida,
     STEM_MAP,
@@ -259,3 +261,69 @@ class TestCargarConfig:
     def test_config_default_sin_archivo(self):
         alpha = cargar_config_hibrida()
         assert isinstance(alpha, float)
+
+
+class TestPatronesIndexables:
+    def test_separa_por_longitud(self):
+        strong, weak = _patrones_indexables(["%md%", "%snapshot%", "%ab%", "%abc%"])
+        assert strong == ["%snapshot%", "%abc%"]
+        assert weak == ["%md%", "%ab%"]
+
+    def test_todos_fuertes(self):
+        strong, weak = _patrones_indexables(["%deploy%", "%token%"])
+        assert strong == ["%deploy%", "%token%"]
+        assert weak == []
+
+    def test_todos_debiles(self):
+        strong, weak = _patrones_indexables(["%té%", "%md%"])
+        assert strong == []
+        assert weak == ["%té%", "%md%"]
+
+
+class TestMMRSeleccionar:
+    @staticmethod
+    def _c(i, score):
+        return {"id": i, "score": score, "contenido": i}
+
+    def test_prefiere_diverso_sobre_redundante(self):
+        cands = [self._c("v1", 100.0), self._c("v2", 70.0), self._c("v3", 50.0)]
+        embs = {1: [1.0, 0.0, 0.0], 2: [1.0, 0.0, 0.0], 3: [0.0, 1.0, 0.0]}
+        selected, restantes = _mmr_seleccionar(cands, embs, 0.7)
+        # v3 (diverso, score menor) va antes que v2 (vector idéntico a v1)
+        assert [c["id"] for c in selected] == ["v1", "v3", "v2"]
+        assert restantes == []
+
+    def test_fallback_sin_numpy(self, monkeypatch):
+        import sys as _sys
+
+        monkeypatch.setitem(_sys.modules, "numpy", None)
+        cands = [self._c("v1", 100.0), self._c("v2", 70.0), self._c("v3", 50.0)]
+        embs = {1: [1.0, 0.0, 0.0], 2: [1.0, 0.0, 0.0], 3: [0.0, 1.0, 0.0]}
+        selected, restantes = _mmr_seleccionar(cands, embs, 0.7)
+        assert [c["id"] for c in selected] == ["v1", "v3", "v2"]
+        assert restantes == []
+
+    def test_candidato_sin_vector_no_se_selecciona(self):
+        cands = [self._c("v1", 100.0), self._c("vmi9", 99.0), self._c("v3", 50.0)]
+        embs = {1: [1.0, 0.0], 3: [0.0, 1.0]}
+        selected, restantes = _mmr_seleccionar(cands, embs, 0.7)
+        assert [c["id"] for c in selected] == ["v1", "v3"]
+        assert [c["id"] for c in restantes] == ["vmi9"]
+
+    def test_sin_vectores_devuelve_pool_intacto(self):
+        cands = [self._c("v1", 100.0), self._c("v2", 90.0)]
+        selected, restantes = _mmr_seleccionar(cands, {}, 0.7)
+        assert [c["id"] for c in selected] == ["v1"]
+        assert [c["id"] for c in restantes] == ["v2"]
+
+    def test_restantes_sin_vector_conservan_orden(self):
+        cands = [
+            self._c("v1", 99.0),
+            self._c("zz2", 50.0),
+            self._c("v3", 40.0),
+            self._c("zz4", 30.0),
+        ]
+        embs = {1: [1.0, 0.0], 3: [0.0, 1.0]}
+        selected, restantes = _mmr_seleccionar(cands, embs, 0.7)
+        assert [c["id"] for c in selected] == ["v1", "v3"]
+        assert [c["id"] for c in restantes] == ["zz2", "zz4"]
