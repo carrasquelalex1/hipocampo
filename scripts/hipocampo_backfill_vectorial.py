@@ -72,7 +72,12 @@ def main():
                 errors += 1
                 print(f"  X {item_id}: error")
                 continue
-            cur.execute("UPDATE memoria_vectorial SET embedding = %s::vector(1024) WHERE id = %s", (emb, item_id))
+            cur.execute(
+                "UPDATE memoria_vectorial SET embedding = %s::vector(1024), "
+                "metadatos = COALESCE(metadatos, '{}'::jsonb) "
+                "|| jsonb_build_object('embedding_src_md5', md5(left(%s, 28000))) WHERE id = %s",
+                (emb, contenido, item_id),
+            )
             processed += 1
             print(f"  OK {item_id}: {contenido[:60]}...")
 

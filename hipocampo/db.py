@@ -5,6 +5,7 @@ Usage:
     from hipocampo.db import get_conn, get_embedding, load_config
 """
 
+import hashlib
 import os
 import time
 import functools
@@ -17,6 +18,48 @@ logger = logging.getLogger("hipocampo.db")
 # === Embeddings locales (Ollama) ===
 EMBED_BASE_URL = os.getenv("EMBED_BASE_URL", "http://127.0.0.1:11434/v1")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "qwen3-embedding:0.6b")
+
+# Límite del modelo (~8192 tokens ≈ 4 chars/token) con margen. Único lugar de
+# verdad: get_embedding trunca con esto y la firma (embedding_src_md5) se
+# calcula sobre el mismo texto truncado — el barredor compara peras con peras.
+MAX_EMBED_CHARS = 28_000
+
+
+def contenido_firma(text: str) -> str:
+    """MD5 del texto que realmente se embebe (aplicando el mismo truncado).
+
+    Se guarda en `metadatos.embedding_src_md5` junto al embedding. El barredor
+    marca como pendiente toda fila donde md5(left(contenido, MAX_EMBED_CHARS))
+    no coincida con esta firma (corte de luz, red caída, edición directa, ...).
+    """
+    return hashlib.md5(text[:MAX_EMBED_CHARS].encode("utf-8")).hexdigest()
+
+
+def get_embedding_with_retries(text, timeout_s=None, delays=(5.0, 30.0, 120.0)):
+    """get_embedding con reintentos y esperas crecientes (jobs de background).
+
+    1 intento + len(delays) reintentos; devuelve None si se agotan todos. No
+    depende del estado en memoria: si igual falla, la fila queda desincronizada
+    y la repara el barredor (hipocampo_embed_sweeper.py) leyendo la BD.
+    """
+    try:
+        emb = get_embedding(text, timeout_s=timeout_s)
+    except Exception as e:  # get_embedding normalmente devuelve None; blindaje extra
+        logger.warning("Embedding lanzó excepción: %s", e)
+        emb = None
+    if emb is not None:
+        return emb
+    for i, delay in enumerate(delays):
+        logger.warning("Embedding no disponible — reintento %d/%d en %.0fs", i + 1, len(delays), delay)
+        time.sleep(delay)
+        try:
+            emb = get_embedding(text, timeout_s=timeout_s)
+        except Exception as e:
+            logger.warning("Reintento %d/%d falló: %s", i + 1, len(delays), e)
+            continue
+        if emb is not None:
+            return emb
+    return None
 
 
 def _project_root():
@@ -188,8 +231,8 @@ def get_embedding(text, dims=1024, api_key=None, timeout_s=None):
     if not api_key:
         _embedding_last_error = "API key no está configurada"
         return None
-    # Guard: límite del modelo es 8192 tokens (~4 chars/token). Truncar con margen.
-    MAX_EMBED_CHARS = 28_000
+    # Guard: truncar en MAX_EMBED_CHARS (constante del módulo) — contenido_firma
+    # usa exactamente el mismo recorte para que la firma sea comparable en SQL.
     if len(text) > MAX_EMBED_CHARS:
         text = text[:MAX_EMBED_CHARS]
     try:
@@ -214,10 +257,12 @@ def get_embedding(text, dims=1024, api_key=None, timeout_s=None):
 
             if is_model_error(e):
                 logger.warning("Embedding model %s failed, trying failover...", model)
-                result = get_embedding_with_failover(text, dims=dims, api_key=api_key)
+                result = get_embedding_with_failover(text, dims=dims, api_key=api_key, timeout_s=timeout_s)
                 if result is not None:
                     _embedding_last_error = None
-                    return result
+                    # list(): el failover puede devolver tuple y psycopg2 no
+                    # adapta tuple a ::vector (CannotCoerce record → vector).
+                    return list(result)
         except ImportError:
             pass
 

@@ -702,6 +702,27 @@ systemctl --user list-timers hipocampo-maintenance.timer   # verify next run
 
 The CLI reuses `_run_maintenance_cycle()` from the MCP server — the exact same code path as the internal scheduler, zero logic duplication.
 
+### 4. Embedding Self-Healing (md5 signature + sweeper)
+
+Every embedding write (save/update background jobs, sweeper, backfills) also stores a **sync signature** — `metadatos.embedding_src_md5`, the MD5 of the exact truncated text it was generated from. Background jobs retry with backoff (5s/30s/120s). A periodic sweeper repairs any row that is *behind*: `embedding IS NULL` (unless intentionally WARM) or a signature mismatch — power cuts, network outages, crashes, or direct SQL edits included, because the pending state lives in PostgreSQL, not in process memory.
+
+```bash
+python3 scripts/hipocampo_embed_sweeper.py --dry-run      # list pending rows (read-only)
+python3 scripts/hipocampo_embed_sweeper.py --max-rows 20  # repair, paced to spare local Ollama
+
+# One-time on an existing database (assumes current embeddings match content):
+python3 scripts/hipocampo_embed_sweeper.py --marcar-al-dia
+```
+
+Run by the `hipocampo-embed-sweeper.timer` user unit every 15 min (`OnBootSec=3min` catches up after a power-off). `hipocampo_health()` reports `embeddings_pendientes` (0 = everything in sync). Rows intentionally downgraded to WARM by `hipocampo_budget` (flagged `warm_since`) are respected, not re-embedded.
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `SWEEP_MAX_ROWS` | `8` | Rows repaired per run (gentle on local Ollama) |
+| `SWEEP_MAX_SECONDS` | `600` | Wall-clock cap per run |
+| `SWEEP_PAUSE_S` | `2` | Pause between repaired rows |
+| `SWEEP_EMBED_TIMEOUT_S` | `900` | Patient per-embedding timeout |
+
 ### Bug fixes in this release
 
 - **`decay_hipocampo` never ran**: the memory-level query mixed `timestamptz` and `text` in a `COALESCE` (`COALESCE(max(accessed_at), metadatos->>'date')`) → PostgreSQL error `types timestamp with time zone and text cannot be matched`. Fixed by casting `(NULLIF(metadatos->>'date',''))::timestamptz`. Same bug fixed in `hipocampo_budget`.

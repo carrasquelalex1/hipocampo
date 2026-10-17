@@ -1175,66 +1175,75 @@ def _rerank_typesafe(resultados, query, top_n=15):
 def bire_search(query, umbral_minimo=10.0, rerank=False, session_id="", rerank_typesafe=False):
     conn = get_conn()
     cur = conn.cursor()
+    try:
+        terms = expandir_consulta(query)
+        patterns = generar_patrones_ILIKE(terms)
 
-    terms = expandir_consulta(query)
-    patterns = generar_patrones_ILIKE(terms)
+        es_trigger = _es_query_trigger_pura(query)
+        if es_trigger:
+            # Early-exit: matching exacto por categories, sin embedding Ollama.
+            # El ranking por nivel+match ya es determinista; la expansión por
+            # tags solo añadiría ruido y aplanaría los scores.
+            fusionados = _buscar_por_categories(cur, query.split())
+        else:
+            vectorial_mv = buscar_vectorial(cur, query)
+            vectorial_mi = buscar_vectorial_memory_items(cur, query)
+            lexico_mv = buscar_lexico_memoria_vectorial(cur, patterns, terms, query_original=query)
+            lexico_mi = buscar_lexico_memory_items(cur, patterns, terms, query_original=query)
+            fusionados = fusionar_resultados(vectorial_mv, lexico_mv + vectorial_mi, lexico_mi)
 
-    es_trigger = _es_query_trigger_pura(query)
-    if es_trigger:
-        # Early-exit: matching exacto por categories, sin embedding Ollama.
-        # El ranking por nivel+match ya es determinista; la expansión por
-        # tags solo añadiría ruido y aplanaría los scores.
-        fusionados = _buscar_por_categories(cur, query.split())
-    else:
-        vectorial_mv = buscar_vectorial(cur, query)
-        vectorial_mi = buscar_vectorial_memory_items(cur, query)
-        lexico_mv = buscar_lexico_memoria_vectorial(cur, patterns, terms, query_original=query)
-        lexico_mi = buscar_lexico_memory_items(cur, patterns, terms, query_original=query)
-        fusionados = fusionar_resultados(vectorial_mv, lexico_mv + vectorial_mi, lexico_mi)
+        # Fatigue boost: recent access frequency
+        fusionados = _aplicar_fatiga(fusionados, cur)
 
-    # Fatigue boost: recent access frequency
-    fusionados = _aplicar_fatiga(fusionados, cur)
+        if not es_trigger:
+            # Expansión por tags: combina tags de resultados + tags que coinciden con la consulta
+            contenidos_existentes = {r["contenido"][:120].lower() for r in fusionados}
+            tags_encontrados = extraer_tags_de_resultados(fusionados)
 
-    if not es_trigger:
-        # Expansión por tags: combina tags de resultados + tags que coinciden con la consulta
-        contenidos_existentes = {r["contenido"][:120].lower() for r in fusionados}
-        tags_encontrados = extraer_tags_de_resultados(fusionados)
+            # También buscar tags que coincidan directamente con los términos expandidos
+            todos_tags_db = obtener_todos_los_tags(cur)
+            tags_por_query = tags_coinciden_con_terminos(todos_tags_db, terms)
+            tags_encontrados.update(tags_por_query)
 
-        # También buscar tags que coincidan directamente con los términos expandidos
-        todos_tags_db = obtener_todos_los_tags(cur)
-        tags_por_query = tags_coinciden_con_terminos(todos_tags_db, terms)
-        tags_encontrados.update(tags_por_query)
+            if tags_encontrados:
+                por_tags = expandir_por_tags(cur, tags_encontrados, contenidos_existentes)
+                fusionados = fusionar_resultados(fusionados, por_tags, [])
 
-        if tags_encontrados:
-            por_tags = expandir_por_tags(cur, tags_encontrados, contenidos_existentes)
-            fusionados = fusionar_resultados(fusionados, por_tags, [])
+            diversity_config = load_diversity_config()
+            if diversity_config.get("enabled", True):
+                diversity_lambda = diversity_config.get("lambda", 0.7)
+                fusionados = aplicar_diversidad_mmr(fusionados, diversity_lambda)
 
-        diversity_config = load_diversity_config()
-        if diversity_config.get("enabled", True):
-            diversity_lambda = diversity_config.get("lambda", 0.7)
-            fusionados = aplicar_diversidad_mmr(fusionados, diversity_lambda)
+        if rerank:
+            fusionados = re_rank_results(fusionados, query, top_n=RE_RANK_TOP_N)
 
-    if rerank:
-        fusionados = re_rank_results(fusionados, query, top_n=RE_RANK_TOP_N)
+        if rerank_typesafe:
+            fusionados = _rerank_typesafe(fusionados, query)
 
-    if rerank_typesafe:
-        fusionados = _rerank_typesafe(fusionados, query)
+        # FIX 2026-10-10 (ranking plano 42.0): los resultados REALES (vectorial/léxico)
+        # siempre por encima de la expansión por tags, que es RESPALDO (score plano 70->42
+        # en el híbrido empataba el top y enterraba los relevantes).
+        fusionados.sort(key=lambda r: (r.get("method") == "expansion_por_tags", -r.get("score", 0)))
 
-    # FIX 2026-10-10 (ranking plano 42.0): los resultados REALES (vectorial/léxico)
-    # siempre por encima de la expansión por tags, que es RESPALDO (score plano 70->42
-    # en el híbrido empataba el top y enterraba los relevantes).
-    fusionados.sort(key=lambda r: (r.get("method") == "expansion_por_tags", -r.get("score", 0)))
+        filtrados = [r for r in fusionados if r["score"] >= umbral_minimo]
+        if session_id:
+            filtrados = [r for r in filtrados if r.get("metadatos", {}).get("session_id") == session_id]
 
-    filtrados = [r for r in fusionados if r["score"] >= umbral_minimo]
-    if session_id:
-        filtrados = [r for r in filtrados if r.get("metadatos", {}).get("session_id") == session_id]
+        if filtrados:
+            _record_access_batch(cur, filtrados[:10], query)
 
-    if filtrados:
-        _record_access_batch(cur, filtrados[:10], query)
-
-    cur.close()
-    conn.close()
-    return filtrados
+        return filtrados
+    finally:
+        # Cierre garantizado incluso si una consulta SQL lanza: sin esto la
+        # conexión quedaba colgada (deuda histórica, 2026-10-17).
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

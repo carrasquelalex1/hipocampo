@@ -1,0 +1,20 @@
+[Unit]
+Description=Hipocampo — Barredor de Embeddings Desincronizados (auto-reparación)
+# En unidades de usuario, 'postgresql.service' no ordena contra el sistema: si
+# la BD no está lista, la corrida falla y el timer la reintenta en 15 min.
+After=network.target
+
+[Service]
+Type=oneshot
+# Ajusta las rutas a tu instalación (python del venv y repo):
+EnvironmentFile=-%h/.hipocampo/.env
+ExecStart=/usr/bin/python3 %h/.hipocampo/scripts/hipocampo_embed_sweeper.py
+WorkingDirectory=%h/.hipocampo/repo
+Nice=10
+# Peor caso ~72 min (4×timeout 900s + esperas por fila); margen sin SIGTERM.
+TimeoutStartSec=4800
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=timers.target

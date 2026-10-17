@@ -234,8 +234,14 @@ def find_working_embedding(api_key: str, dims: int = 1024, exclude: str = "") ->
     return None
 
 
-def get_embedding_with_failover(text: str, dims: int = 1024, api_key: str | None = None) -> list | None:
-    """Try current embedding model; on failure, scan for a working one."""
+def get_embedding_with_failover(
+    text: str, dims: int = 1024, api_key: str | None = None, timeout_s: float | None = None
+) -> list | None:
+    """Try current embedding model; on failure, scan for a working one.
+
+    *timeout_s* se propaga al embedding (los jobs de background piden 900s
+    paciente; sin esto el failover caía al default de 25s y abortaba antes).
+    """
     from hipocampo.db import _cached_embedding
 
     cfg = _load_config()
@@ -247,7 +253,7 @@ def get_embedding_with_failover(text: str, dims: int = 1024, api_key: str | None
         return None
 
     try:
-        return _cached_embedding(text, api_key, current_model)
+        return _cached_embedding(text, api_key, current_model, timeout_s)
     except Exception as e:
         if not is_model_error(e):
             raise
@@ -263,7 +269,7 @@ def get_embedding_with_failover(text: str, dims: int = 1024, api_key: str | None
         cfg["last_scan_ts"] = time.time()
         _save_config(cfg)
         logger.info("Failover: switched embedding to %s", new_model)
-        return _cached_embedding(text, api_key, new_model)
+        return _cached_embedding(text, api_key, new_model, timeout_s)
 
     cfg["last_scan_ts"] = time.time()
     _save_config(cfg)

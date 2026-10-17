@@ -1,0 +1,17 @@
+[Unit]
+Description=Timer del Barredor de Embeddings (cada 15 min + al arrancar)
+
+[Timer]
+# Cada 15 min mientras la PC está encendida
+OnUnitActiveSec=15min
+# Y 3 min después de cada arranque: si la PC se apagó con pendientes (corte de
+# luz, crash), el estado quedó guardado en la BD y aquí se repara solo.
+# (OnBootSec hace el catch-up; Persistent=true solo aplica a OnCalendar, por
+# eso el arranque se cubre con OnBootSec.)
+OnBootSec=3min
+# Retardo aleatorio para no competir con otros timers al mismo tiempo
+RandomizedDelaySec=60
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

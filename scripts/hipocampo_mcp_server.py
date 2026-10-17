@@ -51,7 +51,15 @@ sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, os.path.dirname(BASE_DIR))  # project root for hipocampo package
 
 
-from hipocampo.db import get_conn, get_embedding, get_embedding_last_error, init_pool, validate_config
+from hipocampo.db import (
+    contenido_firma,
+    get_conn,
+    get_embedding,
+    get_embedding_last_error,
+    get_embedding_with_retries,
+    init_pool,
+    validate_config,
+)
 from hipocampo.rate_limit import embedding_limiter, tool_limiter
 
 import hipocampo_search as _search
@@ -891,33 +899,42 @@ def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_li
     del modelo (HIPOCAMPO_PREFILTRO=0 lo apaga). No se usa distancia coseno:
     qwen3-0.6b comprime distancias y da falsos positivos (verificado 2026-10-17).
 
-    Si el embedding falla o es lento, la memoria queda en tier WARM
-    (embedding=NULL): recuperable por búsqueda de texto/trigram.
+    El embedding se genera con reintentos (esperas crecientes). Si aun así
+    falla, la memoria queda en tier WARM (embedding=NULL) — recuperable por
+    búsqueda de texto/trigram — y el barredor (hipocampo-embed-sweeper.timer)
+    la repara en su próxima pasada leyendo la firma embedding_src_md5 de la BD.
     """
     _screening_inyeccion_regex(row_id, content)
 
     try:
-        embedding = get_embedding(content, timeout_s=BG_EMBED_TIMEOUT_S)
+        embedding = get_embedding_with_retries(content, timeout_s=BG_EMBED_TIMEOUT_S)
     except Exception as e:
         logger.warning("Embedding falló para id=%s (queda WARM): %s", row_id, e)
         return
     if embedding is None:
-        logger.warning("Embedding no disponible para id=%s (queda WARM)", row_id)
+        logger.warning("Embedding no disponible para id=%s (queda WARM — lo repara el barredor)", row_id)
         return
 
+    firma = contenido_firma(content)
     try:
         conn = _conn()
         cur = conn.cursor()
         cur.execute(
-            "UPDATE memoria_vectorial SET embedding = %s::vector(1024) WHERE id = %s",
-            (embedding, row_id),
+            "UPDATE memoria_vectorial SET embedding = %s::vector(1024), "
+            "metadatos = (COALESCE(metadatos, '{}'::jsonb) || jsonb_build_object('embedding_src_md5', %s)) "
+            "- 'warm_since' "
+            "WHERE id = %s AND contenido = %s",
+            (embedding, firma, row_id, content),
         )
+        aplicado = cur.rowcount
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         logger.warning("Backfill de embedding id=%s falló: %s", row_id, e)
         return
+    if not aplicado:
+        logger.info("⏭️ Backfill de embedding id=%s descartado (el contenido cambió)", row_id)
 
     # Pre-filtro local (pieza 4): gemelo REAL (contenido idéntico) ⇒ sin juicio
     # del modelo. El criterio es el contenido, no la distancia (ver helper).
@@ -962,26 +979,33 @@ def _finalize_update_bg(row_id: int, content: str) -> None:
     """Regenera en background el embedding de un update (best-effort, nunca lanza).
 
     Lanzado por update_hipocampo cuando cambia el `contenido`: usa un timeout
-    paciente (BG_EMBED_TIMEOUT_S) porque nadie espera este resultado. Mientras
-    corre, la fila conserva su embedding anterior (la búsqueda sigue OK). Solo
-    escribe si el contenido guardado sigue siendo el mismo — evita pisar con un
-    embedding obsoleto si entró otro update más reciente.
+    paciente (BG_EMBED_TIMEOUT_S) porque nadie espera este resultado, y hace
+    reintentos con esperas crecientes. Mientras corre, la fila conserva su
+    embedding anterior (la búsqueda sigue OK). Solo escribe si el contenido
+    guardado sigue siendo el mismo — evita pisar con un embedding obsoleto si
+    entró otro update más reciente — y guarda la firma embedding_src_md5 para
+    que el barredor (hipocampo-embed-sweeper.timer) detecte y repare cualquier
+    desincronización (corte de luz, red, crash) sin depender de este proceso.
     """
     try:
-        embedding = get_embedding(content, timeout_s=BG_EMBED_TIMEOUT_S)
+        embedding = get_embedding_with_retries(content, timeout_s=BG_EMBED_TIMEOUT_S)
     except Exception as e:
         logger.warning("Embedding de update falló para id=%s (queda el anterior): %s", row_id, e)
         return
     if embedding is None:
-        logger.warning("Embedding no disponible en update id=%s (queda el anterior)", row_id)
+        logger.warning("Embedding no disponible en update id=%s (queda el anterior — lo repara el barredor)", row_id)
         return
 
+    firma = contenido_firma(content)
     try:
         conn = _conn()
         cur = conn.cursor()
         cur.execute(
-            "UPDATE memoria_vectorial SET embedding = %s::vector(1024) WHERE id = %s AND contenido = %s",
-            (embedding, row_id, content),
+            "UPDATE memoria_vectorial SET embedding = %s::vector(1024), "
+            "metadatos = (COALESCE(metadatos, '{}'::jsonb) || jsonb_build_object('embedding_src_md5', %s)) "
+            "- 'warm_since' "
+            "WHERE id = %s AND contenido = %s",
+            (embedding, firma, row_id, content),
         )
         aplicado = cur.rowcount
         conn.commit()
@@ -3689,8 +3713,12 @@ async def hipocampo_budget(dry_run: bool = True) -> str:
 
             if not dry_run:
                 for mv_id, meta in warm_tier:
+                    # Marca warm_since: el barredor de embeddings respeta el tier
+                    # WARM (no re-embebe) mientras el contenido de la fila no cambie.
                     cur.execute(
-                        "UPDATE memoria_vectorial SET embedding = NULL WHERE id = %s",
+                        "UPDATE memoria_vectorial SET embedding = NULL, "
+                        "metadatos = COALESCE(metadatos, '{}'::jsonb) "
+                        "|| jsonb_build_object('warm_since', now()::text) WHERE id = %s",
                         (mv_id,),
                     )
 
@@ -3753,6 +3781,8 @@ async def restaurar_historica(historica_id: int) -> str:
             meta["nivel"] = meta.get("nivel", "episodica")
             meta["restored_from"] = "memoria_historica"
             meta["restored_at"] = str(date.today())
+            # Firma de sincronía: el barredor de embeddings no re-embebe esta fila restaurada.
+            meta["embedding_src_md5"] = contenido_firma(contenido)
 
             embedding = _generar_embedding(contenido, "restaurar_historica")
 

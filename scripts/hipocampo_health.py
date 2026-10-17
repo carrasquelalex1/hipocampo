@@ -24,7 +24,7 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYTHON_BIN = sys.executable
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from hipocampo.db import get_conn, load_config
+from hipocampo.db import MAX_EMBED_CHARS, get_conn, load_config
 
 
 def check_postgresql():
@@ -91,6 +91,20 @@ def check_postgresql():
         results["checks"]["memoria_vectorial_count"] = cur.fetchone()[0]
         cur.execute("SELECT count(*) FROM memory_items")
         results["checks"]["memory_items_count"] = cur.fetchone()[0]
+
+        # Embeddings desincronizados (firma distinta o embedding NULL) — los
+        # repara el barredor (hipocampo-embed-sweeper.timer). Informativo: un
+        # pendiente transitorio es normal tras un update (embed en background).
+        cur.execute(
+            """
+            SELECT count(*) FROM memoria_vectorial
+            WHERE contenido IS NOT NULL
+              AND ((embedding IS NULL AND metadatos->>'warm_since' IS NULL)
+                   OR metadatos->>'embedding_src_md5' IS DISTINCT FROM md5(left(contenido, %s)))
+            """,
+            (MAX_EMBED_CHARS,),
+        )
+        results["checks"]["embeddings_pendientes"] = cur.fetchone()[0]
 
         cur.close()
         conn.close()
