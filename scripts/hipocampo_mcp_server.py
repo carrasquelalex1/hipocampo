@@ -31,6 +31,7 @@ import os
 import time
 import json
 import threading
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -863,16 +864,21 @@ def _auto_link_similar(row_id: int, embedding: list) -> int:
 def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_link: bool) -> None:
     """Finaliza un save de forma asíncrona (best-effort, nunca lanza).
 
+    0. Screening determinista de inyección (regex, sin red): si detecta
+       patrones → tag 'posible_inyeccion_regex'. Corre SIEMPRE.
     1. Genera el embedding y hace backfill a la fila (INSERT ya ocurrió con NULL).
     2. Con TypeSafe activo, `_semantic_audit_bg_ts` hace UNA llamada que juzga:
        contradicciones, relación con cada vecino (enlaces tipados), duplicado
-       semántico y tag principal sugerido.
+       semántico, tag principal sugerido e inyección (Noul) → tag
+       'posible_inyeccion' si supera HIPOCAMPO_INJ_UMBRAL (default 0.8).
     3. Fallback local: dedup semántico (loguea), auto-link 'similar' si se
        solicitó, y auditoría de contradicciones por sonda de negación.
 
     Si el embedding falla o es lento, la memoria queda en tier WARM
     (embedding=NULL): recuperable por búsqueda de texto/trigram.
     """
+    _screening_inyeccion_regex(row_id, content)
+
     try:
         embedding = get_embedding(content)
     except Exception as e:
@@ -1014,6 +1020,82 @@ def _insert_mem_link(source_id: int, target_id: int, relation_type: str, weight:
         logger.warning("No se pudo crear enlace %s #%s→#%s", relation_type, source_id, target_id)
 
 
+# ── Screening de prompt injection (piezas 1+2, 2026-10-17) ──────────────────
+# Regex determinista (corre SIEMPRE, sin red) + juicio del modelo en el audit
+# TypeSafe/classifier ('inyeccion' en juicio_lote). Nunca bloquea: solo etiqueta
+# el recuerdo con 'posible_inyeccion*' para que el retrieval pueda advertirlo.
+
+_PATRONES_INYECCION = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"ignora\s+(todas\s+)?(tus|las)\s+instrucciones",
+        r"ignorá\s+(todas\s+)?(tus|las)\s+instrucciones",
+        r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions",
+        r"disregard\s+(all\s+)?(previous|prior|earlier)\s+(instructions|prompts)",
+        r"no\s+(le\s+)?digas\s+al\s+usuario",
+        r"do\s+not\s+tell\s+the\s+user",
+        r"no\s+reveles\s+(estas\s+)?instrucciones",
+        r"(nuevo|new)\s+system\s+prompt",
+        r"(sobrescribe|override)\s+(tus|your)\s+(instrucciones|instructions)",
+    )
+]
+
+
+def _umbral_inj_entorno() -> float:
+    """Umbral de P(inyección) para etiquetar (env HIPOCAMPO_INJ_UMBRAL, default 0.8)."""
+    try:
+        return float(os.environ.get("HIPOCAMPO_INJ_UMBRAL", "0.8"))
+    except ValueError:
+        return 0.8
+
+
+def _add_tag_memoria(row_id: int, tag: str) -> None:
+    """Añade un tag a metadatos->'tags' de forma atómica y sin duplicar. Nunca lanza."""
+    conn = None
+    cur = None
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            """UPDATE memoria_vectorial
+               SET metadatos = jsonb_set(
+                   COALESCE(metadatos, '{}'::jsonb), '{tags}',
+                   CASE WHEN COALESCE(metadatos->'tags', '[]'::jsonb) ? %s
+                        THEN COALESCE(metadatos->'tags', '[]'::jsonb)
+                        ELSE COALESCE(metadatos->'tags', '[]'::jsonb) || to_jsonb(%s::text)
+                   END, true)
+               WHERE id = %s""",
+            (tag, tag, row_id),
+        )
+        conn.commit()
+    except Exception:
+        logger.warning("No se pudo añadir tag %s a id=%s", tag, row_id)
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+
+def _screening_inyeccion_regex(row_id: int, content: str) -> None:
+    """Screening determinista de inyección (sin red). Etiqueta si hay patrón."""
+    try:
+        for pat in _PATRONES_INYECCION:
+            if pat.search(content):
+                logger.warning(
+                    "⚠️ Patrón de inyección (regex) en save id=%s: %s — tag posible_inyeccion_regex",
+                    row_id,
+                    pat.pattern[:50],
+                )
+                _add_tag_memoria(row_id, "posible_inyeccion_regex")
+                return
+    except Exception:
+        logger.warning("Screening regex de inyección falló para id=%s", row_id)
+
+
 def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link: bool) -> None:
     """Auditoría semántica unificada con TypeSafe: UNA sola llamada HTTP.
 
@@ -1022,6 +1104,8 @@ def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link:
       - Choice de relación   → enlaces tipados 'similar'/'follow_up' (si auto_link)
       - dedup: vecino casi idéntico (dist < 0.10) con relación 'mismo' → warning
       - tag principal sugerido sobre el vocabulario existente → metadatos.tags
+      - Noul de inyección    → tag 'posible_inyeccion' si ≥ HIPOCAMPO_INJ_UMBRAL
+        (corre incluso sin vecinos ni tags)
 
     Si la API falla, delega al pipeline local (dedup + auto-link + sonda).
     Nunca lanza excepciones.
@@ -1046,6 +1130,7 @@ def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link:
                        SELECT jsonb_array_elements_text(metadatos->'tags') AS tag
                        FROM memoria_vectorial
                        WHERE metadatos->'tags' IS NOT NULL) t
+                   WHERE t.tag NOT LIKE 'posible_inyeccion%'
                    GROUP BY t.tag ORDER BY c DESC LIMIT 10"""
             )
             tags = [r[0] for r in cur.fetchall() if r[0] and len(r[0]) > 2]
@@ -1058,8 +1143,6 @@ def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link:
         return
 
     pares = [(cid, ctext[:800]) for cid, ctext, _dist in candidatos]
-    if not pares and not tags:
-        return
 
     res = None
     res_via = "typesafe"
@@ -1149,6 +1232,18 @@ def _semantic_audit_bg_ts(row_id: int, content: str, embedding: list, auto_link:
             logger.info("🏷️ Tag %s añadido a #%s: %s", res_via, row_id, tag)
         except Exception:
             logger.warning("No se pudo añadir tag %s a #%s", res_via, row_id)
+
+    inj = res.get("inyeccion")
+    if isinstance(inj, (int, float)):
+        umbral_inj = _umbral_inj_entorno()
+        if float(inj) >= umbral_inj:
+            logger.warning(
+                "⚠️ Posible prompt injection en save id=%s (p=%.2f, via=%s) — tag posible_inyeccion",
+                row_id,
+                float(inj),
+                res_via,
+            )
+            _add_tag_memoria(row_id, "posible_inyeccion")
 
 
 def _generar_embedding(texto: str, tool_name: str = "unknown") -> list[float]:
