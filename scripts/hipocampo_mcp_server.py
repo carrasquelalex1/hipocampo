@@ -539,6 +539,11 @@ async def search_hipocampo(query: str, session_id: str = "", rerank: bool = Fals
     Returns:
         Resultados formateados del BIRE como texto plano.
         Incluye: contenido encontrado, scores de relevancia, y metadatos.
+        Cada resultado trae una línea 🔖 de la capa de fuente (2026-10-17):
+        procedencia (autoría), huella de lectura (memory_access) y madurez.
+        "↻ ya traído hace Ns/min" ≈ segunda lectura en esta conversación
+        (reconocer); sin procedencia y sin lecturas → consultar con sospecha.
+
         Si no hay coincidencias, indica búsqueda exitosa pero sin resultados.
     """
     import time
@@ -1468,6 +1473,7 @@ async def save_hipocampo(
     nivel: str = "episodica",
     critico: bool = False,
     snapshot_for: int | None = None,
+    autor: str = "agente",
 ) -> str:
     """
     Guarda un recuerdo en el Hipocampo (memoria_vectorial).
@@ -1507,6 +1513,12 @@ async def save_hipocampo(
                       "part_of" desde este recuerdo hacia esa regla.
                       Esto permite que validate_immune_rule encuentre el
                       snapshot pre-cambio vinculado.
+        autor: Procedencia del recuerdo (capa de fuente, 2026-10-17):
+               "agente" (default; lo escribiste tú en una sesión),
+               "usuario" (dictado o habla directa del usuario),
+               "catalogo" (entrada generada al indexar archivos).
+               Viaja en metadatos.autor y aparece como línea 🔖 en la
+               búsqueda, para distinguir reencontrar de consultar.
 
     Returns:
         Confirmación con el ID asignado.
@@ -1524,6 +1536,9 @@ async def save_hipocampo(
         if nivel not in ("episodica", "semantica", "automatica"):
             return f"❌ Nivel inválido: {nivel}. Usa: episodica, semantica, automatica."
 
+        if autor not in ("agente", "usuario", "catalogo"):
+            return f"❌ Autor inválido: {autor}. Usa: agente, usuario, catalogo (capa de fuente)."
+
         if not force:
             dedup_warning = _check_dedup_trigram(content)
             if dedup_warning:
@@ -1536,6 +1551,7 @@ async def save_hipocampo(
             "categories": categories or [],
             "date": str(date.today()),
             "source": "mcp",
+            "autor": autor,
             "nivel": nivel,
         }
         if critico:
@@ -1757,7 +1773,7 @@ async def profile_hipocampo(
                    WHERE id = %s""",
                 (
                     summary,
-                    json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today())}),
+                    json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today()), "autor": "agente"}),
                     embedding,
                     existing_id,
                 ),
@@ -1775,7 +1791,7 @@ async def profile_hipocampo(
                 (
                     row_id,
                     summary,
-                    json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today())}),
+                    json.dumps({"extra": extra, "categories": cat_list, "date": str(date.today()), "autor": "agente"}),
                     embedding,
                 ),
             )
@@ -3964,6 +3980,7 @@ def _build_http_app():
             content=content,
             memory_type=body.get("type", "event"),
             code=body.get("code", ""),
+            autor="usuario",  # quien escribe desde la web es el humano
         )
         if msg.startswith("✅"):
             m = re.search(r"id=(\d+)", msg)

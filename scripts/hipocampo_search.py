@@ -12,7 +12,7 @@ import json
 import sys
 import re
 import math
-from datetime import date
+from datetime import date, datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from hipocampo.db import get_conn, get_embedding, load_config
@@ -606,6 +606,29 @@ def _aplicar_decaimiento_temporal(resultados, hoy=None):
     return resultados
 
 
+def _memory_id_canonico(r):
+    """Id canónico (v<N> | vmi<uid>) por fila física, para la huella de lectura.
+
+    Los builders anotan la misma fila con prefijos distintos (MV: v/t/tv/l,
+    MI: vmi/tm/mt/m); normalizar evita namespaces huérfanos que fatiga,
+    decay y la capa de fuente no sumarían. Desconocido → id tal cual.
+    """
+    mid = str(r.get("id", "") or "")
+    if not mid:
+        return ""
+    tabla = r.get("tabla")
+    if tabla == "memory_items":
+        for pref in ("vmi", "tm", "mt", "m"):
+            if mid.startswith(pref) and len(mid) > len(pref):
+                return f"vmi{mid[len(pref) :]}"
+        return f"vmi{mid}"
+    if tabla == "memoria_vectorial":
+        for pref in ("tv", "t", "l", "v"):
+            if mid.startswith(pref) and len(mid) > len(pref) and mid[len(pref) :].isdigit():
+                return f"v{mid[len(pref) :]}"
+    return mid
+
+
 def _aplicar_fatiga(resultados, cur):
     """Boost scores based on recent access frequency (memory fatigue).
 
@@ -617,7 +640,13 @@ def _aplicar_fatiga(resultados, cur):
     if not resultados:
         return resultados
 
-    ids = [r.get("id") for r in resultados if r.get("id")]
+    ids = []
+    canon_de = {}
+    for r in resultados:
+        c = _memory_id_canonico(r)
+        if c:
+            canon_de[r.get("id")] = c
+            ids.append(c)
     if not ids:
         return resultados
 
@@ -642,8 +671,7 @@ def _aplicar_fatiga(resultados, cur):
     TAU = 168.0  # hours (7 days)
 
     for r in resultados:
-        rid = r.get("id", "")
-        cnt = access_counts.get(rid, 0)
+        cnt = access_counts.get(canon_de.get(r.get("id", "")), 0)
         if cnt <= 0:
             continue
 
@@ -904,6 +932,86 @@ def _aviso_inyeccion(resultado):
     return None
 
 
+def _frescura_humana(dt_antes, ahora=None):
+    """Diferencia hasta ahora en formato compacto ('hace 3 min')."""
+    ahora = ahora or datetime.now(timezone.utc)
+    if isinstance(dt_antes, str):
+        try:
+            dt_antes = datetime.fromisoformat(dt_antes.replace("Z", "+00:00"))
+        except ValueError:
+            return ""
+    if not isinstance(dt_antes, datetime):
+        return ""
+    if dt_antes.tzinfo is None:
+        dt_antes = dt_antes.replace(tzinfo=timezone.utc)
+    s = max(0, int((ahora - dt_antes).total_seconds()))
+    if s < 60:
+        return f"hace {s}s"
+    if s < 3600:
+        return f"hace {s // 60} min"
+    if s < 86400:
+        return f"hace {s // 3600} h"
+    return f"hace {s // 86400} d"
+
+
+_AUTOR_ETIQUETA = {
+    "agente": "lo escribí yo (agente)",
+    "usuario": "me lo dictaste tú (usuario)",
+    "catalogo": "catalogado de archivo (catálogo)",
+}
+
+_NIVEL_ETIQUETA = {
+    "automatica": "regla permanente",
+    "semantica": "consolidado",
+    "episodica": "episodio",
+}
+
+
+def _linea_fuente(r):
+    """Línea 🔖 de la capa de fuente (2026-10-17): procedencia + huella + madurez.
+
+    Distingue las tres operaciones de memoria: reencontrar (autoría propia),
+    reconocer (lectura reciente huéllada en memory_access) y consultar
+    (entrada de catálogo o recuerdos pre-capa sin procedencia). Advisory:
+    describe señas; jamás bloquea ni filtra — el agente decide leyendo.
+    """
+    meta = r.get("metadatos") if isinstance(r.get("metadatos"), dict) else {}
+    extra = r.get("extra") if isinstance(r.get("extra"), dict) else {}
+    autor = meta.get("autor") or extra.get("autor")
+    fecha = meta.get("date") or extra.get("date")
+
+    partes = []
+    if autor in _AUTOR_ETIQUETA:
+        f = f" ({fecha})" if fecha else ""
+        partes.append(f"{_AUTOR_ETIQUETA[autor]}{f}")
+    else:
+        partes.append("sin procedencia registrada (pre-capa)")
+
+    total = r.get("acc_total")
+    ultima = r.get("acc_ultima")
+    if total:
+        edad = _frescura_humana(ultima) if ultima else ""
+        segs = None
+        if isinstance(ultima, datetime):
+            if ultima.tzinfo is None:
+                ultima = ultima.replace(tzinfo=timezone.utc)
+            segs = (datetime.now(timezone.utc) - ultima).total_seconds()
+        if segs is not None and segs < 1800:
+            partes.append(f"↻ ya traído {edad} ({total} lecturas)")
+        elif edad:
+            partes.append(f"↻ {total} lecturas, última {edad}")
+
+    nivel = meta.get("nivel") or extra.get("nivel")  # MI guarda nivel en extra
+    if nivel in _NIVEL_ETIQUETA:
+        extra_mad = ""
+        cc = meta.get("consolidated_count")
+        if isinstance(cc, int) and cc > 0 and nivel != "automatica":
+            extra_mad = f" ×{cc}"
+        partes.append(f"{_NIVEL_ETIQUETA[nivel]}{extra_mad}")
+
+    return f"🔖 fuente: {' | '.join(partes)}"
+
+
 def formatear_resultados(resultados, query):
     if not resultados:
         return f"\n🔍 BIRE: '{query}' → 0 resultados"
@@ -953,6 +1061,9 @@ def formatear_resultados(resultados, query):
         lines.append(f"  {i:2d}. [{score_display:5.1f}] {barra}")
         metodo_label = metodo_map.get(r.get("method", ""), r.get("method", "?"))
         lines.append(f"      📍 {fuente} | {metodo_label}")
+        linea_f = _linea_fuente(r)
+        if linea_f:
+            lines.append(f"      {linea_f}")
         aviso = _aviso_inyeccion(r)
         if aviso:
             lines.append(aviso)
@@ -1009,19 +1120,21 @@ def search_with_stats(query: str, session_id: str = "", rerank_typesafe: bool = 
 
 
 def _record_access_batch(cur, results, query):
-    """Record memory access for top search results (batch insert)."""
+    """Huella de lectura: 1 fila por resultado único en memory_access.
+
+    Ids normalizados a la fila física (_memory_id_canonico) para que los
+    alias (l/t/tv MV, m/tm/mt MI) compartan namespace con fatiga/decay.
+    """
     import hashlib
 
     query_hash = hashlib.sha256(query.encode()).hexdigest()[:12]
+    vistos = set()
     memory_ids = []
-    sources = []
     for r in results:
-        rid = r.get("id", "")
-        src = r.get("source", "")
-        if not rid or not src:
-            continue
-        memory_ids.append(rid)
-        sources.append(src)
+        c = _memory_id_canonico(r)
+        if c and c not in vistos:
+            vistos.add(c)
+            memory_ids.append(c)
 
     if not memory_ids:
         return
@@ -1030,12 +1143,49 @@ def _record_access_batch(cur, results, query):
         cur.execute(
             """
             INSERT INTO memory_access (memory_id, source, query_hash)
-            SELECT unnest(%s::text[]), unnest(%s::text[]), %s
+            SELECT unnest(%s::text[]), 'search_bire', %s
             """,
-            (memory_ids, sources, query_hash),
+            (memory_ids, query_hash),
         )
     except Exception:
         pass
+
+
+def _anotar_accesos(cur, resultados):
+    """Capa de fuente: lecturas registradas en memory_access por resultado.
+
+    Se consulta ANTES de registrar la lectura actual (_record_access_batch),
+    así "última hace Ns/min" señala la lectura PREVIA (reconocer), no la
+    en curso. Y la huella de lectura nunca se autocuenta.
+    """
+    ids = []
+    canon_de = {}
+    for r in resultados:
+        c = _memory_id_canonico(r)
+        if c:
+            canon_de[r.get("id")] = c
+            ids.append(c)
+    if not ids:
+        return
+    try:
+        cur.execute(
+            """
+            SELECT memory_id, count(*) AS total, max(accessed_at) AS ultima
+            FROM memory_access
+            WHERE memory_id = ANY(%s)
+            GROUP BY memory_id
+            """,
+            (ids,),
+        )
+        accesos = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+    except Exception:
+        return
+    for r in resultados:
+        c = canon_de.get(r.get("id"))
+        if c in accesos:
+            total, ultima = accesos[c]
+            r["acc_total"] = int(total)
+            r["acc_ultima"] = ultima
 
 
 def _es_query_trigger_pura(query):
@@ -1230,7 +1380,16 @@ def bire_search(query, umbral_minimo=10.0, rerank=False, session_id="", rerank_t
             filtrados = [r for r in filtrados if r.get("metadatos", {}).get("session_id") == session_id]
 
         if filtrados:
+            _anotar_accesos(cur, filtrados)
             _record_access_batch(cur, filtrados[:10], query)
+            # Deuda FIXED 2026-10-17: sin COMMIT este INSERT se perdía en el
+            # cierre de la conexión (psycopg2 no autocomitea) — memory_access
+            # solo acumulaba filas del path de refuerzo. La huella de lectura
+            # (búsqueda→memory_access) empezó a persistir con la capa de fuente.
+            try:
+                conn.commit()
+            except Exception:
+                pass
 
         return filtrados
     finally:
