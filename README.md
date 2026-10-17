@@ -716,6 +716,22 @@ python3 scripts/hipocampo_embed_sweeper.py --marcar-al-dia
 
 Run by the `hipocampo-embed-sweeper.timer` user unit every 15 min (`OnBootSec=3min` catches up after a power-off). `hipocampo_health()` reports `embeddings_pendientes` (0 = everything in sync). Rows intentionally downgraded to WARM by `hipocampo_budget` (flagged `warm_since`) are respected, not re-embedded.
 
+### 5. Source Layer (autoría, huella de lectura, repetición)
+
+Retrieval now tells the agent **where a memory came from and whether it has been read before** — the distinction between *re-encontrar* (own episodic memory), *reconocer* (already retrieved this conversation) and *consultar* (reference lookup). Every search result carries one advisory line:
+
+```
+🔖 fuente: lo escribí yo (agente) (2026-10-17) | ↻ ya traído hace 40s (2 lecturas) | episodio
+```
+
+Three signals, all advisory:
+
+- **Autoría** — `metadatos.autor`: `agente` (written by an agent session, the `save_hipocampo` default), `usuario` (dictated by the human — the web UI stamps this) or `catalogo` (bulk-indexed documents). Rows saved before the layer read `sin procedencia registrada (pre-capa)`.
+- **Huella de lectura** — every search records the physical rows it returned in `memory_access` (`source='search_bire'`, top-10, ids normalized to the row: `v<N>` / `vmi<uid>`, so aliases like `t55`/`l55`/`tv55` all count as the same memory). The annotation read happens **before** the current read is recorded, so "ya traído hace Ns" always points to a *previous* retrieval — a fresh timestamp means the same memory surfaced twice in this conversation.
+- **Madurez** — `nivel`: `episodio` / `consolidado [×N]` / `regla permanente`, straight from the existing memory hierarchy.
+
+Bonus fix shipped with this: `_record_access_batch` never actually persisted before (its INSERT ran in an un-committed transaction), and fatigue/decay previously ignored aliased ids — both work now.
+
 | Env var | Default | Purpose |
 |---------|---------|---------|
 | `SWEEP_MAX_ROWS` | `8` | Rows repaired per run (gentle on local Ollama) |
