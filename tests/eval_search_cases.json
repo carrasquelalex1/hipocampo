@@ -23,9 +23,9 @@
       "note": "Acceso determinista por ID."
     },
     {
-      "query": "servidor_remoto_soul_20261020",
+      "query": "servidor_soul_20261020",
       "expected": [4042],
-      "note": "Code exacto de la memoria del SOUL del servidor."
+      "note": "Code de la memoria del SOUL del servidor."
     },
     {
       "query": "SOUL.md adaptado opencode del servidor",
@@ -45,17 +45,17 @@
     {
       "query": "regla FormData controles deshabilitados",
       "expected": [4037],
-      "note": "Regla proyecto interno sobre FormData."
+      "note": "Regla interna sobre FormData."
     },
     {
       "query": "galería de fotos paginar",
       "expected": [4036],
-      "note": "Regla proyecto interno de paginación de galería."
+      "note": "Regla interna de paginación de galería."
     },
     {
       "query": "depuración de duplicados 29 campos",
       "expected": [4038],
-      "note": "Regla proyecto interno de duplicados estrictos."
+      "note": "Regla interna de duplicados estrictos."
     },
     {
       "query": "snapshot AGENTS.md",
@@ -78,9 +78,9 @@
       "note": "Archivo y tema de las pautas MCP."
     },
     {
-      "query": "SOUL.md remoto",
+      "query": "SOUL.md del servidor",
       "expected": [4042],
-      "note": "SOUL del servidor remoto."
+      "note": "SOUL del entorno remoto."
     },
     {
       "query": "regla operativa cómo usar el MCP",

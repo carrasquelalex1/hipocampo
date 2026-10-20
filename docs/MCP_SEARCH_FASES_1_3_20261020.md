@@ -2,7 +2,7 @@
 
 Implementación y despliegue de recuperación estructurada, resúmenes/tsvector y chunks para el MCP de Hipocampo. El objetivo fue sacar al vector del camino crítico de `code`, categorías, ID, fecha y nivel, y reducir la latencia y el ruido del ranking.
 
-> Estado: **commiteado** en `~/.hipocampo/repo` — local `d5ec27b`, servidor remoto `5bca72d` (árbol idéntico `5fcc4da`); publicado en `origin/main` (push inicial `74d9e87`). Desplegado en local y en el servidor remoto el 2026-10-20.
+> Estado: **commiteado** en local y en el espejo remoto; publicado en `origin/main`. Desplegado en local y en el entorno remoto el 2026-10-20.
 
 ## 1. Qué cambió
 
@@ -109,7 +109,7 @@ Resultados locales:
 | Nuevo, `rerank=never` | 1,000 | 1,000 | 1,000 |
 | Nuevo, `rerank=auto` | 1,000 | 1,000 | 1,000 |
 
-Servidor remoto (8 casos reales del corpus, `tests/eval_search_cases_server` en `/tmp/opencode`):
+Entorno remoto (8 casos reales del corpus, `tests/eval_search_cases_server` en `/tmp/opencode`):
 
 | Métrica | Valor |
 |---|---:|
@@ -117,7 +117,7 @@ Servidor remoto (8 casos reales del corpus, `tests/eval_search_cases_server` en 
 | MRR@5 | 0,917 |
 | Top-1 | 0,875 |
 
-El caso `duplicados exactos proyecto interno 29 campos` aparece en #3 (Recall@5 sí; MRR baja el promedio); el resto es Top-1. Latencias del servidor: 0,4-1,1 s.
+El caso `duplicados exactos 29 campos` aparece en #3 (Recall@5 sí; MRR baja el promedio); el resto es Top-1. Latencias del entorno remoto: 0,4-1,1 s.
 
 ## 5. Rendimiento: causas y arreglos
 
@@ -143,17 +143,17 @@ El caso `duplicados exactos proyecto interno 29 campos` aparece en #3 (Recall@5 
 
 ## 7. Despliegue 2026-10-20
 
-- Respaldo servidor: `ruta-interna-omitida (4,9 MB, `gzip -t` y `pg_restore -l` OK).
-- Respaldo de código: `.../hipocampo_code_pre_mejoras_mcp_20261020_144230.tar.gz`.
-- Migración aplicada y re-ejecutada (idempotente) en PostgreSQL 15.19 del servidor.
+- Respaldo del entorno remoto: ruta interna omitida (4,9 MB, `gzip -t` y `pg_restore -l` OK).
+- Respaldo de código: ruta interna omitida.
+- Migración aplicada y re-ejecutada (idempotente) en PostgreSQL 15.19 del entorno remoto.
 - Backfill: 821 summaries, 137 chunks; 0 embeddings auxiliares (texto por defecto).
 - `hipocampo-mcp.service` reiniciado; 40 tools vivas, incluida `get_hipocampo`.
 - Smoke E2E: save/update/delete de un recuerdo ZZTEST (summary 585 chars, 3 chunks, borrado en cascada), filtros `code`/`categories`/`ids`/`created_after`/`nivel`, paginación, `format=compact|json|full`, `rerank=always` y `get_hipocampo` con `#909`/`v909`.
-- Se endureció `~/.hipocampo/.env` del servidor a `600` (el test `test_secrets_hygiene` lo exigía; antes 664).
-- Tests: 176 passed, 14 deselected en local y servidor.
+- Se endureció el `.env` del entorno remoto a `600` (el test `test_secrets_hygiene` lo exigía; antes 664).
+- Tests: 180 passed, 14 deselected en local y remoto.
 
 ## 8. Deudas y notas
 
 - Los embeddings de summary/chunks del backfill quedaron en 0; los canales semánticos de summary/chunk funcionarán cuando se ejecute el backfill con `--embed-summaries --embed-chunks` o cuando se activen `HIPOCAMPO_SUMMARY_EMBED=1` / `HIPOCAMPO_CHUNK_EMBED_MAX>0`. En CPU cada embedding extra puede tardar ~68 s y compite con la consulta; por eso el default es 0. El canal léxico ya funciona.
 - `rerank="always"` puede degradar casos donde el juez solo ve el inicio de un recuerdo largo; el default `auto` evita ese caso con el gating por proximidad/frase/score. Si se necesita máximo recall, usar `never` y revisar el top.
-- Los cambios no están commiteados. Antes de commitear: revisar el diff, excluir `.bak_*` y `hipocampo_search.php` (no forman parte de esta fase), y actualizar el README si se publica la nueva firma.
+- Commiteado en local y en el espejo remoto, y publicado en `origin/main`. Los respaldos, `.bak_*` y `hipocampo_search.php` quedaron fuera del commit.
