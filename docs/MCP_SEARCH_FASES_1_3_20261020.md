@@ -2,7 +2,7 @@
 
 Implementación y despliegue de recuperación estructurada, resúmenes/tsvector y chunks para el MCP de Hipocampo. El objetivo fue sacar al vector del camino crítico de `code`, categorías, ID, fecha y nivel, y reducir la latencia y el ruido del ranking.
 
-> Estado: cambios **sin commit** en `~/.hipocampo/repo` (HEAD `d35d4c5`). Desplegados en local y en el servidor remoto el 2026-10-20.
+> Estado: **commiteado** en `~/.hipocampo/repo` — local `d5ec27b`, servidor remoto `5bca72d` (árbol idéntico `5fcc4da`); sin push. Desplegado en local y en el servidor remoto el 2026-10-20.
 
 ## 1. Qué cambió
 
