@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "description": "Casos de evaluación de búsqueda del Hipocampo (Recall@5 / MRR@5). Cada caso tiene una o más memorias relevantes; el MRR usa la primera que aparezca.",
+  "cases": [
+    {
+      "query": "opencode_session_forensics",
+      "expected": [4039],
+      "note": "El code exacto debe ganar al ruido léxico/semántico."
+    },
+    {
+      "query": "transcript temporal eliminado",
+      "expected": [4039],
+      "note": "Sin la frase literal: 'eliminado' se expresa como 'borrarlo'."
+    },
+    {
+      "query": "code:opencode_session_forensics",
+      "expected": [4039],
+      "note": "Filtro estructurado exacto por code."
+    },
+    {
+      "query": "id:4039",
+      "expected": [4039],
+      "note": "Acceso determinista por ID."
+    },
+    {
+      "query": "servidor_remoto_soul_20261020",
+      "expected": [4042],
+      "note": "Code exacto de la memoria del SOUL del servidor."
+    },
+    {
+      "query": "SOUL.md adaptado opencode del servidor",
+      "expected": [4042],
+      "note": "Consulta conceptual sobre el SOUL adaptado."
+    },
+    {
+      "query": "pautas de uso del MCP en el servidor",
+      "expected": [4041],
+      "note": "Memoria de pautas MCP del servidor."
+    },
+    {
+      "query": "cómo usar el MCP de Hipocampo",
+      "expected": [4040],
+      "note": "Título literal de la regla operativa."
+    },
+    {
+      "query": "regla FormData controles deshabilitados",
+      "expected": [4037],
+      "note": "Regla proyecto interno sobre FormData."
+    },
+    {
+      "query": "galería de fotos paginar",
+      "expected": [4036],
+      "note": "Regla proyecto interno de paginación de galería."
+    },
+    {
+      "query": "depuración de duplicados 29 campos",
+      "expected": [4038],
+      "note": "Regla proyecto interno de duplicados estrictos."
+    },
+    {
+      "query": "snapshot AGENTS.md",
+      "expected": [1533, 2797, 3663, 3566, 3677, 1539],
+      "note": "El snapshot principal y sus addenda son todos relevantes."
+    },
+    {
+      "query": "TypeSafe API verificada",
+      "expected": [3080],
+      "note": "Memoria vieja con frase exacta: no debe perder por decaimiento."
+    },
+    {
+      "query": "opencode SQLite sesión servidor",
+      "expected": [4039],
+      "note": "Conceptos de la memoria de forense de sesión."
+    },
+    {
+      "query": "SKILL.md pautas MCP servidor",
+      "expected": [4041],
+      "note": "Archivo y tema de las pautas MCP."
+    },
+    {
+      "query": "SOUL.md remoto",
+      "expected": [4042],
+      "note": "SOUL del servidor remoto."
+    },
+    {
+      "query": "regla operativa cómo usar el MCP",
+      "expected": [4040],
+      "note": "Título y categoría de la regla de retrieval."
+    }
+  ]
+}

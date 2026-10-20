@@ -162,7 +162,7 @@ Hipocampo already reduces context through SSC (selective retrieval). But even th
 * **Context Budget Awareness**: `compress_hipocampo` auto-estimates token budget and adjusts k dynamically. `budget_ratio` parameter gives fine-grained control over output size.
 * **Auto-Linking**: `save_hipocampo(..., auto_link=True)` auto-discovers semantically similar memories (>0.75 cosine) and creates `similar` edges in the memory graph.
 * **HNSW Auto-Recovery**: `hipocampo_health()` checks the HNSW index on startup and auto-creates it if missing — no more manual `CREATE INDEX` commands.
-* **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 39 tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
+* **Model Context Protocol (MCP)**: Native integration via a FastMCP server with 40 tools, exposing seamless read/write capabilities to modern MCP clients (e.g., Claude Desktop, OpenCode).
 
 ### 🔬 Optional: TypeSafe (System One) — Calibrated Semantic Decisions
 
@@ -188,7 +188,7 @@ When enabled (`HIPOCAMPO_TYPESAFE=1` + API key), it upgrades every semantic deci
 | Semantic dedup (`dedup(merge=True)`) | Merges every group above the cosine threshold (destructive) | Embeddings propose, TypeSafe confirms (*same fact / related / different*) — unconfirmed groups are skipped |
 | Post-save dedup warning | Cosine > 0.9 only | TypeSafe confirms "same fact" before warning (fewer false positives) |
 | Profile merge (`profile_hipocampo`) | Merges profile entries above cosine 0.85 | TypeSafe confirms "same fact" before merging |
-| Search re-rank (opt-in) | Fixed hybrid ordering | `search_hipocampo(..., rerank=True)` re-orders the top-15 with a calibrated relevance judgment (one extra call) |
+| Search re-rank (opt-in) | Fixed hybrid ordering | `search_hipocampo(..., rerank="auto")` re-orders the top-N only when the lexical top is weak/tied (one extra call); `"always"` / `"never"` available |
 
 - **Graceful fallback**: if TypeSafe is off, fails, or times out (10s default), every path falls back to the local embedding heuristics — saves and searches never block.
 - **Config**: `HIPOCAMPO_TYPESAFE=1` in `~/.hipocampo/.env`; key via `TYPESAFE_API_KEY` or key file (`TYPESAFE_KEY_FILE`, default `~/.config/typesafe/api_key`). See [docs/TYPESAFE.md](docs/TYPESAFE.md).
@@ -480,11 +480,12 @@ An **SSC (Sparse Selective Caching)** pipeline is also available as an experimen
 
 Hipocampo includes a fully functional **FastMCP** server, allowing LLM agents to autonomously read and write memories.
 
-### Available MCP Tools (39 tools)
+### Available MCP Tools (40 tools)
 
 **Memory Operations:**
-* `search_hipocampo(query, session_id?, rerank=False)`: Unified semantic and lexical search (auto-records metrics). Optionally filter by session. `rerank=True` re-orders top results with a TypeSafe relevance judgment when the integration is enabled.
-* `quick_hipocampo_search(query, rerank=False)`: Shorthand alias for rapid queries.
+* `search_hipocampo(query="", code="", categories=None, nivel="", memory_type="", ids=None, created_after="", created_before="", include_pending=True, rerank="auto", rerank_top_k=8, rerank_budget_ms=800, k=5, offset=0, format="compact", snippet_chars=300, include_scores=False, explain=False)`: Structured + semantic search. Accepts `code:`/`category:`/`id:`/`after:` syntax, exact filters, pagination, compact/full/json output and `rerank="auto"|"always"|"never"`. See [docs/MCP_SEARCH_FASES_1_3_20261020.md](docs/MCP_SEARCH_FASES_1_3_20261020.md).
+* `quick_hipocampo_search(...)`: Shorthand alias for rapid queries (same arguments).
+* `get_hipocampo(id, format="compact")`: Deterministic retrieval by `4039`, `#4039`, `v4039` or `vmi<uuid>` without ranking.
 * `preload_context(project_path, k=8, rerank=False)`: Extract keywords from project path, search relevant memories, return compressed summary. Ideal for session initialization.
 * `compress_hipocampo(query, k=5, method="hybrid", budget_ratio=1.0, include_metadata=False)`: Search + hybrid compression with context budget awareness. Auto-estimates tokens and adjusts k dynamically. Three methods: `"hybrid"` (recommended), `"extractive"` (fastest, no API cost), `"llm"` (highest quality).
 * `save_hipocampo(content, memory_type, code, categories, session_id?, force?, auto_link=False, nivel="episodica")`: Persist data into `memoria_vectorial`. Supports session isolation, auto-dedup, auto-linking, and hierarchical memory levels.
@@ -961,7 +962,7 @@ Hipocampo ya reduce el contexto mediante SSC (búsqueda selectiva). Pero incluso
 * **Presupuesto de Contexto Inteligente**: `compress_hipocampo` auto-estima tokens y ajusta k dinámicamente. `budget_ratio` da control fino sobre el tamaño de salida.
 * **Auto-Enlace**: `save_hipocampo(..., auto_link=True)` descubre recuerdos semánticamente similares (>0.75 cosine) y crea aristas `similar` en el grafo.
 * **Recuperación Automática de HNSW**: `hipocampo_health()` verifica el índice HNSW al arrancar y lo crea si falta — sin comandos `CREATE INDEX` manuales.
-* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante servidor FastMCP con 37 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
+* **Protocolo MCP (Model Context Protocol)**: Integración nativa mediante servidor FastMCP con 40 herramientas, otorgando capacidades directas de lectura/escritura y mantenimiento a clientes MCP como Claude Desktop y OpenCode.
 
 ### 🔬 Opcional: TypeSafe (System One) — Decisiones Semánticas Calibradas
 
@@ -987,7 +988,7 @@ Al activarlo (`HIPOCAMPO_TYPESAFE=1` + key), mejora todos los puntos de decisió
 | Dedup semántico (`dedup(merge=True)`) | Fusiona todo grupo sobre el umbral coseno (destructivo) | El embedding propone, TypeSafe confirma (*mismo hecho / relacionado / distinto*) — los grupos no confirmados se omiten |
 | Aviso de duplicado post-save | Solo cosine > 0.9 | TypeSafe confirma "mismo hecho" antes de avisar (menos falsos positivos) |
 | Merge de perfiles (`profile_hipocampo`) | Fusiona perfiles sobre coseno 0.85 | TypeSafe confirma "mismo hecho" antes de fusionar |
-| Re-rank de búsqueda (opcional) | Orden híbrido fijo | `search_hipocampo(..., rerank=True)` re-ordena el top-15 con un juicio de relevancia calibrado (una llamada extra) |
+| Re-rank de búsqueda (opcional) | Orden híbrido fijo | `search_hipocampo(..., rerank="auto")` re-ordena el top-N solo si el top léxico es débil/empatado (una llamada extra); también `"always"` / `"never"` |
 
 - **Fallback garantizado**: si TypeSafe está apagado, falla o excede el timeout (10s por defecto), todas las rutas caen a las heurísticas locales — guardados y búsquedas nunca se bloquean.
 - **Config**: `HIPOCAMPO_TYPESAFE=1` en `~/.hipocampo/.env`; key vía `TYPESAFE_API_KEY` o archivo (`TYPESAFE_KEY_FILE`, default `~/.config/typesafe/api_key`). Ver [docs/TYPESAFE.md](docs/TYPESAFE.md).
@@ -1214,7 +1215,7 @@ python3 scripts/hipocampo_mcp_server.py --http 8001   # Streamable HTTP (recomen
 python3 scripts/hipocampo_mcp_server.py --sse 8001    # legacy (deprecado)
 ```
 
-### Herramientas MCP Disponibles (37 herramientas)
+### Herramientas MCP Disponibles (40 herramientas)
 
 **Operaciones de Memoria:**
 * `search_hipocampo(consulta, session_id?)`: Búsqueda semántica + léxica híbrida (auto-registra métricas). Filtro opcional por sesión.

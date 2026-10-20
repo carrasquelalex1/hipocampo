@@ -215,7 +215,7 @@ def mismo_hecho(a: str, b: str, min_conf: float | None = None) -> bool | None:
     return False
 
 
-def relevancia_batch(query: str, items: list[tuple[int, str]]) -> dict[int, float] | None:
+def relevancia_batch(query: str, items: list[tuple[int, str]], timeout: float | None = None) -> dict[int, float] | None:
     """P(relevante) por fragmento: ¿responde a la consulta? Un solo POST."""
     if not items:
         return {}
@@ -224,6 +224,7 @@ def relevancia_batch(query: str, items: list[tuple[int, str]]) -> dict[int, floa
         inputs,
         ["relevant", "not relevant"],
         "El FRAGMENTO contiene información relevante que responde a la CONSULTA (aunque sea parcialmente).",
+        timeout=timeout,
     )
     if results is None or len(results) != len(items):
         return None

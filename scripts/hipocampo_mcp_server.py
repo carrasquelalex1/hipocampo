@@ -61,6 +61,7 @@ from hipocampo.db import (
     validate_config,
 )
 from hipocampo.rate_limit import embedding_limiter, tool_limiter
+from hipocampo.textutil import dividir_en_chunks, resumir_contenido
 
 import hipocampo_search as _search
 import hipocampo_health as _health
@@ -510,41 +511,68 @@ mcp = FastMCP("hipocampo")
 
 
 @mcp.tool()
-async def search_hipocampo(query: str, session_id: str = "", rerank: bool = False) -> str:
-    """
-    Busca en el Hipocampo (memoria dual con SSC / BIRE v3.6).
+async def search_hipocampo(
+    query: str = "",
+    session_id: str = "",
+    rerank: str = "auto",
+    k: int = 5,
+    offset: int = 0,
+    code: str = "",
+    categories: list[str] | None = None,
+    nivel: str = "",
+    memory_type: str = "",
+    ids: list[int] | None = None,
+    created_after: str = "",
+    created_before: str = "",
+    include_pending: bool = True,
+    rerank_top_k: int = 8,
+    rerank_budget_ms: int = 800,
+    format: str = "compact",
+    snippet_chars: int = 300,
+    include_scores: bool = False,
+    explain: bool = False,
+) -> str:
+    """Busca en el Hipocampo con carriles estructurados + semánticos.
 
-    Es solo lectura — no modifica datos, no tiene efectos secundarios.
-    Sin límites de tasa (rate limits).
+    Es solo lectura (no modifica memorias). Devuelve una salida compacta por
+    defecto: id, relevancia, code/fecha/nivel, un fragmento corto y el motivo.
 
-    Realiza búsqueda semántica + léxica híbrida en las bases de datos de
-    memoria del usuario, incluyendo memoria técnica (*memoria_vectorial*) y
-    de perfil (*memory_items*).
+    Sintaxis de query (opcional, se puede combinar con texto libre):
+      code:opencode_session_forensics
+      category:infraestructura,trigger:mcp
+      nivel:automatica  |  type:decision  |  id:4039  |  #4039
+      after:2026-10-01  |  since:7d  |  before:today
+      "frase exacta entre comillas"
 
-    Si se proporciona session_id, filtra solo memorias de esa sesión.
-
-    Para búsquedas rápidas cuando el nombre corto sea preferido, usar
-    quick_hipocampo_search (alias idéntico). Esta herramienta es la
-    versión completa con nombre descriptivo.
+    También acepta filtros por argumentos (code=, categories=, nivel=,
+    memory_type=, ids=, created_after=, created_before=). Los argumentos
+    explícitos tienen prioridad sobre la sintaxis de la query.
 
     Args:
-        query: Texto de búsqueda en lenguaje natural. Máximo 500 caracteres.
-               Ejemplos: "proyecto contable", "perro", "planta medicinal",
-               "API REST en Python", "gusta del té".
-        session_id: Opcional. Filtra resultados a una sesión específica.
-        rerank: Opcional (TypeSafe). Re-ordena el top-15 de resultados con un
-                juicio de relevancia calibrado (una llamada extra, ~0.5-1s).
-                Úsalo en búsquedas donde la precisión importa más que la latencia.
+        query: Texto libre y/o filtros. Puede ir vacío si se usan filtros.
+        session_id: Filtra a una sesión concreta.
+        rerank: "auto" (default; re-rankea solo si puede cambiar la decisión),
+                "always" (TypeSafe/classifier, acotado) o "never".
+                El booleano antiguo se acepta: True≈always, False≈never.
+        k: Resultados a devolver (1-20, default 5).
+        offset: Paginación (0-based).
+        code: Filtro exacto por code.
+        categories: Filtro por una o más categorías (coincidencia cualquiera).
+        nivel: episodica | semantica | automatica.
+        memory_type: event | decision | profile | ...
+        ids: Lista de IDs numéricos de memoria_vectorial.
+        created_after / created_before: Fechas ISO (YYYY-MM-DD) o "7d"/"today".
+        include_pending: Si False, oculta filas cuyo embedding aún no está listo.
+        rerank_top_k: Cuántos resultados re-rankear (3-20, default 8).
+        rerank_budget_ms: Presupuesto HTTP del re-rank (100-5000 ms, default 800).
+        format: "compact" (default), "full" (formato histórico) o "json".
+        snippet_chars: Longitud del fragmento (80-2000, default 300).
+        include_scores: Muestra el score numérico en la salida compacta.
+        explain: Muestra el desglose de canales (vec/lex/struct).
 
     Returns:
-        Resultados formateados del BIRE como texto plano.
-        Incluye: contenido encontrado, scores de relevancia, y metadatos.
-        Cada resultado trae una línea 🔖 de la capa de fuente (2026-10-17):
-        procedencia (autoría), huella de lectura (memory_access) y madurez.
-        "↻ ya traído hace Ns/min" ≈ segunda lectura en esta conversación
-        (reconocer); sin procedencia y sin lecturas → consultar con sospecha.
-
-        Si no hay coincidencias, indica búsqueda exitosa pero sin resultados.
+        Texto formateado (compact/full) o JSON. Si no hay coincidencias,
+        indica que la búsqueda fue válida pero sin resultados.
     """
     import time
 
@@ -555,22 +583,57 @@ async def search_hipocampo(query: str, session_id: str = "", rerank: bool = Fals
         return rate_err
 
     try:
-        output, stats = await asyncio.to_thread(_search.search_with_stats, query, session_id, rerank_typesafe=rerank)
+        k = max(1, min(20, int(k)))
+        offset = max(0, int(offset))
+        snippet_chars = max(80, min(2000, int(snippet_chars)))
+        rerank_top_k = max(3, min(20, int(rerank_top_k)))
+        rerank_budget_ms = max(100, min(5000, int(rerank_budget_ms)))
+        fmt = format if format in {"compact", "full", "json"} else "compact"
+
+        output, stats = await asyncio.to_thread(
+            _search.search_with_stats,
+            query,
+            session_id,
+            rerank_typesafe=False,
+            k=k,
+            offset=offset,
+            code=code or None,
+            categories=categories,
+            nivel=nivel or None,
+            memory_type=memory_type or None,
+            ids=ids,
+            created_after=created_after or None,
+            created_before=created_before or None,
+            include_pending=include_pending,
+            rerank_mode=rerank,
+            rerank_top_k=rerank_top_k,
+            rerank_budget_ms=rerank_budget_ms,
+            format=fmt,
+            snippet_chars=snippet_chars,
+            include_scores=include_scores,
+            explain=explain,
+        )
 
         latency_ms = int((time.time() - t0) * 1000)
         logger.info(
-            "Hipocampo search OK query=%r latency=%dms results=%d top=%.1f avg=%.1f",
+            "Hipocampo search OK query=%r latency=%dms results=%d total=%s top=%.1f avg=%.1f "
+            "channels=%s pending=%s rerank=%s",
             query,
             latency_ms,
             stats["results_count"],
+            stats.get("total"),
             stats["top_score"],
             stats["avg_score"],
+            stats.get("channels"),
+            stats.get("pending"),
+            stats.get("rerank_mode"),
         )
 
         try:
+            etiqueta = query or code or (",".join(str(x) for x in (ids or [])) if ids else "filtros")
             await asyncio.to_thread(
                 _stats.record_query,
-                query,
+                etiqueta,
                 latency_ms,
                 stats["results_count"],
                 stats["method"],
@@ -582,7 +645,7 @@ async def search_hipocampo(query: str, session_id: str = "", rerank: bool = Fals
 
         # Capa 4: Reforzar memorias del oficio en resultados
         try:
-            await asyncio.to_thread(_reinforce_trade_on_search, query)
+            await asyncio.to_thread(_reinforce_trade_on_search, query or code or "")
         except Exception:
             pass
 
@@ -640,28 +703,184 @@ def _reinforce_trade_on_search(query: str) -> None:
 
 
 @mcp.tool()
-async def quick_hipocampo_search(query: str, session_id: str = "", rerank: bool = False) -> str:
+async def quick_hipocampo_search(
+    query: str = "",
+    session_id: str = "",
+    rerank: str = "auto",
+    k: int = 5,
+    offset: int = 0,
+    code: str = "",
+    categories: list[str] | None = None,
+    nivel: str = "",
+    memory_type: str = "",
+    ids: list[int] | None = None,
+    created_after: str = "",
+    created_before: str = "",
+    include_pending: bool = True,
+    rerank_top_k: int = 8,
+    rerank_budget_ms: int = 800,
+    format: str = "compact",
+    snippet_chars: int = 300,
+    include_scores: bool = False,
+    explain: bool = False,
+) -> str:
     """
     Búsqueda rápida en el Hipocampo (alias corto de search_hipocampo).
 
-    Es solo lectura — no modifica datos, no tiene efectos secundarios.
-    Comportamiento y salida idénticos a search_hipocampo.
+    Es solo lectura — no modifica datos. Comportamiento y argumentos idénticos
+    a search_hipocampo (filtros code:/category:/id:/after:, format compact/full/json,
+    rerank auto/always/never).
+    """
+    return await search_hipocampo(
+        query=query,
+        session_id=session_id,
+        rerank=rerank,
+        k=k,
+        offset=offset,
+        code=code,
+        categories=categories,
+        nivel=nivel,
+        memory_type=memory_type,
+        ids=ids,
+        created_after=created_after,
+        created_before=created_before,
+        include_pending=include_pending,
+        rerank_top_k=rerank_top_k,
+        rerank_budget_ms=rerank_budget_ms,
+        format=format,
+        snippet_chars=snippet_chars,
+        include_scores=include_scores,
+        explain=explain,
+    )
 
-    Útil cuando el cliente MCP prefiera nombres de herramienta más cortos.
-    Para nombre descriptivo, usar search_hipocampo.
+
+@mcp.tool()
+async def get_hipocampo(id: str, format: str = "compact") -> str:
+    """Obtiene una memoria exacta por ID, sin pasar por el ranking.
+
+    Acepta el ID numérico de memoria_vectorial (4039), con prefijo (#4039,
+    v4039) o el ID de memory_items (vmi<uuid>). Es la vía determinista para
+    "tráeme el recuerdo N": no compite con decenas de resultados.
 
     Args:
-        query: Texto de búsqueda en lenguaje natural. Igual que
-               search_hipocampo. Ej: "API REST en Python", "presupuesto".
-        session_id: Opcional. Filtra resultados a una sesión específica.
-        rerank: Opcional (TypeSafe). Re-ordena el top-15 con un juicio de
-                relevancia calibrado (una llamada extra, ~0.5-1s).
+        id: ID de la memoria (numérico o vmi<uuid>).
+        format: "compact" (default), "full" o "json".
 
     Returns:
-        Mismo formato que search_hipocampo: resultados como texto plano
-        con scores de relevancia y metadatos.
+        La memoria completa (compact muestra un fragmento de 800 chars;
+        full/json incluyen todo el contenido y metadatos).
     """
-    return await search_hipocampo(query, session_id, rerank)
+    rate_err = _check_rate(tool_limiter, "get_hipocampo")
+    if rate_err:
+        return rate_err
+
+    def _do():
+        raw = str(id or "").strip()
+        if not raw:
+            return "❌ Indica un id numérico (ej. 4039) o vmi<uuid>."
+        fmt = format if format in {"compact", "full", "json"} else "compact"
+
+        # memory_items: id UUID con prefijo vmi/ o UUID directo.
+        mi_id = raw[3:] if raw.lower().startswith("vmi") else None
+        if mi_id is None and re.fullmatch(r"[0-9a-fA-F-]{20,}", raw):
+            mi_id = raw
+        if mi_id:
+            conn = _conn()
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT id::text, summary, memory_type, extra::text, created_at "
+                    "FROM memory_items WHERE id::text = %s",
+                    (mi_id,),
+                )
+                row = cur.fetchone()
+            finally:
+                cur.close()
+                conn.close()
+            if not row:
+                return f"❌ No encontré memory_items con id={mi_id}."
+            extra = {}
+            try:
+                extra = json.loads(row[3]) if row[3] else {}
+            except Exception:
+                extra = {}
+            res = {
+                "id": f"vmi{row[0]}",
+                "contenido": row[1] or "",
+                "summary": row[1] or "",
+                "metadatos": {
+                    "memory_type": row[2],
+                    "date": str(row[4])[:10] if row[4] else "",
+                    **(extra if isinstance(extra, dict) else {}),
+                },
+                "score": 100.0,
+                "source": "memory_items",
+                "method": "get",
+                "channel": "structured",
+                "tabla": "memory_items",
+                "pending": False,
+                "match_reason": ["id exacto (memory_items)"],
+            }
+            if fmt == "json":
+                return _search.formatear_json([res], f"id:{raw}", total=1, snippet_chars=2000)
+            if fmt == "full":
+                return _search.formatear_resultados([res], f"id:{raw}")
+            return _search.formatear_compacto(
+                [res], f"id:{raw}", total=1, snippet_chars=800, include_scores=True, explain=True
+            )
+
+        # memoria_vectorial: acepta 4039, #4039, v4039, l4039.
+        match = re.fullmatch(r"[#vl]?(\d{1,9})", raw)
+        if not match:
+            return f"❌ ID no reconocido: {raw}. Usa 4039, #4039, v4039 o vmi<uuid>."
+        num_id = int(match.group(1))
+
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT id, contenido, metadatos::text, code_snippet, summary, "
+                "(embedding IS NULL) AS pending "
+                "FROM memoria_vectorial WHERE id = %s",
+                (num_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                cur.execute("SELECT count(*) FROM memoria_vectorial_chunks WHERE parent_id=%s", (num_id,))
+                n_chunks = int(cur.fetchone()[0] or 0)
+        finally:
+            cur.close()
+            conn.close()
+        if not row:
+            return f"❌ No encontré memoria #{num_id}."
+        meta = json.loads(row[2] or "{}")
+        res = {
+            "id": f"v{row[0]}",
+            "contenido": row[1] or "",
+            "summary": row[4] or resumir_contenido(row[1] or "", 600),
+            "metadatos": meta,
+            "code_snippet": row[3],
+            "score": 100.0,
+            "source": "memoria_vectorial",
+            "method": "get",
+            "channel": "structured",
+            "tabla": "memoria_vectorial",
+            "pending": bool(row[5]),
+            "chunks": n_chunks,
+            "match_reason": ["id exacto"],
+        }
+        if fmt == "json":
+            return _search.formatear_json([res], f"id:{raw}", total=1, snippet_chars=2000)
+        if fmt == "full":
+            return _search.formatear_resultados([res], f"id:{raw}")
+        return _search.formatear_compacto(
+            [res], f"id:{raw}", total=1, snippet_chars=800, include_scores=True, explain=True
+        )
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:
+        return _tool_err("get_hipocampo", e)
 
 
 @mcp.tool()
@@ -910,6 +1129,9 @@ def _finalize_save_bg(row_id: int, content: str, session_id: str | None, auto_li
     la repara en su próxima pasada leyendo la firma embedding_src_md5 de la BD.
     """
     _screening_inyeccion_regex(row_id, content)
+    # Summary/chunks no dependen del embedding principal: si el modelo está
+    # caído, el recuerdo sigue siendo recuperable por texto y por code.
+    _spawn_summary_chunks(row_id, content)
 
     try:
         embedding = get_embedding_with_retries(content, timeout_s=BG_EMBED_TIMEOUT_S)
@@ -992,6 +1214,9 @@ def _finalize_update_bg(row_id: int, content: str) -> None:
     que el barredor (hipocampo-embed-sweeper.timer) detecte y repare cualquier
     desincronización (corte de luz, red, crash) sin depender de este proceso.
     """
+    # El resumen/chunks se regeneran aunque el embedding principal falle.
+    _spawn_summary_chunks(row_id, content)
+
     try:
         embedding = get_embedding_with_retries(content, timeout_s=BG_EMBED_TIMEOUT_S)
     except Exception as e:
@@ -1024,6 +1249,158 @@ def _finalize_update_bg(row_id: int, content: str) -> None:
         logger.info("🔄 Embedding regenerado en background para id=%s", row_id)
     else:
         logger.info("⏭️ Embedding de id=%s descartado (el contenido cambió de nuevo)", row_id)
+
+
+def _spawn_summary_chunks(row_id: int, content: str) -> None:
+    """Lanza en background el resumen, chunks y sus embeddings (best-effort)."""
+    try:
+        threading.Thread(
+            target=_finalize_summary_chunks_bg,
+            args=(row_id, content),
+            daemon=True,
+            name=f"summary-chunks-{row_id}",
+        ).start()
+    except Exception as e:  # nunca debe tumbar el save/update
+        logger.warning("No se pudo lanzar summary/chunks para id=%s: %s", row_id, e)
+
+
+def _finalize_summary_chunks_bg(row_id: int, content: str) -> None:
+    """Genera summary, chunks y embeddings auxiliares sin bloquear al caller.
+
+    - summary: texto extractivo corto (inmediato, léxico).
+    - chunks: texto de recuerdos largos (léxico desde el primer momento).
+    - summary_embedding / chunk embeddings: APAGADOS por defecto. En CPU un
+      embedding de summary/chunk puede tardar ~68 s y compite con el embedding
+      de la consulta; el canal léxico ya funciona. Se activan con
+      HIPOCAMPO_SUMMARY_EMBED=1 / HIPOCAMPO_CHUNK_EMBED_MAX>0 o con el
+      backfill offline (`--embed-summaries` / `--embed-chunks`).
+    """
+    import hashlib
+
+    conn = None
+    cur = None
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        # Se relee el contenido actual: si entró otro update, este hilo no pisa
+        # chunks/summary con una versión vieja.
+        cur.execute("SELECT contenido FROM memoria_vectorial WHERE id=%s", (row_id,))
+        row = cur.fetchone()
+        if not row:
+            return
+        content = row[0] or ""
+        if not content.strip():
+            return
+
+        summary = resumir_contenido(content, 600)
+        md5_content = hashlib.md5(content.encode("utf-8")).hexdigest()
+        cur.execute(
+            "UPDATE memoria_vectorial SET summary=%s, "
+            "metadatos = COALESCE(metadatos, '{}'::jsonb) || "
+            "jsonb_build_object('summary_src_md5', %s) WHERE id=%s",
+            (summary, md5_content, row_id),
+        )
+        conn.commit()
+
+        chunks = dividir_en_chunks(content, max_chars=1800, overlap=180) if len(content) > 1800 else []
+        for ch in chunks:
+            cur.execute(
+                """INSERT INTO memoria_vectorial_chunks (parent_id, chunk_index, contenido)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (parent_id, chunk_index)
+                   DO UPDATE SET contenido = EXCLUDED.contenido,
+                       embedding = CASE
+                           WHEN memoria_vectorial_chunks.contenido = EXCLUDED.contenido
+                           THEN memoria_vectorial_chunks.embedding
+                           ELSE NULL
+                       END""",
+                (row_id, ch["index"], ch["contenido"]),
+            )
+        cur.execute(
+            "DELETE FROM memoria_vectorial_chunks WHERE parent_id=%s AND chunk_index >= %s",
+            (row_id, len(chunks)),
+        )
+        conn.commit()
+
+        # Embedding del summary (corto) — opt-in. En CPU cada embedding extra
+        # puede tardar ~68 s y bloquear la cola de Ollama; el summary textual
+        # ya es recuperable por el canal léxico.
+        summary_embed_on = os.environ.get("HIPOCAMPO_SUMMARY_EMBED", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if summary_embed_on:
+            timeout_s = min(float(BG_EMBED_TIMEOUT_S), 300.0)
+            try:
+                emb_summary = get_embedding_with_retries(summary, timeout_s=timeout_s)
+            except Exception as e:
+                logger.warning("Summary embedding id=%s falló: %s", row_id, e)
+                emb_summary = None
+            if emb_summary is not None:
+                md5_summary = hashlib.md5(summary.encode("utf-8")).hexdigest()
+                cur.execute(
+                    "UPDATE memoria_vectorial SET summary_embedding=%s::vector(1024), "
+                    "metadatos = COALESCE(metadatos, '{}'::jsonb) || "
+                    "jsonb_build_object('summary_embedding_src_md5', %s) "
+                    "WHERE id=%s AND contenido=%s",
+                    (emb_summary, md5_summary, row_id, content),
+                )
+                conn.commit()
+
+        # Embeddings de chunks: acotados para no convertir un save en una
+        # tarea de horas. El resto queda léxico y el barredor puede completarlo.
+        try:
+            # 0 por defecto: el canal léxico de chunks ya funciona y el
+            # backfill offline puede generar los embeddings sin competir con
+            # las consultas interactivas. Subir solo si hay GPU/CPU de sobra.
+            max_chunks = int(os.environ.get("HIPOCAMPO_CHUNK_EMBED_MAX", "0"))
+        except ValueError:
+            max_chunks = 0
+        if max_chunks > 0:
+            cur.execute(
+                "SELECT chunk_index, contenido FROM memoria_vectorial_chunks "
+                "WHERE parent_id=%s AND embedding IS NULL ORDER BY chunk_index LIMIT %s",
+                (row_id, max_chunks),
+            )
+            pendientes = cur.fetchall()
+            emb_chunks = 0
+            for ch_idx, ch_txt in pendientes:
+                try:
+                    emb = get_embedding_with_retries(ch_txt, timeout_s=min(float(BG_EMBED_TIMEOUT_S), 180.0))
+                except Exception as e:
+                    logger.warning("Chunk embedding id=%s idx=%s falló: %s", row_id, ch_idx, e)
+                    emb = None
+                if emb is not None:
+                    cur.execute(
+                        "UPDATE memoria_vectorial_chunks SET embedding=%s::vector(1024) "
+                        "WHERE parent_id=%s AND chunk_index=%s AND contenido=%s",
+                        (emb, row_id, ch_idx, ch_txt),
+                    )
+                    conn.commit()
+                    emb_chunks += 1
+            if emb_chunks:
+                logger.info("🧩 Chunks id=%s: %d/%d con embedding", row_id, emb_chunks, len(pendientes))
+        logger.info("📝 Summary/chunks listos para id=%s (chunks=%d)", row_id, len(chunks))
+    except Exception as e:
+        logger.warning("Summary/chunks id=%s falló: %s", row_id, e)
+        try:
+            if conn is not None:
+                conn.rollback()
+        except Exception:
+            pass
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+        except Exception:
+            pass
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
 
 
 def _detectar_contradicciones(
@@ -1565,12 +1942,15 @@ async def save_hipocampo(
         # Capas 1+2: Clasificación de trade knowledge y reusabilidad
         trade_meta = _tk.build_trade_knowledge_metadata(content, categories, metadatos)
         metadatos.update(trade_meta)
+        # Summary extractivo inmediato: la búsqueda léxica y compacta ya lo ve
+        # antes de que termine el embedding (que va en background).
+        summary_text = resumir_contenido(content, 600)
         conn = _conn()
         cur = conn.cursor()
         cur.execute(
-            """INSERT INTO memoria_vectorial (contenido, metadatos)
-               VALUES (%s, %s) RETURNING id""",
-            (content, json.dumps(metadatos)),
+            """INSERT INTO memoria_vectorial (contenido, metadatos, summary)
+               VALUES (%s, %s, %s) RETURNING id""",
+            (content, json.dumps(metadatos), summary_text),
         )
         row_id = cur.fetchone()[0]
         conn.commit()
@@ -1606,11 +1986,12 @@ async def save_hipocampo(
             name=f"finalize-save-{row_id}",
         ).start()
 
-        logger.info("✅ Guardado id=%s (embedding en background)", row_id)
+        logger.info("✅ Guardado id=%s (embedding/summary/chunks en background)", row_id)
         msg = (
             f"✅ Guardado en Hipocampo (id={row_id}) — INSERT instantáneo.\n"
-            "🔍 Embedding + dedup + auto-link + auditoría de contradicciones se "
-            "procesan en background. La búsqueda semántica lo encontrará en unos segundos."
+            "🔍 Recuperable YA por id/code/texto (summary y chunks léxicos). "
+            "Embedding + dedup + auto-link + auditoría se procesan en background; "
+            "la búsqueda semántica lo verá en unos segundos."
         )
         return msg
 
@@ -1885,9 +2266,10 @@ async def update_hipocampo(
             # fila conserva el anterior (ligeramente desfasado) y el nuevo llega
             # por _finalize_update_bg con timeout paciente (el snapshot de ~28K
             # chars tarda ~5-6 min en Ollama CPU; antes bloqueaba al caller).
+            new_summary = resumir_contenido(new_content, 600)
             cur.execute(
-                "UPDATE memoria_vectorial SET contenido=%s, metadatos=%s WHERE id=%s",
-                (new_content, json.dumps(new_metadatos), id),
+                "UPDATE memoria_vectorial SET contenido=%s, metadatos=%s, summary=%s WHERE id=%s",
+                (new_content, json.dumps(new_metadatos), new_summary, id),
             )
             conn.commit()
             cur.close()
@@ -1902,10 +2284,11 @@ async def update_hipocampo(
 
             _fire_webhooks("update", id, new_content, new_metadatos)
 
-            logger.info("✅ Actualizado id=%s (embedding en background)", id)
+            logger.info("✅ Actualizado id=%s (embedding/summary/chunks en background)", id)
             return (
-                f"✅ Actualizado recuerdo id={id} — el embedding se regenera en "
-                "background (segundos–minutos según el tamaño)."
+                f"✅ Actualizado recuerdo id={id} — contenido y summary ya visibles; "
+                "el embedding y los chunks se regeneran en background "
+                "(segundos–minutos según el tamaño)."
             )
 
         cur.execute(

@@ -9,7 +9,16 @@ from hipocampo_search import (
     expandir_consulta,
     generar_patrones_ILIKE,
     fusionar_resultados,
+    parse_query,
+    formatear_compacto,
+    formatear_json,
+    _aplicar_boost_frase,
     _aplicar_decaimiento_temporal,
+    _conceptos_consulta,
+    _debe_rerank_auto,
+    _proximidad,
+    _penalizar_menciones_meta,
+    _terminos_tsquery,
     _mmr_seleccionar,
     _patrones_indexables,
     formatear_resultados,
@@ -327,3 +336,269 @@ class TestMMRSeleccionar:
         selected, restantes = _mmr_seleccionar(cands, embs, 0.7)
         assert [c["id"] for c in selected] == ["v1", "v3"]
         assert [c["id"] for c in restantes] == ["zz2", "zz4"]
+
+
+class TestParseQuery:
+    def test_code(self):
+        parsed = parse_query("code:opencode_session_forensics")
+        assert parsed["query"] == ""
+        assert parsed["filters"]["code"] == "opencode_session_forensics"
+
+    def test_categories(self):
+        parsed = parse_query("category:infra,trigger:mcp")
+        assert parsed["filters"]["categories"] == ["infra", "trigger:mcp"]
+
+    def test_id_y_fechas(self):
+        parsed = parse_query("id:4039 after:2026-10-01 before:today")
+        assert parsed["filters"]["ids"] == [4039]
+        assert parsed["filters"]["created_after"] == "2026-10-01"
+        assert parsed["filters"]["created_before"] == date.today().isoformat()
+
+    def test_since_relativo(self):
+        parsed = parse_query("since:7d")
+        from datetime import timedelta
+
+        assert parsed["filters"]["created_after"] == (date.today() - timedelta(days=7)).isoformat()
+
+    def test_frase_entre_comillas(self):
+        parsed = parse_query('buscar "transcript temporal eliminado"')
+        assert parsed["phrases"] == ["transcript temporal eliminado"]
+        assert parsed["query"] == "buscar"
+
+    def test_texto_libre_se_conserva(self):
+        parsed = parse_query("protocolo seguridad")
+        assert parsed["query"] == "protocolo seguridad"
+        assert parsed["filters"] == {}
+
+
+class TestProximidad:
+    def test_conceptos_cerca(self):
+        conceptos = _conceptos_consulta("transcript temporal eliminado")
+        texto = "Mejor extraer un transcript temporal y borrarlo al terminar."
+        bonus, span, ini, fin = _proximidad(texto, conceptos)
+        assert bonus == 30
+        assert span <= 60
+        assert 0 <= ini < fin <= len(texto)
+
+    def test_conceptos_lejos(self):
+        conceptos = _conceptos_consulta("transcript temporal eliminado")
+        texto = "transcript " + ("x" * 900) + " temporal eliminado"
+        bonus, span, _, _ = _proximidad(texto, conceptos)
+        assert bonus == 0
+        assert span > 700
+
+    def test_menos_de_dos_conceptos(self):
+        conceptos = _conceptos_consulta("transcript")
+        assert _proximidad("transcript", conceptos)[0] == 0
+
+
+class TestPenalizarMencionesMeta:
+    def _res(self):
+        return {
+            "id": "v4040",
+            "contenido": (
+                'REGLA OPERATIVA — CÓMO USAR EL MCP. Ejemplo: buscar "transcript temporal eliminado" sí la encontró.'
+            ),
+            "metadatos": {"code": "regla_hipocampo_uso_retrieval"},
+            "score": 100.0,
+            "match_reason": ["léxico"],
+        }
+
+    def test_penaliza_regla_que_cita_la_consulta(self):
+        r = self._res()
+        out = _penalizar_menciones_meta([r], "transcript temporal eliminado")
+        assert out[0]["score"] == 45.0
+        assert "mención meta (penalizada)" in out[0]["match_reason"]
+
+    def test_no_penaliza_si_la_consulta_es_sobre_reglas(self):
+        r = self._res()
+        out = _penalizar_menciones_meta([r], "reglas de búsqueda transcript temporal eliminado")
+        assert out[0]["score"] == 100.0
+
+    def test_no_penaliza_contenido_normal(self):
+        r = self._res()
+        r["metadatos"]["code"] = "opencode_session_forensics"
+        r["contenido"] = "Cómo reconstruir una sesión: extraer un transcript temporal y borrarlo al terminar."
+        out = _penalizar_menciones_meta([r], "transcript temporal eliminado")
+        assert out[0]["score"] == 100.0
+
+    def test_penaliza_mencion_en_backticks_sin_code_regla(self):
+        r = self._res()
+        r["metadatos"]["code"] = "mcp_mejoras_fases_1_3_20261020"
+        r["contenido"] = (
+            "MCP Hipocampo — registro de despliegue. El caso clave "
+            "`transcript temporal eliminado` devuelve #4039 primero."
+        )
+        out = _penalizar_menciones_meta([r], "transcript temporal eliminado")
+        assert out[0]["score"] == 45.0
+        assert "mención meta (penalizada)" in out[0]["match_reason"]
+
+    def test_penaliza_snapshot_largo_sin_code(self):
+        r = self._res()
+        r["metadatos"]["code"] = ""
+        r["contenido"] = (
+            "# Instrucciones de inicio de sesión\n\n"
+            + ("relleno " * 40)
+            + "El caso clave `transcript temporal eliminado` devuelve #4039."
+        )
+        out = _penalizar_menciones_meta([r], "transcript temporal eliminado")
+        assert out[0]["score"] == 45.0
+
+    def test_no_penaliza_si_tambien_aparece_sin_delimitar(self):
+        r = self._res()
+        r["metadatos"]["code"] = "mcp_mejoras_fases_1_3_20261020"
+        r["contenido"] = (
+            'El registro cita "transcript temporal eliminado" como ejemplo, '
+            "pero el transcript temporal eliminado real está en otro archivo."
+        )
+        out = _penalizar_menciones_meta([r], "transcript temporal eliminado")
+        assert out[0]["score"] == 100.0
+
+    def test_no_penaliza_coincidencia_estructurada(self):
+        r = self._res()
+        r["channel"] = "structured"
+        r["struct_score"] = 100.0
+        r["contenido"] = 'code exacto: "transcript temporal eliminado"'
+        out = _penalizar_menciones_meta([r], "transcript temporal eliminado")
+        assert out[0]["score"] == 100.0
+
+
+class TestFormatosCompactos:
+    def _res(self):
+        return {
+            "id": "v4039",
+            "contenido": "texto completo de la memoria",
+            "summary": "Resumen corto",
+            "passage": "Pasaje relevante con transcript temporal",
+            "metadatos": {
+                "code": "opencode_session_forensics",
+                "date": "2026-10-20",
+                "nivel": "semantica",
+            },
+            "score": 100.0,
+            "method": "code_match",
+            "tabla": "memoria_vectorial",
+            "match_reason": ["code exacto"],
+            "channels": ["structured"],
+            "vec_score": 0,
+            "lex_score": 0,
+            "struct_score": 100,
+        }
+
+    def test_compacto(self):
+        out = formatear_compacto([self._res()], "code:opencode_session_forensics", total=1)
+        assert "#4039" in out
+        assert "code=opencode_session_forensics" in out
+        assert "Pasaje relevante" in out
+        assert "texto completo" not in out
+
+    def test_json(self):
+        import json
+
+        out = formatear_json([self._res()], "code:opencode_session_forensics", total=1)
+        payload = json.loads(out)
+        assert payload["total"] == 1
+        assert payload["results"][0]["id_legible"] == "#4039"
+        assert payload["results"][0]["code"] == "opencode_session_forensics"
+
+
+class TestDecaimientoEstructurado:
+    def test_struct_score_no_decae(self):
+        item = {
+            "contenido": "coincidencia exacta",
+            "score": 100.0,
+            "metadatos": {"date": "2026-01-01"},
+            "method": "code_match",
+            "source": "memoria_vectorial",
+            "tabla": "memoria_vectorial",
+            "code_snippet": None,
+            "vec_score": 0,
+            "lex_score": 0,
+            "struct_score": 100,
+        }
+        out = _aplicar_decaimiento_temporal([item], hoy=_HOY)
+        assert out[0]["score"] == 100.0
+
+
+class TestExpansionSinStopwords:
+    def test_stopwords_no_expanden_a_borrado(self):
+        terms = expandir_consulta("pautas de uso del MCP en el servidor")
+        assert "pautas" in terms
+        assert "servidor" in terms
+        # "el" está dentro de "eliminar": antes inyectaba toda la familia.
+        assert not ({"borrar", "eliminado", "eliminar", "suprimir"} & set(terms))
+
+    def test_borrado_explicito_si_expande(self):
+        terms = expandir_consulta("transcript temporal eliminado")
+        assert "borrar" in terms
+        assert "transcript" in terms
+
+    def test_terminos_tsquery_sin_stopwords(self):
+        assert _terminos_tsquery("pautas de uso del MCP en el servidor") == [
+            "pautas",
+            "uso",
+            "mcp",
+            "servidor",
+        ]
+
+
+class TestFraseCompleta:
+    def test_boost_si_la_consulta_aparece_literal(self):
+        r = {
+            "contenido": "TypeSafe API verificada y funcionando",
+            "summary": "",
+            "score": 80.0,
+            "match_reason": [],
+        }
+        out = _aplicar_boost_frase([r], [], "TypeSafe API verificada")
+        assert out[0]["score"] == 100.0
+        assert out[0]["full_phrase_match"] is True
+
+    def test_decaimiento_no_toca_frase_exacta(self):
+        r = {
+            "contenido": "TypeSafe API verificada y funcionando",
+            "score": 80.0,
+            "metadatos": {"date": "2026-01-01"},
+            "method": "lexico_expansivo",
+            "channel": "lexical",
+            "vec_score": 0,
+            "lex_score": 80,
+            "struct_score": 0,
+        }
+        out = _aplicar_decaimiento_temporal([dict(r)], hoy=date(2026, 10, 20), query="TypeSafe API verificada")
+        assert out[0]["score"] == 80.0
+        assert out[0]["exact_phrase"] is True
+
+    def test_decaimiento_si_solo_comparte_palabras(self):
+        r = {
+            "contenido": "Otra memoria sobre API y TypeSafe",
+            "score": 80.0,
+            "metadatos": {"date": "2026-01-01"},
+            "method": "lexico_expansivo",
+            "channel": "lexical",
+            "vec_score": 0,
+            "lex_score": 80,
+            "struct_score": 0,
+        }
+        out = _aplicar_decaimiento_temporal([r], hoy=date(2026, 10, 20), query="TypeSafe API verificada")
+        assert out[0]["score"] < 80.0
+
+
+class TestAutoRerank:
+    @staticmethod
+    def _r(score, **extra):
+        base = {"score": score, "method": "vectorial", "match_reason": []}
+        base.update(extra)
+        return base
+
+    def test_no_rerank_si_top_es_alto(self):
+        rs = [self._r(100), self._r(100), self._r(80)]
+        assert _debe_rerank_auto(rs, "consulta de prueba", {}) is False
+
+    def test_no_rerank_si_hay_proximidad_fuerte(self):
+        rs = [self._r(60.8, proximity_bonus=30), self._r(56.3), self._r(50)]
+        assert _debe_rerank_auto(rs, "consulta de prueba", {}) is False
+
+    def test_rerank_si_top_debil_o_empatado(self):
+        rs = [self._r(60), self._r(55), self._r(50)]
+        assert _debe_rerank_auto(rs, "consulta de prueba", {}) is True

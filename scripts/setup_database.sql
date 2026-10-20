@@ -240,6 +240,51 @@ CREATE INDEX IF NOT EXISTS idx_mv_reusability ON memoria_vectorial ((metadatos->
 CREATE INDEX IF NOT EXISTS idx_mv_domain_profile ON memoria_vectorial ((metadatos->>'domain_profile'));
 
 -- ------------------------------------------------------------
--- 15. Trade Knowledge Review Timer/Service
+-- 15. Mejoras MCP 2026-10-20 (Fases 1-3)
+--     Filtros estructurados, summary/tsvector y chunks.
+--     Idempotente: seguro sobre instalaciones existentes.
+-- ------------------------------------------------------------
+ALTER TABLE memoria_vectorial ADD COLUMN IF NOT EXISTS summary TEXT;
+ALTER TABLE memoria_vectorial ADD COLUMN IF NOT EXISTS summary_embedding VECTOR(1024);
+ALTER TABLE memoria_vectorial ADD COLUMN IF NOT EXISTS contenido_tsv TSVECTOR
+    GENERATED ALWAYS AS (to_tsvector('spanish'::regconfig, coalesce(contenido, ''))) STORED;
+
+CREATE INDEX IF NOT EXISTS idx_mv_metadatos_gin
+    ON memoria_vectorial USING GIN (metadatos jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_mv_code_lower
+    ON memoria_vectorial (lower(metadatos->>'code'));
+CREATE INDEX IF NOT EXISTS idx_mv_nivel
+    ON memoria_vectorial ((metadatos->>'nivel'));
+CREATE INDEX IF NOT EXISTS idx_mv_date
+    ON memoria_vectorial ((metadatos->>'date'));
+CREATE INDEX IF NOT EXISTS idx_mv_contenido_tsv
+    ON memoria_vectorial USING GIN (contenido_tsv);
+CREATE INDEX IF NOT EXISTS idx_mv_summary_gin
+    ON memoria_vectorial USING GIN (summary gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_mv_summary_embedding_hnsw
+    ON memoria_vectorial USING HNSW (summary_embedding vector_cosine_ops);
+
+CREATE TABLE IF NOT EXISTS memoria_vectorial_chunks (
+    id BIGSERIAL PRIMARY KEY,
+    parent_id BIGINT NOT NULL REFERENCES memoria_vectorial(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    contenido TEXT NOT NULL,
+    embedding VECTOR(1024),
+    contenido_tsv TSVECTOR GENERATED ALWAYS AS
+        (to_tsvector('spanish'::regconfig, coalesce(contenido, ''))) STORED,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (parent_id, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_mv_chunks_parent
+    ON memoria_vectorial_chunks (parent_id);
+CREATE INDEX IF NOT EXISTS idx_mv_chunks_embedding_hnsw
+    ON memoria_vectorial_chunks USING HNSW (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_mv_chunks_contenido_gin
+    ON memoria_vectorial_chunks USING GIN (contenido gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_mv_chunks_tsv
+    ON memoria_vectorial_chunks USING GIN (contenido_tsv);
+
+-- ------------------------------------------------------------
+-- 16. Trade Knowledge Review Timer/Service
 -- ------------------------------------------------------------
 -- Archivos copiados por install.sh a ~/.config/systemd/user/

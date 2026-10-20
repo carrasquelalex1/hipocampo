@@ -31,6 +31,7 @@ SERVER_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 EXPECTED_TOOLS = {
     "search_hipocampo",
     "quick_hipocampo_search",
+    "get_hipocampo",
     "compress_hipocampo",
     "preload_context",
     "save_hipocampo",
@@ -75,6 +76,7 @@ TOOLS_WITH_SESSION_ID = {"search_hipocampo", "quick_hipocampo_search", "save_hip
 TOOLS_READ_ONLY = {
     "search_hipocampo",
     "quick_hipocampo_search",
+    "get_hipocampo",
     "compress_hipocampo",
     "hipocampo_health",
     "hipocampo_stats",
@@ -97,7 +99,7 @@ TOOLS_DESTRUCTIVE = {
 }
 
 TOOLS_WITH_REQUIRED = {
-    "search_hipocampo": ["query"],
+    "get_hipocampo": ["id"],
     "compress_hipocampo": ["query"],
     "save_hipocampo": ["content"],
     "delete_hipocampo": ["id"],
@@ -135,7 +137,7 @@ def _tools_map():
 
 
 def test_all_tools_registered():
-    """All 16 tools must be registered on the FastMCP instance."""
+    """All 40 tools must be registered on the FastMCP instance."""
     mod = _get_server_module()
     tools = mod.mcp._tool_manager.list_tools()
     tool_names = {t.name for t in tools}
@@ -143,7 +145,7 @@ def test_all_tools_registered():
     extra = tool_names - EXPECTED_TOOLS
     assert not missing, f"Faltan herramientas: {missing}"
     assert not extra, f"Herramientas extra no esperadas: {extra}"
-    assert len(tools) == 39
+    assert len(tools) == 40
 
 
 def test_tool_annotations():

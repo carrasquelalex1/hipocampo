@@ -295,10 +295,11 @@ def juicio_lote(nuevo: str, candidatos: list[tuple[int, str]], tags: list[str] |
     return resultado
 
 
-def relevancia_batch(query: str, items: list[tuple[int, str]]) -> dict[int, float] | None:
+def relevancia_batch(query: str, items: list[tuple[int, str]], timeout: float | None = None) -> dict[int, float] | None:
     """Un Noul por fragmento: ¿responde a la consulta? UNA sola llamada.
 
     items: [(id, texto), ...]
+    timeout: override opcional del timeout HTTP (para el presupuesto de rerank).
     Returns: {id: noul} (todos los ids con valor válido) o None si falla.
     """
     if not items:
@@ -314,7 +315,7 @@ def relevancia_batch(query: str, items: list[tuple[int, str]]) -> dict[int, floa
                 "responde a la CONSULTA (aunque sea parcialmente)."
             ),
         }
-    answers = ask("\n\n".join(bloques), preguntas)
+    answers = ask("\n\n".join(bloques), preguntas, timeout=timeout)
     if answers is None:
         return None
     out: dict[int, float] = {}
