@@ -1,12 +1,15 @@
 [Unit]
 Description=Hipocampo — Ciclo Glinfático Nocturno (pasada ligera con gate de actividad)
-Documentation=file:///home/alex/.hipocampo/repo/scripts/hipocampo_glymphatic.py
+Documentation=file://%h/.hipocampo/repo/scripts/hipocampo_glymphatic.py
 After=network.target postgresql.service
 # No compite con la limpieza profunda semanal (domingos 03:00)
 After=hipocampo-maintenance.service
 
 [Service]
 Type=oneshot
+# Config canónica por máquina (prod: DB_USER=dhis; local: DB_USER=alex).
+# Sin esto, según desde dónde se importe el paquete se cargaría repo/.env.
+Environment=ENV_PATH=%h/.hipocampo/.env
 Environment=HIPOCAMPO_GLYMPH_ACTIVITY_HOURS=24
 ExecStart=%h/.hipocampo/scripts/run_glymphatic.sh --apply --quiet
 StandardOutput=journal
