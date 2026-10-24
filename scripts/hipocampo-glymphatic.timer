@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer diario del Ciclo Glinfático de Hipocampo (04:30)
+
+[Timer]
+# Cada noche a las 04:30, después de la ventana de limpieza profunda del domingo
+OnCalendar=*-*-* 04:30:00
+# Si la PC estaba apagada, recuperar la pasada al encender
+Persistent=true
+# Dispersión para no competir con el arranque
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

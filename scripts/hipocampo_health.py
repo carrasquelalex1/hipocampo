@@ -182,6 +182,104 @@ def check_extensions():
     return results
 
 
+def check_clearance():
+    """Mide la 'carga de desecho' de la memoria (analogía glinfática).
+
+    Cuatro métricas baratas y accionables:
+      - duplicados_exactos: filas con contenido normalizado idéntico.
+      - episodicos_frios_90d: episódicas con >90 días sin acceso.
+      - enlaces_huerfanos: enlaces del grafo cuyo extremo ya no existe.
+      - contradicciones_fuertes: enlaces 'contradicts' con peso >= 0.5.
+
+    Es informativo: no altera el estado global del health check, pero deja
+    `revisar=True` cuando alguna métrica supera su umbral de atención.
+    """
+    results = {"status": "ok", "checks": {}}
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            WITH norm AS (
+                SELECT id, md5(lower(btrim(contenido))) AS h
+                FROM memoria_vectorial WHERE contenido IS NOT NULL
+            )
+            SELECT count(*) AS total, count(*) - count(DISTINCT h) AS dup_extra
+            FROM norm
+            """
+        )
+        total, dup_extra = cur.fetchone()
+        dup_pct = round((dup_extra / total * 100) if total else 0.0, 2)
+        results["checks"]["duplicados_exactos"] = f"{dup_extra} ({dup_pct}%)"
+
+        cur.execute(
+            """
+            SELECT count(*) FROM memoria_vectorial mv
+            WHERE mv.metadatos->>'nivel' = 'episodica'
+              AND COALESCE((mv.metadatos->>'date')::date, CURRENT_DATE)
+                  < CURRENT_DATE - INTERVAL '90 days'
+              AND NOT EXISTS (
+                  SELECT 1 FROM memory_access ma
+                  WHERE ma.memory_id = mv.id::text
+                    AND ma.accessed_at > now() - INTERVAL '90 days'
+              )
+            """
+        )
+        frios = cur.fetchone()[0]
+        cur.execute("SELECT count(*) FROM memoria_vectorial WHERE metadatos->>'nivel' = 'episodica'")
+        n_epi = cur.fetchone()[0]
+        frios_pct = round((frios / n_epi * 100) if n_epi else 0.0, 2)
+        results["checks"]["episodicos_frios_90d"] = f"{frios} ({frios_pct}% de episódicas)"
+
+        cur.execute(
+            """
+            SELECT count(*) FROM memory_links l
+            WHERE NOT EXISTS (SELECT 1 FROM memoria_vectorial mv WHERE mv.id::text = l.source_id)
+              AND NOT EXISTS (SELECT 1 FROM memory_items mi WHERE mi.id = l.source_id)
+            """
+        )
+        huerfanos_src = cur.fetchone()[0]
+        cur.execute(
+            """
+            SELECT count(*) FROM memory_links l
+            WHERE NOT EXISTS (SELECT 1 FROM memoria_vectorial mv WHERE mv.id::text = l.target_id)
+              AND NOT EXISTS (SELECT 1 FROM memory_items mi WHERE mi.id = l.target_id)
+            """
+        )
+        huerfanos_tgt = cur.fetchone()[0]
+        cur.execute("SELECT count(*) FROM memory_links")
+        n_links = cur.fetchone()[0]
+        huerfanos = huerfanos_src + huerfanos_tgt
+        huerfanos_pct = round((huerfanos / n_links * 100) if n_links else 0.0, 2)
+        results["checks"]["enlaces_huerfanos"] = f"{huerfanos} ({huerfanos_pct}% del grafo)"
+
+        cur.execute("SELECT count(*) FROM memory_links WHERE relation_type = 'contradicts' AND weight >= 0.5")
+        contradicciones = cur.fetchone()[0]
+        results["checks"]["contradicciones_fuertes"] = contradicciones
+
+        revisar = dup_pct > 2 or frios_pct > 20 or huerfanos_pct > 5 or contradicciones > 50
+        results["checks"]["revisar"] = "sí" if revisar else "no"
+
+        state_path = os.path.expanduser("~/.hipocampo/state/glymphatic_last.json")
+        if os.path.exists(state_path):
+            try:
+                with open(state_path) as f:
+                    last = json.load(f)
+                results["checks"]["ultima_pasada_glinfatica"] = (
+                    f"{last.get('timestamp', '?')} ({last.get('mode', '?')}, {last.get('gate', '?')})"
+                )
+            except Exception:
+                results["checks"]["ultima_pasada_glinfatica"] = "ilegible"
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        results["status"] = "error"
+        results["checks"]["clearance_error"] = str(e)[:160]
+    return results
+
+
 def full_health_check():
     """Ejecuta todos los health checks y retorna resultado consolidado."""
     load_config()
@@ -195,6 +293,7 @@ def full_health_check():
         "embeddings": check_embeddings(),
         "disk_space": check_disk_space(),
         "extensions": check_extensions(),
+        "clearance": check_clearance(),
     }
     for name, result in checks.items():
         results["checks"][name] = result["checks"]

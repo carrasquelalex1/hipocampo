@@ -1,0 +1,17 @@
+[Unit]
+Description=Hipocampo — Ciclo Glinfático Nocturno (pasada ligera con gate de actividad)
+Documentation=file:///home/alex/.hipocampo/repo/scripts/hipocampo_glymphatic.py
+After=network.target postgresql.service
+# No compite con la limpieza profunda semanal (domingos 03:00)
+After=hipocampo-maintenance.service
+
+[Service]
+Type=oneshot
+Environment=HIPOCAMPO_GLYMPH_ACTIVITY_HOURS=24
+ExecStart=/usr/bin/python3 %h/.hipocampo/scripts/hipocampo_glymphatic.py --apply --quiet
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+
+[Install]
+WantedBy=timers.target
