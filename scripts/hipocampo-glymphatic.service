@@ -8,7 +8,7 @@ After=hipocampo-maintenance.service
 [Service]
 Type=oneshot
 Environment=HIPOCAMPO_GLYMPH_ACTIVITY_HOURS=24
-ExecStart=/usr/bin/python3 %h/.hipocampo/scripts/hipocampo_glymphatic.py --apply --quiet
+ExecStart=%h/.hipocampo/scripts/run_glymphatic.sh --apply --quiet
 StandardOutput=journal
 StandardError=journal
 TimeoutStartSec=300
